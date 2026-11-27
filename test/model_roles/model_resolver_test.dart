@@ -182,6 +182,32 @@ void main() {
       expect(plainProject.headers, {'x-codemie-project': 'p'});
     });
 
+    test('the CODEMIE_CLIENT_ID override bakes into catalog + boot-restore '
+        'builds (issue #2426 review)', () {
+      const codemieUrl = 'https://codemie.lab.epam.com/code-assistant-api/v1';
+      codeMieClientOverride = 'my-org-client';
+      addTearDown(() => codeMieClientOverride = null);
+
+      final catalog = buildCatalogModel(
+        'openai',
+        'codemie-model',
+        baseUrl: codemieUrl,
+        projectHeader: 'demo-project',
+      );
+      expect(catalog.headers?[codeMieClientHeader], 'my-org-client');
+
+      final restored = buildCliDefaultModel(
+        'openai-completions',
+        modelId: 'codemie-model',
+        baseUrl: codemieUrl,
+      );
+      expect(restored.headers?[codeMieClientHeader], 'my-org-client');
+
+      // Non-CodeMie builds stay header-less even under an override (INV-3).
+      final plain = buildCatalogModel('openai', 'plain-model');
+      expect(plain.headers, isNull);
+    });
+
     test('buildCliDefaultModel builds only from an explicit model id', () {
       // Providers carry NO default model (silent defaults picked paid
       // flagships behind the user's back): every provider without

@@ -177,4 +177,30 @@ void main() {
     ).toList();
     expect(requests.last.headers.containsKey(codeMieClientHeader), isFalse);
   });
+
+  test('the CODEMIE_CLIENT_ID deployment override rides the wire without '
+      'a code change (issue #2426 review)', () async {
+    codeMieClientOverride = 'my-org-client';
+    addTearDown(() => codeMieClientOverride = null);
+    final requests = <http.BaseRequest>[];
+    final client = http_testing.MockClient.streaming((request, body) async {
+      requests.add(request);
+      return http.StreamedResponse(
+        Stream.value(utf8.encode(_okSse)),
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
+    });
+
+    // A CLI/app deployment whose gateway attributes budgets to a different
+    // registered client id sets the env var — the defaults slot resolves it
+    // per request; the model carries no headers of its own.
+    await streamOpenAICompletions(
+      _codemieModel(),
+      _simpleContext(),
+      const OpenAICompletionsOptions(apiKey: 'sk-jwt'),
+      client,
+    ).toList();
+    expect(requests.single.headers['x-codemie-client'], 'my-org-client');
+  });
 }

@@ -309,4 +309,67 @@ void main() {
       expect(headers[codeMieClientHeader], codeMieClient);
     });
   });
+
+  group('CODEMIE_CLIENT_ID deployment override (issue #2426 review)', () {
+    test('resolveCodeMieClientOverride folds the trimmed env value', () {
+      expect(
+        resolveCodeMieClientOverride({
+          codeMieClientOverrideEnvVar: ' my-org-client ',
+        }),
+        'my-org-client',
+      );
+      expect(
+        resolveCodeMieClientOverride({
+          codeMieClientOverrideEnvVar: 'my-org-client',
+        }),
+        'my-org-client',
+      );
+      // Absent stays null (the constant keeps serving); a BLANK value must
+      // never blank the header — the gateway would lose the budget
+      // attribution entirely.
+      expect(resolveCodeMieClientOverride({}), isNull);
+      expect(
+        resolveCodeMieClientOverride({codeMieClientOverrideEnvVar: '   '}),
+        isNull,
+      );
+      // Unrelated env keys are ignored.
+      expect(
+        resolveCodeMieClientOverride({'OTHER_VAR': 'my-org-client'}),
+        isNull,
+      );
+    });
+
+    test('codeMieRequestHeaders resolves the override, null keeps the '
+        'constant', () {
+      addTearDown(() => codeMieClientOverride = null);
+      expect(codeMieRequestHeaders, {codeMieClientHeader: codeMieClient});
+      codeMieClientOverride = 'my-org-client';
+      expect(codeMieRequestHeaders, {codeMieClientHeader: 'my-org-client'});
+      // Still exactly one entry under the canonical lowercase name (E5).
+      expect(codeMieRequestHeaders.keys.single, codeMieClientHeader);
+      codeMieClientOverride = null;
+      expect(codeMieRequestHeaders, {codeMieClientHeader: codeMieClient});
+    });
+
+    test('rides the models fetch when the override is set', () async {
+      codeMieClientOverride = 'my-org-client';
+      addTearDown(() => codeMieClientOverride = null);
+      final headers = <String, String>{};
+      final client = http_testing.MockClient((request) async {
+        headers.addAll(request.headers);
+        return http.Response(
+          jsonEncode([
+            {'id': 'm'},
+          ]),
+          200,
+        );
+      });
+      await fetchCodeMieModels(
+        'https://org/code-assistant-api/v1',
+        'k=v',
+        client: client,
+      );
+      expect(headers[codeMieClientHeader], 'my-org-client');
+    });
+  });
 }

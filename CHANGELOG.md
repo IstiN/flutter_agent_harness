@@ -29,7 +29,9 @@ block a release again.
   (reconfigure + compaction summarizer). Merge order (defaults →
   model.headers → options) keeps an explicit user `x-codemie-client` entry
   winning and a null option suppressing; non-CodeMie providers stay
-  byte-identical on the wire.
+  byte-identical on the wire. Per-org adaptation needs no code change:
+  the `CODEMIE_CLIENT_ID` env var (CLI process env / app `.env`) overrides
+  the client value at startup (issue #2426 review).
 - feat(2416): GOAL #28 slim tool manifest — the default load mode is the
   owner's partition: twelve always-visible tools (keep-12, name-level:
   `memory_add`/`memory_search` stay while `memory_list`/`memory_delete`

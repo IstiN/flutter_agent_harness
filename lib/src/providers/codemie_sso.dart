@@ -42,15 +42,40 @@ const codeMieClientHeader = 'x-codemie-client';
 /// contract (`package:http` rejects non-Latin-1 header values).
 const codeMieClient = 'flutter-agent-harness';
 
+/// The environment variable carrying the per-deployment [codeMieClient]
+/// override (issue #2426 review): orgs whose gateway attributes budgets to
+/// a different registered client id set it instead of patching the
+/// constant. CLI: process environment; app: `.env`.
+const codeMieClientOverrideEnvVar = 'CODEMIE_CLIENT_ID';
+
+/// Deployment override for [codeMieClient] — resolved by the host ONCE at
+/// startup via [resolveCodeMieClientOverride] and stored here (same pattern
+/// as `providerFilterEnvOverride`: lib/ stays dart:io-free, web hosts with
+/// no process-env concept keep null). Null (the default) keeps
+/// [codeMieClient]; tests may set it directly (reset afterwards).
+String? codeMieClientOverride;
+
+/// Folds the `CODEMIE_CLIENT_ID` deployment override out of [env]: the
+/// TRIMMED value when present and non-empty, null otherwise. A blank value
+/// must never blank the header — the gateway would lose the budget
+/// attribution entirely (the header-less-request 429 is the bug being
+/// fixed, issue #2426).
+String? resolveCodeMieClientOverride(Map<String, String> env) {
+  final value = env[codeMieClientOverrideEnvVar]?.trim();
+  return value == null || value.isEmpty ? null : value;
+}
+
 /// The always-on CodeMie request headers (issue #2426): EVERY request to a
 /// CodeMie endpoint starts from this map — chat rides it through the
 /// openai-completions defaults slot (URL-gated by [isCodeMieBaseUrl]),
-/// the fetch family spreads it into its per-call header maps. The merge
-/// order (defaults → `Model.headers` → options) keeps an explicit user
-/// entry of the same name winning; the canonical name is lowercase (the
-/// merge is case-sensitive by map key — E5).
-const codeMieRequestHeaders = <String, String>{
-  codeMieClientHeader: codeMieClient,
+/// the fetch family spreads it into its per-call header maps. The client
+/// value resolves [codeMieClientOverride] first (deployment adaptation,
+/// issue #2426 review), falling back to the [codeMieClient] constant. The
+/// merge order (defaults → `Model.headers` → options) keeps an explicit
+/// user entry of the same name winning; the canonical name is lowercase
+/// (the merge is case-sensitive by map key — E5).
+Map<String, String> get codeMieRequestHeaders => {
+  codeMieClientHeader: codeMieClientOverride ?? codeMieClient,
 };
 
 /// Normalizes an organization URL to the API base:
