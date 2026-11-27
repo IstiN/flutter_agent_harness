@@ -106,6 +106,19 @@ const sqlite3PrewarmJobs = <String, List<String>>{
     'build-ios',
     'binaries',
     'binaries-pr',
+    // gh-2425 rework: the fa_ui shards compile packages/fa_ui — a graph
+    // that carries sqlite3 transitively (repo-root pubspec.yaml:76
+    // `sqlite3: ^3.5.1`, inherited through the flutter_agent_harness
+    // path dependency; packages/fa_ui/pubspec.yaml itself never names
+    // it) — so the
+    // `flutter test` step builds the native-assets hook and rolls the
+    // hook's single-attempt download dice; shard 0/3 red'd on one
+    // transient 504 Gateway Timeout (run 45904218215) exactly the
+    // gh-2072 incident shape. The job resolves packages/fa_ui through an
+    // inline `cd packages/fa_ui && flutter pub get`, so unlike the
+    // flutter_app legs it is NOT covered by the flutter-pub-get action's
+    // nested prewarm (AC4) — it carries its own step, pinned here.
+    'test-faui',
   ],
   '.github/workflows/build-mobile.yml': [
     'build-android',
@@ -154,6 +167,22 @@ const explicitTargetJobs = <String, List<String>>{
     'arm64-ios',
   ],
 };
+
+/// The package root a mapped job's prewarm must declare when the job runs
+/// no literal `dart pub get` run-step (AC6's explicit-root branch).
+/// flutter_app-only legs resolve through the flutter-pub-get action, so
+/// the default expectation is `flutter_app`; the fa_ui shards resolve
+/// packages/fa_ui through their inline `cd packages/fa_ui && flutter pub
+/// get` run-step — a `.` (or `flutter_app`) value there reads a
+/// package_config.json that never exists in that job, fails per-root,
+/// and the composite silently degrades the prewarm to the hook's own
+/// single-attempt download (gh-2072 review round 3, thread 17).
+const explicitPackageRootJobs = <String, String>{
+  'ci.yml/test-faui': 'packages/fa_ui',
+};
+
+String? expectedPackageRoot(String workflowPath, String jobKey) =>
+    explicitPackageRootJobs['${workflowPath.split('/').last}/$jobKey'];
 
 YamlMap workflowRoot(String workflowPath) =>
     loadYaml(read(workflowPath)) as YamlMap;
@@ -405,20 +434,26 @@ void main() {
           );
           if (pubGets.isEmpty) {
             // The job resolves a NON-root package (flutter_app through
-            // the flutter-pub-get action): the prewarm must name that
+            // the flutter-pub-get action; packages/fa_ui through the
+            // fa_ui shards' inline pub get): the prewarm must name that
             // root explicitly — the `.` default reads a root
             // package_config.json that never exists here and hard-fails
             // (gh-2072 review threads 3/4: build-android/build-ios red'd
-            // on the PR's own run exactly this way).
+            // on the PR's own run exactly this way). The expected value
+            // is per job (explicitPackageRootJobs): the fa_ui shards
+            // resolve packages/fa_ui, every other such job resolves
+            // flutter_app.
+            final expectedRoot =
+                expectedPackageRoot(workflow, jobKey) ?? 'flutter_app';
             for (final index in prewarm) {
               expect(
                 declaredPackageRoots(steps[index] as YamlMap),
-                'flutter_app',
+                expectedRoot,
                 reason:
                     '$workflow $jobKey runs no root `dart pub get` — its '
                     'prewarm must declare `package-roots:` with exactly '
-                    'the root the job actually resolves (flutter_app, '
-                    'via flutter-pub-get). Declaring the value is not '
+                    'the root the job actually resolves ($expectedRoot'
+                    '${expectedRoot == 'flutter_app' ? ', via flutter-pub-get' : ''}). Declaring the value is not '
                     'enough: a typo\'d root (or `.`) fails per-root and '
                     'the composite degrades the prewarm to a silent '
                     '::warning fallback (gh-2072 review round 3, thread '
@@ -612,117 +647,117 @@ void main() {
     // post-incident (gh-2072/2074/2075: 8-attempt ≈ 10 min composite
     // contract); these pins keep the RELEASE legs on the same contract,
     // so the same storm cannot re-strand a draft through them.
-    group('gh-2105 — build-macos.yml release legs ride the hardened prewarm', () {
-      const wf = '.github/workflows/build-macos.yml';
+    group(
+      'gh-2105 — build-macos.yml release legs ride the hardened prewarm',
+      () {
+        const wf = '.github/workflows/build-macos.yml';
 
-      test(
-        'build-macos-cli prewarms through the shared composite between pub '
-        'get and its first dart build, with per-arch targets the script '
-        'can resolve',
-        () {
-          final steps = jobSteps(wf, 'build-macos-cli');
-          final prewarm = [
-            for (var i = 0; i < steps.length; i++)
-              if ((steps[i] as YamlMap)['uses'] == prewarmAction) i,
-          ];
-          expect(
-            prewarm,
-            isNotEmpty,
-            reason:
-                'build-macos-cli runs `dart build cli` on a root package '
-                'graph carrying sqlite3 (via flutter_agent_memory) — the '
-                'hook downloads its prebuilt dylib in a single attempt '
-                'with no status check; one 504 error page reds the leg '
-                '(gh-2075, run 42566734746) and the stranded-draft shape '
-                'of gh-2105 re-arms. Add `uses: $prewarmAction`.',
-          );
-          final pubGet = [
-            for (var i = 0; i < steps.length; i++)
-              if (RegExp(
-                r'^\s*dart pub get\b',
-              ).hasMatch('${(steps[i] as YamlMap)['run'] ?? ''}'))
-                i,
-          ].first;
-          final firstBuild = [
-            for (var i = 0; i < steps.length; i++)
-              if (hookBuildingSignatures.any(
-                (re) => re.hasMatch('${(steps[i] as YamlMap)['run'] ?? ''}'),
-              ))
-                i,
-          ].first;
-          expect(
-            prewarm.first,
-            greaterThan(pubGet),
-            reason:
-                'the prewarm reads .dart_tool/package_config.json and '
-                'hard-fails before `dart pub get` has produced it',
-          );
-          expect(
-            prewarm.first,
-            lessThan(firstBuild),
-            reason:
-                'the prewarm must land in the hook cache BEFORE the first '
-                'hook-building step — a later prewarm never applies',
-          );
-          final step = steps[prewarm.first] as YamlMap;
-          final withMap = step['with'];
-          expect(
-            withMap,
-            isA<YamlMap>(),
-            reason: 'the composite invocation must pass `with:` inputs',
-          );
-          // The CLI legs build the ROOT package graph (dart build cli at
-          // the repo root) — the root is the correct package-roots value
-          // here, but it must be DECLARED: explicit targets never ride a
-          // silent default (the AC7 doctrine).
-          expect(
-            '${(withMap as YamlMap)['package-roots'] ?? ''}'.trim(),
-            '.',
-            reason:
-                'build-macos-cli resolves the root package (dart pub get '
-                'at the repo root) — declare package-roots: . explicitly '
-                'next to the explicit targets',
-          );
-          final targets = '${withMap['targets'] ?? ''}'.trim();
-          expect(
-            targets,
-            contains('matrix.arch'),
-            reason:
-                'the two matrix legs (arm64/x64) build different macOS '
-                'dylibs — a fixed target provisions one arch and leaves '
-                'the other on the bare hook download',
-          );
-          // Resolve the matrix placeholder for BOTH rows and validate the
-          // values through the script's own grammar (AC8 doctrine): the
-          // <abi>-<os> order, not the reversed <os>-<abi> the nightly
-          // android row rode green with (gh-2072 review thread 14).
-          for (final arch in ['arm64', 'x64']) {
-            final resolved = targets.replaceAll(
-              RegExp(r'\$\{\{\s*matrix\.arch\s*\}\}'),
-              arch,
+        test(
+          'build-macos-cli prewarms through the shared composite between pub '
+          'get and its first dart build, with per-arch targets the script '
+          'can resolve',
+          () {
+            final steps = jobSteps(wf, 'build-macos-cli');
+            final prewarm = [
+              for (var i = 0; i < steps.length; i++)
+                if ((steps[i] as YamlMap)['uses'] == prewarmAction) i,
+            ];
+            expect(
+              prewarm,
+              isNotEmpty,
+              reason:
+                  'build-macos-cli runs `dart build cli` on a root package '
+                  'graph carrying sqlite3 (via flutter_agent_memory) — the '
+                  'hook downloads its prebuilt dylib in a single attempt '
+                  'with no status check; one 504 error page reds the leg '
+                  '(gh-2075, run 42566734746) and the stranded-draft shape '
+                  'of gh-2105 re-arms. Add `uses: $prewarmAction`.',
             );
-            for (final target in expandTargets(
-              resolved,
-              hostTarget: hostTarget(),
-            )) {
-              expect(
-                () => sourceFilenameForTarget(target),
-                returnsNormally,
-                reason:
-                    'targets value "$target" (from "$targets", arch '
-                    '$arch) is not a target the prewarm script can '
-                    'download — it would fail per-target and the '
-                    'composite degrades to the bare hook download',
+            final pubGet = [
+              for (var i = 0; i < steps.length; i++)
+                if (RegExp(
+                  r'^\s*dart pub get\b',
+                ).hasMatch('${(steps[i] as YamlMap)['run'] ?? ''}'))
+                  i,
+            ].first;
+            final firstBuild = [
+              for (var i = 0; i < steps.length; i++)
+                if (hookBuildingSignatures.any(
+                  (re) => re.hasMatch('${(steps[i] as YamlMap)['run'] ?? ''}'),
+                ))
+                  i,
+            ].first;
+            expect(
+              prewarm.first,
+              greaterThan(pubGet),
+              reason:
+                  'the prewarm reads .dart_tool/package_config.json and '
+                  'hard-fails before `dart pub get` has produced it',
+            );
+            expect(
+              prewarm.first,
+              lessThan(firstBuild),
+              reason:
+                  'the prewarm must land in the hook cache BEFORE the first '
+                  'hook-building step — a later prewarm never applies',
+            );
+            final step = steps[prewarm.first] as YamlMap;
+            final withMap = step['with'];
+            expect(
+              withMap,
+              isA<YamlMap>(),
+              reason: 'the composite invocation must pass `with:` inputs',
+            );
+            // The CLI legs build the ROOT package graph (dart build cli at
+            // the repo root) — the root is the correct package-roots value
+            // here, but it must be DECLARED: explicit targets never ride a
+            // silent default (the AC7 doctrine).
+            expect(
+              '${(withMap as YamlMap)['package-roots'] ?? ''}'.trim(),
+              '.',
+              reason:
+                  'build-macos-cli resolves the root package (dart pub get '
+                  'at the repo root) — declare package-roots: . explicitly '
+                  'next to the explicit targets',
+            );
+            final targets = '${withMap['targets'] ?? ''}'.trim();
+            expect(
+              targets,
+              contains('matrix.arch'),
+              reason:
+                  'the two matrix legs (arm64/x64) build different macOS '
+                  'dylibs — a fixed target provisions one arch and leaves '
+                  'the other on the bare hook download',
+            );
+            // Resolve the matrix placeholder for BOTH rows and validate the
+            // values through the script's own grammar (AC8 doctrine): the
+            // <abi>-<os> order, not the reversed <os>-<abi> the nightly
+            // android row rode green with (gh-2072 review thread 14).
+            for (final arch in ['arm64', 'x64']) {
+              final resolved = targets.replaceAll(
+                RegExp(r'\$\{\{\s*matrix\.arch\s*\}\}'),
+                arch,
               );
+              for (final target in expandTargets(
+                resolved,
+                hostTarget: hostTarget(),
+              )) {
+                expect(
+                  () => sourceFilenameForTarget(target),
+                  returnsNormally,
+                  reason:
+                      'targets value "$target" (from "$targets", arch '
+                      '$arch) is not a target the prewarm script can '
+                      'download — it would fail per-target and the '
+                      'composite degrades to the bare hook download',
+                );
+              }
             }
-          }
-        },
-      );
+          },
+        );
 
-      test(
-        'desktop build step prewarms post-clean with the hardened script '
-        'and the composite retry budget',
-        () {
+        test('desktop build step prewarms post-clean with the hardened script '
+            'and the composite retry budget', () {
           final steps = jobSteps(wf, 'build-macos');
           final runText = [
             for (final step in steps.whereType<YamlMap>())
@@ -783,9 +818,7 @@ void main() {
           // must re-warm AFTER the clean or the hook re-downloads bare.
           expect(
             runText.indexOf('flutter clean'),
-            lessThan(
-              runText.indexOf('sqlite3_native_assets_prewarm.dart'),
-            ),
+            lessThan(runText.indexOf('sqlite3_native_assets_prewarm.dart')),
             reason:
                 'the prewarm must run AFTER `flutter clean` — the clean '
                 'wipes the hooks_runner cache and a pre-warmed-but-then-'
@@ -793,9 +826,7 @@ void main() {
           );
           expect(
             runText.indexOf('cd flutter_app'),
-            lessThan(
-              runText.indexOf('sqlite3_native_assets_prewarm.dart'),
-            ),
+            lessThan(runText.indexOf('sqlite3_native_assets_prewarm.dart')),
             reason:
                 'the prewarm must resolve flutter_app (the desktop build '
                 'compiles its graph, whose lockfile pins sqlite3) — run '
@@ -810,22 +841,22 @@ void main() {
                 'grammar (arm64-macos / x64-macos), not a host-auto '
                 'guess that can drift from the build arch',
           );
-        },
-      );
+        });
 
-      test('build-macos.yml no longer references the retired prewarm '
-          'script', () {
-        expect(
-          read(wf),
-          isNot(contains('sqlite3_hook_prewarm.dart')),
-          reason:
-              'both call sites must ride the hardened contract '
-              '(composite for build-macos-cli, the hardened script '
-              'in-run for the post-clean desktop prewarm) — one leg '
-              'staying on the 3-attempt budget is a leg the same storm '
-              'can still red',
-        );
-      });
-    });
+        test('build-macos.yml no longer references the retired prewarm '
+            'script', () {
+          expect(
+            read(wf),
+            isNot(contains('sqlite3_hook_prewarm.dart')),
+            reason:
+                'both call sites must ride the hardened contract '
+                '(composite for build-macos-cli, the hardened script '
+                'in-run for the post-clean desktop prewarm) — one leg '
+                'staying on the 3-attempt budget is a leg the same storm '
+                'can still red',
+          );
+        });
+      },
+    );
   });
 }

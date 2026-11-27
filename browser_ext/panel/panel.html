@@ -78,6 +78,12 @@
       <label>Model
         <input id="pModel" type="text" placeholder="fake:echo or an openai-compatible id" spellcheck="false">
       </label>
+      <label>Context window
+        <input id="pContextWindow" type="number" min="1" step="1" placeholder="tokens, e.g. 264000 (blank = default)" spellcheck="false">
+      </label>
+      <label>Custom headers
+        <textarea id="pHeaders" rows="3" placeholder="Name: value per line, e.g. x-copilot-integration-id: vscode-chat" spellcheck="false"></textarea>
+      </label>
       <label>Approval mode
         <select id="pApproval">
           <option value="ask">ask (prompt for write/exec)</option>
