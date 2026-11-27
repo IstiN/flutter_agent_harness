@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-27T02:39:54.651Z",
+  "ticketKey": "gh-2422",
+  "headSha": "e2c1af045ae36ff211c149a1fee59171d490a2fd",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_classification.json": {
+      "hash": "fnv1a64:f2f9742c45686aef",
+      "size": 93
+    },
+    "ci_failures.md": {
+      "hash": "fnv1a64:22e40cd74ec3bb8c",
+      "size": 117783
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:6a4b921b86ddca25",
+      "size": 2634451
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:fd2befd660a0930d",
+      "size": 312
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:ea22418046e3e3e6",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:d63bc9bca9a609dc",
+      "size": 14878
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:ce13a22bbe69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:ea38601e3d886cef",
+      "size": 495
+    },
+    "request.md": {
+      "hash": "fnv1a64:1ac6821c6dc9f4bd",
+      "size": 1041
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:161692b9c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:e7cf57b3e013ee30",
+      "size": 1098
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:1ac6821c6dc9f4bd",
+      "size": 1041
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:83bef6bb",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: global-scope edits are persisted into the repo-traveling project file**\n\nThe targeting criterion in `_projectTargets` is \"the section changed vs the baseline AND the project file carries the section\" — it never asks which SCOPE the edit belongs to. `persistConfig`'s overlays are global-scope values (`bin/fah_runapp.dart:2093-2097` passes `tools: cli.globalTools`, the global view), and `onToolsConfigChanged` is documented as \"the user changes the GLOBAL `tools:` scope … so the executable can persist the CLI's live global view (`globalTools`)\" (`lib/src/cli/agent_cli_config.dart:552-554`).\n\nReproduced live (writable workspace, project file seeded with `tools: {web_search: false}`):\n\n- after the `/tools enable web_search global`-equivalent save: **project file now `web_search: true`**, global file keeps `web_search: false`;\n- a subsequent unrelated `/mode architect` persist leaves the global file at `web_search: false` — the toggle never reaches the global file on this or any other machine (the block is \"shadowed, never re-rendered\" by design), and the repo-traveling file now carries a machine-local toggle that travels via git.\n\nThis contradicts the REPL's own scope model — `/tools` exposes separate `global` and `project` scopes, and `_mergeToolsIntoFile` merges per-key surgically when the user picks `project`. It also re-fires on every later persist (the live overlay never returns to the boot baseline and `saved` never learns about project writes): each `/mode`/`/model`/`/provider`/`/approval` switch rewrites the project file (content-identical rename → mtime churn on a possibly git-tracked file). The help text's \"the scope that wins at boot\" rationale is loose for `tools:` specifically — its project scope is consumed live and stacked per key (`lib/src/cli/cli_config.dart:1070-1072`), so a global toggle for a key the project does not name would take effect from the global file without any targeting.\n\nSuggested direction: target only sections whose change cannot take effect from the global file (boot precedence genuinely shadowed, e.g. the `cube:` startup default), or make the targeting scope-aware/per-key for `tools:` (mirror `_mergeToolsIntoFile`), or exclude global-scope overlays from targeting for the `persistConfig` caller. `--global` exists as an escape hatch, but the user gets no signal that their `global` toggle landed in a repo file."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:7d297b0b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: an unwritable workspace `.fah/` dir turns every later `persistConfig` into a raw throw**\n\n`_saveChangedProjectSections` degrades gracefully for an *unparseable* project file (`_parseYamlMapOrNull` → target nothing, documented), but an *unwritable* one throws: the atomic write (`tmp.writeAsString`/`rename`) fails with a raw `PathAccessException` that propagates out of `saveCliConfig` and out of the `persistConfig` hooks.\n\nReproduced live (`chmod 555` on `<project>/.fah`):\n\n```\nTHREW: PathAccessException: Cannot open file, path = '…/proj/.fah/config.yaml.tmp.7426.0'\n(OS Error: Permission denied, errno = 13)\n```\n\nPre-PR, `/tools <id> global`, `/cube` picks, `/mode`, `/model`, `/provider` … all wrote only the user home and succeeded in exactly the workspace this PR's own `--global` doc describes (\"workspaces whose project file is not this machine's to edit\"). Post-PR they hard-fail there, and because a targeted section stays != baseline for the process lifetime (the hook never re-syncs `saved` for project writes), **every subsequent persistConfig throws until restart** — one toggle bricks config persistence for the session. The boot save only catches `ConfigException` (`bin/fah_runapp.dart:2120-2126`), so an FS error would surface as an unhandled error, and the sibling `/tools project` write deliberately prints-and-returns-false for the same condition (`lib/src/cli/agent_cli_tools.dart:920-924`).\n\nSuggested direction: treat an unwritable project destination like the unparseable one — degrade to the global destination with a warning line (consistent with `_mergeToolsIntoFile`'s contract), or catch FS errors at the hook boundary. No test currently pins this failure contract."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:fb855436",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: project targets are computed outside the write chain — same-section lost update**\n\n`_projectTargets` runs against a snapshot read BEFORE `_serializedConfigWrite(file.path, …)` acquires the chain (line 188 reads the doc, line 190 enters the chain). Inside the chain the text is re-read, but the precomputed `targets` and `newBlocks` are applied verbatim — so another process's write to the SAME section that lands between the snapshot and the chain acquisition is clobbered (section-granularity lost update).\n\nThe global path handles this correctly: it re-reads `diskText` inside the chain and merges (`_mergeWithOnDisk`) there, which is exactly the discipline gh-2422 is about. Suggest recomputing the targets (or at least re-checking `_sectionChanged` against the freshly read text) inside the chain callback. Narrow window (two writers, same section, near-simultaneous), hence a suggestion rather than a blocker — but it is the one place in this PR where the serialization the save machinery advertises is not actually load-bearing."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:268c1a23",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 1 — global-scope edits are persisted into the repo-traveling project file\n\n**Fixed** — targeting is now scope-aware: `tools:` was removed from\n`_projectSaveSections` (`lib/src/cli/config_save_merge.dart`), so\n`persistConfig`'s `tools:` overlay — which is by construction the **global**\nscope (`cli.globalTools`, the view `/tools <id> global` mutates) — always\nlands in the global file.\n\nRationale (your suggested directions 1 + 3): every remaining\nproject-capable section (`memory`/`cube`/`spills`/`compaction`/`trajectory`/\n`logging`) wins **wholesale** at boot (`loadProject*` loaders), so a change\nto one genuinely cannot take effect from the global file while the project\nfile carries the section — targeting stays correct for those.\n`tools:` is the exception: its project scope is consumed live and stacked\n**per key** (deepest-wins), so a global toggle takes effect from the global\nfile for every key the project file does not name; for keys it does name,\nthe sanctioned writer is the explicit `/tools <id> project` flow\n(`_mergeToolsIntoFile`, per-key surgical) — never the whole-view persist.\n\nOn your live repro:\n\n- the global file now receives `web_search: true`;\n- the project file stays byte-identical — no machine-local toggle travels\n  via git, and the global block is no longer stale-shadowed;\n- the re-fired content-identical rewrites of the repo file on later\n  `/mode`/`/model` persists are gone (the section is no longer a target,\n  and the new byte-identity no-op in `_saveChangedProjectSections` covers\n  the remaining targeted sections — see thread 3).\n\nRegression tests in `test/cli_config_three_way_test.dart`:\n`a global-scope tools toggle never lands in the project file (the /tools\n<id> global repro)` (reproduced the bug before the fix) and the rewritten\n`a changed tools section never targets the project file even with other\nsections landing global (combo)`. The `--global` help text\n(`lib/src/cli/cli_help.dart`) and the `forceGlobalConfig` doc\n(`lib/src/cli/cli_args.dart`) no longer list `tools:` among the\nproject-targeted sections."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:7bbdcb3e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 2 — an unwritable workspace `.fah/` dir turns every later `persistConfig` into a raw throw\n\n**Fixed** — an FS failure at the project destination now degrades to the\nglobal destination with a stderr warning, exactly like the unparseable\ncase and consistent with `_mergeToolsIntoFile`'s print-and-continue\ncontract:\n\n- `_saveChangedProjectSections` (`lib/src/cli/config_save_merge.dart`)\n  wraps the serialized project write chain in `on FileSystemException`;\n- on failure it prints\n  `warning: cannot write project config <path> — saving to the global file instead (…)`\n  and returns **no** targets, so the changed sections stay in the global\n  emit and the save succeeds.\n\nOn your `chmod 555` repro: no throw, the global file carries the section,\nthe project file stays byte-identical, and later persists keep working —\na re-target of the still-≠-baseline section re-degrades harmlessly each\ntime instead of bricking persistence for the session.\n\n`ConfigException` from the pre-write validation still propagates on\npurpose: boot already catches it (`bin/fah_runapp.dart`), and an\nunparseable edited document is a data problem, not a permissions one.\n\nFailure contract pinned by\n`an unwritable project .fah dir degrades to the global destination —\npersistConfig never throws` in `test/cli_config_three_way_test.dart`\n(it reproduced the raw `PathAccessException` from your report before the\nfix, and additionally pins that the untouched destination is not renamed)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:403a7169",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 3 — project targets are computed outside the write chain\n\n**Picked up** (same file as the two IMPORTANT fixes, cheap) —\n`_saveChangedProjectSections` now parses the destination and derives\n`_projectTargets` from the text read **inside** the\n`_serializedConfigWrite` chain (the chain op returns the computed target\nset via the generic `Future<T>` form), mirroring the global path's\nre-read-and-merge-inside-the-chain discipline. The pre-chain snapshot and\nthe pre-chain parse are gone: a write another process landed while this op\nqueued decides, not the stale read.\n\nTwo related contracts applied inside the same chain:\n\n- **byte-identity no-op** (your digest point): a content-identical target\n  set reports takeover but skips the rename (`text == original → return`),\n  so the mtime churn you flagged under comment 1 — content-identical\n  rewrites renaming a possibly git-tracked file on every later persist —\n  is gone;\n- **degrade on FS failure** (thread 2) also happens at the chain boundary,\n  so the chain stays the single serialization point for the destination.\n\nThe loss-update window itself has no deterministic single-process repro\n(it needs a foreign write between snapshot and chain acquisition, and the\nwrite chain is private), so the proof here is structural parity with the\nglobal path plus the full suite green; the observable contracts around the\nchain (degrade on unparseable/unwritable, no-op on identical content,\ntargets-from-fresh-text) are pinned by new tests in\n`test/cli_config_three_way_test.dart`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:ec5caad6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-2422 three-way merge itself is solid (well-tested block algebra, legacy shape pinned, analyze/format/tests green), but the new project-file targeting persists **global-scope** edits (`/tools <id> global`, `/cube` picks) into the repo-traveling project file — leaving the global block stale forever — and hard-fails with a raw `PathAccessException` on unwritable workspaces, bricking every later `persistConfig` for the session.\n\n**Key Issues**:\n- ⚠️ `config_save_merge.dart:212` — global-scope toggles land in the project file; global block goes stale-shadowed (repro'd).\n- ⚠️ `config_save_merge.dart:174` — unwritable workspace `.fah/` → raw throw from every subsequent persist (repro'd; no test pins the contract).\n- 💡 `config_save_merge.dart:188` — targets computed outside the write chain; same-section lost update window.\n\n**Digest**:\n- `lib/src/cli/config_save_merge.dart` — the project write lacks the gh-1572 byte-identity no-op the global path has; content-identical rewrites rename the file (mtime churn on git-tracked files).\n- commit subject — `gh-242 [GOAL] fix(config): …` deviates from the repo's `type(scope): …` convention (AGENTS.md).\n\n**Next Steps**:\n1. Make targeting scope-aware (or per-key for `tools:`) so global-scope edits land in the global file — see comment1.\n2. Degrade an unwritable project destination to the global destination with a warning, mirroring `_mergeToolsIntoFile`; add a failure-contract test — see comment2.\n3. Recompute targets inside the serialized chain — see comment3.\n\nNote: no ticket ACs were available in `input/` (ticket.md carries only the PR description); review verified against the PR's own documented contract and the codebase's existing scope/serialization invariants. gh-2422's core fix (stale-baseline three-way emit, removal semantics, `--global` escape hatch) is correct and covered by 15 new tests."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:a1560597",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Re-review of the rework hunks (`8ba6df90f`): all three round-1 findings are verified **fixed** — `tools:` removed from the project-targeting set so global-scope toggles land in the global file (F1), an unwritable project destination now degrades to the global file with a warning instead of throwing out of every later `persistConfig` (F2), and project targets re-derive from the text read inside the serialized write chain with a byte-identity no-op (F3). Verified live in this checkout: `dart analyze` clean, `dart format` clean, `test/cli_config_three_way_test.dart` 18/18 (each fix pinned by its contract test), legacy merge/args/help suites 286/286.\n\n**Key Issues**: none open — the gh-2422 three-way merge, scope-aware project targeting, and the `--global` escape hatch match the ticket plan; all other `saveCliConfig` callers keep the legacy two-arg shape (backward compatible).\n\n**Next Steps**: none required — mergeable as is.\n\nRanked digest (counted: 1 🪶, posted as digest per the necessity test — no CI/merge impact):\n- `test/cli_config_three_way_test.dart:411` — 🪶 the unwritable-dir test runs `Process.runSync('chmod', …)` unconditionally, while its own cited precedent (`test/hub/dap_command_test.dart:349-351`) guards with `if (!Platform.isWindows)`: a local Windows `dart test` run fails here. Gate unaffected (CI dart-test shards are ubuntu-only) — wrap it like the precedent on a follow-up.\n\nAdvisory notes (not census findings):\n- commit `b4666fa3d5` — carried from round 1, unchanged: the subject `gh-2422 [GOAL] fix(config): …` deviates from the repo's `type(scope): …` convention (AGENTS.md); resolves naturally at squash-merge.\n- `lib/src/cli/cli_help.dart:762` — pre-existing frozen line, untouched by this PR: the CONFIGURATION FILES help lists project overrides as `memory:, cube:, spills:, compaction:, and logging:` but omits the project-capable `trajectory:` (`loadProjectTrajectorySection`); one-line doc fix opportunistically.\n\nRegistry: F1/F2/F3 → `fixed` (hunk references in `pr_review.json`)."
+    }
+  ]
+}
