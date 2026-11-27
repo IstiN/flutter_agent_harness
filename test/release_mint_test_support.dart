@@ -192,6 +192,13 @@ exit 0
     'GH_STUB_VIEW_FOUND_AFTER_FIRST': viewFoundAfterFirst ? '1' : '0',
     'GH_STUB_STATE': dir.path,
     'GH_NOTES_CAPTURE': '${dir.path}/notes-capture.md',
+    // The mint's train-verify loop sleeps BEFORE its first probe, so even
+    // the happy path (stub answers a run row instantly) paid one full
+    // 10s production sleep per run (the negative-path tests already set
+    // these; the positive ones forgot). Probe immediately in the fixture
+    // — production keeps the 10s/12-try budget. Caller overrides win.
+    'RELEASE_TRAIN_VERIFY_SLEEP': '0.05',
+    'RELEASE_TRAIN_VERIFY_TRIES': '4',
     ...extraEnv,
   };
   // Explicit override both ways: Process.runSync merges the parent env by

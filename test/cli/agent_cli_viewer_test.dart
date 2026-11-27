@@ -783,7 +783,7 @@ void main() {
           // real wall at the production 2s default. Same beat semantics —
           // the every-other-tick wiring and the alarm-every-3 logic run
           // unmodified, just faster.
-          inboxTickInterval: const Duration(milliseconds: 20),
+          inboxTickInterval: _kFastTick,
         ),
         io: io,
         streamFunction: FakeStreamFunction([]).call,
@@ -870,7 +870,7 @@ void main() {
           processId: 4242,
           presenceStore: presence,
           // Same 20ms cadence compression as the stalled-beat rig above.
-          inboxTickInterval: const Duration(milliseconds: 20),
+          inboxTickInterval: _kFastTick,
         ),
         io: io,
         streamFunction: FakeStreamFunction([]).call,
