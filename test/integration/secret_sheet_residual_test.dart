@@ -147,10 +147,22 @@ void main() {
     // bullet count the PTY can paint past.
     await typeSecret('s3cr3t-TOKEN-42');
     harness.sendEnter(); // grant #1 -> mock turn 2 requests another secret
-    await harness.waitForText(
-      'OTHER_API_KEY',
+    // gh-2427: anchor on the SECOND sheet's own painted frame, never the
+    // raw stream. The history tool row (`• request_secret · OTHER_API_KEY`)
+    // hits the wire BEFORE the sheet paints — and this flake's product bug
+    // (#2416 round 2: a tool mounted earlier in the run resolved to plain
+    // not-found on the second direct call, fixed by the round-3
+    // live-registry lookup) painted exactly that row with the sheet never
+    // opening, so the raw match raced a frame that would never come. The
+    // reason text is frame-unique: tool rows carry only the credential
+    // name, so this marker exists only inside the second sheet's frame.
+    final screen = await harness.waitForScreen(
+      'for the other service',
       timeout: const Duration(seconds: 20),
     );
+    // Re-read the live viewport only after a settle (gh-1049):
+    // expectFrameIntact reads viewportLines, so let any trailing paint
+    // drain before the assertions.
     await harness.waitForOutput(settleMs: 500);
 
     // The second sheet starts with an EMPTY value buffer: no dots from the
@@ -158,14 +170,14 @@ void main() {
     // appears in tool-row glyphs (`• request_secret · …`), so the residual
     // check targets RUNS of dots (the masked value), not the glyph.
     expect(
-      harness.screenText.contains('•••'),
+      screen.contains('•••'),
       isFalse,
       reason: 'the second sheet shows value dots from the first secret',
     );
     // The first sheet's reason text must be fully gone: the second frame is
     // shorter, so a stale row would survive BELOW or INSIDE it.
     expect(
-      harness.screenText.contains('the upstream API'),
+      screen.contains('the upstream API'),
       isFalse,
       reason: 'ghost of the first sheet is still on screen',
     );
@@ -250,11 +262,11 @@ void main() {
           .where((l) => l.contains('•') && l.trimRight().endsWith('│'))
           .map((l) => l.split('•').length - 1)
           .toList();
-      expect(
-        maskedRows,
-        [19, 6, 17],
-        reason: 'every pasted char must be masked (one row per line)',
-      );
+      expect(maskedRows, [
+        19,
+        6,
+        17,
+      ], reason: 'every pasted char must be masked (one row per line)');
       await harness.waitForOutput(settleMs: 500);
       expectFrameIntact();
       // Masked mode: no byte of the secret may reach the screen or the raw
