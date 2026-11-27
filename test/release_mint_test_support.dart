@@ -33,6 +33,7 @@ class MintRun {
     this.pushes,
     this.gitLog, {
     this.notesCapture = '',
+    this.rosterIds = const [],
   });
   final int exitCode;
   final String output;
@@ -44,6 +45,12 @@ class MintRun {
   /// create` (empty when the stub never captured one) — gh-237 body-cap
   /// evidence.
   final String notesCapture;
+
+  /// The ids of the release objects still on the stub roster after the
+  /// run (gh-2432 rework: every landed create — a 500 that landed
+  /// server-side or a success — records an object; a dedupe DELETE
+  /// removes it). Empty when nothing landed.
+  final List<String> rosterIds;
 }
 
 /// A local bare origin whose refs answer but lack the release tag (the
@@ -102,6 +109,55 @@ if [ "\$1" = "release" ] && [ "\$2" = "create" ]; then
     echo "body is too long (maximum is 125000 characters)" >&2
     exit 1
   fi
+  # gh-2432: fail the FIRST N creates with a TRANSIENT GitHub API 5xx —
+  # the exact v1.0.778 shape (HTTP 500 from POST /releases on every
+  # hosted binaries leg while the release still materialised minutes
+  # later). The counter counts create ATTEMPTS, so the retry under test
+  # answers 500 for attempts ≤ N and succeeds afterwards. The v1.0.778
+  # twist the landed-500 tests pin: a 500'd attempt may still CREATE the
+  # draft server-side (it resolved minutes later to the macOS legs), so
+  # EVERY landed create — a 500'd one or a success — records a roster
+  # object the twin dedupe can list and delete by id.
+  record_draft() {
+    rid="\$(cat "\$GH_STUB_STATE/roster-next-id" 2>/dev/null || echo 100)"
+    printf '%s' "\$((rid + 1))" > "\$GH_STUB_STATE/roster-next-id"
+    printf '{"id":%s,"tag_name":"%s","draft":true,"created_at":"2026-11-26T00:00:00Z","author":{"login":"ai-teammate","type":"Bot"},"body":"<!-- release-draft-owner: %s -->"}\\n' \\
+      "\$rid" "\$1" "\${RELEASE_DRAFT_IDENTITY:-run/\$GITHUB_RUN_ID/job/\$GITHUB_JOB}" \\
+      >> "\$GH_STUB_STATE/roster.jsonl"
+  }
+  n5xx="\${GH_STUB_CREATE_FAILS_5XX_N:-0}"
+  if [ "\$n5xx" -gt 0 ]; then
+    n=\$(( \$(cat "\$GH_STUB_STATE/creates-attempted" 2>/dev/null || echo 0) + 1 ))
+    echo "\$n" > "\$GH_STUB_STATE/creates-attempted"
+    if [ "\$n" -le "\$n5xx" ]; then
+      record_draft "\$3"
+      echo "HTTP 500 (https://api.github.com/repos/OWNER/REPO/releases) (stub)" >&2
+      exit 1
+    fi
+  fi
+  record_draft "\$3"
+  exit 0
+fi
+if [ "\$1" = "api" ]; then
+  case "\$*" in
+    *repos/OWNER/REPO/releases*)
+      if [ "\$2" = "-X" ] && [ "\$3" = "DELETE" ]; then
+        rid="\${4##*/}"
+        grep -v "\\"id\\":\$rid," "\$GH_STUB_STATE/roster.jsonl" \\
+          > "\$GH_STUB_STATE/roster.jsonl.tmp" 2>/dev/null || :
+        mv "\$GH_STUB_STATE/roster.jsonl.tmp" "\$GH_STUB_STATE/roster.jsonl" 2>/dev/null || :
+        exit 0
+      fi
+      # A JSON stream of objects (jq -s collects them) — `[]` when the
+      # roster is empty or nothing ever landed.
+      if [ -s "\$GH_STUB_STATE/roster.jsonl" ]; then
+        cat "\$GH_STUB_STATE/roster.jsonl"
+      else
+        echo "[]"
+      fi
+      exit 0
+      ;;
+  esac
   exit 0
 fi
 exit 0
@@ -224,5 +280,18 @@ exit 0
     notesCapture: File('${dir.path}/notes-capture.md').existsSync()
         ? File('${dir.path}/notes-capture.md').readAsStringSync()
         : '',
+    rosterIds: _rosterIds('${dir.path}/roster.jsonl'),
   );
+}
+
+/// The ids still on the stub roster (one JSON object per line, created
+/// in ascending-id order) — the twin-dedupe survival evidence.
+List<String> _rosterIds(String path) {
+  if (!File(path).existsSync()) return const [];
+  return File(path)
+      .readAsLinesSync()
+      .where((l) => l.isNotEmpty)
+      .map((l) => RegExp(r'"id":(\d+),').firstMatch(l)?.group(1))
+      .whereType<String>()
+      .toList();
 }

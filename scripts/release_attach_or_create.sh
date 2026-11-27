@@ -168,8 +168,20 @@ if gh release create "$tag" \
   # we won the election, or the dedupe blipped and kept it) or to the
   # winner? A view blip yields an empty body and falls through to the
   # attach: with our draft gone, only the winner can serve the assets.
+  # gh-2432 rework: a marker match alone is no longer proof — the
+  # own-twin election can keep our OLDER same-marker twin while deleting
+  # the draft this create CARRIED the assets onto, so a marker-matching
+  # body can still be a zero-asset survivor. Fall through to upload_all
+  # (idempotent — release_asset_gate.sh skips already-attached assets)
+  # unless every asset of this call is already on the resolved object
+  # (the election-winner happy path stays free of a re-upload).
   resolved_body=$(gh release view "$tag" --repo "$repo" --json body --jq .body 2>/dev/null || echo "")
-  if printf '%s' "$resolved_body" | grep -qF -- "$marker"; then
+  resolved_assets="$(gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name' 2>/dev/null || echo "")"
+  assets_attached=true
+  for a in "${assets[@]}"; do
+    printf '%s\n' "$resolved_assets" | grep -qxF -- "$a" || assets_attached=false
+  done
+  if printf '%s' "$resolved_body" | grep -qF -- "$marker" && [ "$assets_attached" = true ]; then
     echo "✅ created draft release $tag with ${#assets[@]} asset(s) — publish is provenance-owned (gh-1801)"
     exit 0
   fi
