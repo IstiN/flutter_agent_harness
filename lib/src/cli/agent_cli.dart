@@ -116,7 +116,9 @@ import '../prompts/prompts.g.dart'
         readSqliteSectionPrompt,
         cliPiModePrompt,
         finalizeGateContractPrompt,
-        recallHygienePrompt;
+        recallHygienePrompt,
+        workingSetPrompt,
+        contextHygienePrompt;
 import '../prompts/project_context.dart';
 import '../approval/approval.dart';
 import '../wire/wire_serve.dart';
@@ -129,6 +131,15 @@ import '../compaction/handoff_digest.dart';
 import '../compaction/emergency_relief.dart';
 import '../compaction/hand_over_trigger.dart';
 import '../compaction/host_wiring.dart';
+import '../compaction/newest_user_turn.dart'
+    show
+        isBoundarySummary,
+        leadingBoundaryCluster,
+        newestBoundarySummaries,
+        newestRealUserTurnIndex;
+import '../compaction/overhead_calibration.dart';
+import '../compaction/record_tag.dart' show TranscriptSeqMap;
+import '../compaction/soft_window.dart' show SoftWindowNotice, softWindowRegime;
 import '../compaction/tuning.dart';
 import '../compaction/structured/continuation_notice.dart';
 import '../compaction/token_estimation.dart';
@@ -136,6 +147,7 @@ import '../context.dart';
 import '../cube/cube.dart';
 import '../env/cwd_override_env.dart';
 import '../env/execution_env.dart';
+import '../env/process_lstart.dart' show tryParseLstart;
 import '../env/session_vars_execution_env.dart';
 import '../hosts/host_agent_wiring.dart';
 import '../compaction/context_window_registry.dart';
@@ -397,6 +409,9 @@ part 'agent_cli_chain_gate.dart';
 part 'agent_cli_herdr.dart';
 part 'agent_cli_handoff.dart';
 part 'agent_cli_network.dart';
+part 'agent_cli_working_set.dart';
+part 'agent_cli_context_notices.dart';
+part 'agent_cli_session.dart';
 
 /// gh-1603: the explicit headless marker for a run that settled WITHOUT a
 /// final answer (an unrecoverable empty completion after the nudge budget).
@@ -670,8 +685,14 @@ class AgentCli {
           ),
         ],
         obligationsClose: (id, status) => closeObligation(id, status),
-        goalRecite: (goal) => reciteGoal(goal),
-        goalReciteCurrent: currentGoalRecitation,
+        // gh-2423 C1: the MAIN agent's working-set store (the live
+        // session + the session redactor); children bind their own.
+        workingSet: SessionWorkingSetStore(
+          openSession: () async => _session,
+          session: () async => _session ?? (throw StateError('no session')),
+          redaction: config.redactionPipeline,
+          onSaved: _onWorkingSetSaved,
+        ),
         hubFabric: config.hubFabric,
         // Hub mail merges into the MAIN inbox — lazily, so the manager
         // (constructed inside the builder) may not exist yet.
@@ -903,6 +924,10 @@ class AgentCli {
     );
     _toolRegistry = stack.registry;
     _agent = stack.agent;
+    final seededCalibration = config.initialOverheadCalibration;
+    if (seededCalibration != null) {
+      _agent.state.overheadCalibration = seededCalibration;
+    }
     // Issue #1786: the one-key accept + the watchdog's escalate rung call
     // into the loop's budget ladder through these controls.
     _agent.foregroundBudgetControls = _foregroundBudgetControls;
@@ -1873,11 +1898,37 @@ class AgentCli {
   /// must not re-warn each time.
   bool _heavyScanGuardShown = false;
 
+  /// gh-2411: the soft-window warning's once-per-session latch (the
+  /// regime holds for every turn; the notice shows once). Lives on
+  /// [AgentCli] — extensions can't declare fields.
+  /// gh-241 follow-up #5d (D6): whether the last over-window relief
+  /// hid or trimmed content (a receipt and a "cut" line need it).
+  bool _reliefCutContent = false;
+
+  final SoftWindowNotice _softWindowNotice = SoftWindowNotice();
+
+  /// Scope-2 B: the over-window guard-stop notice's once-per-session
+  /// latch (same mechanism as the soft-window warning).
+  final SoftWindowNotice _guardStopNotice = SoftWindowNotice();
+
+  /// gh-2411 (owner live test): the transcript length at which the
+  /// soft window's hide-only relief last freed NOTHING — it re-runs
+  /// only after the transcript changed (a bounded pass, never a
+  /// per-prompt retry). `null` = no no-op remembered.
+  int? _softWindowReliefNoOpAt;
+
   /// HEP v1 writer for backend agent mode (`--output events`, issue #155);
   /// null in the REPL. Set by [runHeadless], read by the compaction pass
   /// to bracket runs with frames.
   HepWriter? _hep;
   var _persistedCount = 0;
+
+  /// gh-241 follow-up #5 (F3/R3): the one-line notice of the LAST loaded
+  /// session whose projection is a tail of the file (`[resume] loaded the
+  /// last K message(s) …`) — re-printed by the TUI restored-session
+  /// replay, because the boot load runs before the alternate screen.
+  /// `null` = the whole session loaded (or nothing loaded yet).
+  String? _resumeTailNotice;
   var _streamedText = false;
 
   /// The session instance the gh-1241 usage segment-start marker was
@@ -2157,9 +2208,6 @@ class AgentCli {
   Future<void> run() async {
     await _cubeBootRestore();
     await _requireLeaseClaim();
-    // Restart honesty (issue #450): jobs in the manifest were left
-    // running by the previous run — count them, then take the file over.
-    await _waiting.captureLostJobs();
     await _loadAgentContext();
     // Persisted model cache (stale-while-revalidate): the /model picker
     // serves the last fetched lists instantly at boot; the live refresh
@@ -2167,6 +2215,11 @@ class AgentCli {
     await _loadPersistedModelCache();
     _session = await _initializeSession();
     _notifyPluginSessionReady();
+    // Restart honesty (issue #450): jobs in the manifest were left
+    // running by the previous run — count them, then take the file over.
+    // gh-2413: AFTER the session opens — the reconcile adopts only this
+    // session's owner-tagged entries, so it needs the session id.
+    await _waiting.captureLostJobs();
     // Ownership lease (#428): claim before anything can drive — a live
     // lease flips this boot into viewer mode (no takeover exists).
     await _requireLeaseClaim();
@@ -2263,54 +2316,6 @@ class AgentCli {
 
   /// The line-mode REPL: banner, restored-session replay, then the
   /// read-dispatch loop.
-
-  /// The `fa --session …` resume line, or null when nothing was persisted.
-  /// Separate from [printSessionResumeHint] so non-REPL callers (the SIGINT
-  /// exit path) can print it to the REAL stdout after the TUI is gone —
-  /// routing through [io] there would write into a dead transcript.
-  Future<String?> sessionResumeHint() async {
-    final session = _session;
-    if (session == null || _persistedCount == 0) return null;
-    // A windowed marathon resume pages only the tail up to the compaction
-    // boundary: a name written at creation stays OUTSIDE the resident
-    // window, so getSessionName() reads null and the hint degraded to the
-    // raw id (user report after #503 windowing). Probe the file's
-    // head+tail windows — the same bounded quick path `--session NAME`
-    // resolution uses (#369) — before falling back to the id.
-    var name = await session.getSessionName();
-    final metadata = await session.getMetadata();
-    if (name == null) {
-      final repo = _repo;
-      if (repo is JsonlSessionRepo) {
-        try {
-          name = await repo.sessionNameQuick(metadata);
-        } on Object {
-          name = null; // unreadable file at exit: degrade to the id
-        }
-      }
-    }
-    final id = name ?? metadata.id;
-    return "resume this session with: fa --session '$id'";
-  }
-
-  /// Resolves when the in-flight run settles, bounded by [timeout] so an
-  /// exit path (SIGINT) can never wedge on a stuck provider — a partial
-  /// transcript is still persisted by the run's own error/abort handling.
-  Future<void> waitForIdle({Duration timeout = const Duration(seconds: 5)}) {
-    return _settled.timeout(timeout, onTimeout: () {});
-  }
-
-  /// Deletes the active session's file when nothing was ever said in it:
-  /// opening the CLI and leaving (or only poking slash commands) must not
-  /// litter the sessions list with empty files. Best-effort - exit and
-  /// session switching never fail on it. A session that owns subagents is
-  /// NOT empty: its `subagent_registry` record is real content. A session
-  /// that already has persisted records (e.g. a user message saved before a
-  /// run that was interrupted) is also kept.
-  Future<void> deleteSessionIfEmpty() async {
-    if (!_sessionIsEmpty()) return;
-    await _deleteEmptySessionFile();
-  }
 
   /// The rows shown by the most recent `/sessions` picker (issue #198), so
   /// a picker selection resolves to metadata without a second round trip.
@@ -2619,6 +2624,10 @@ class AgentCli {
   /// [_runPrompt] entry).
   bool _overWindowAutoResumed = false;
 
+  /// The context-stop turn end stashed by `_logEventForensics` — logged
+  /// when the run settles, not when the turn ends (gh-241 #5e, E2).
+  AssistantMessage? _pendingContextStop;
+
   /// The user-wired cancellation for the in-flight compaction, if any
   /// (issue #1085 M3): Ctrl+C during a 15-30 min pre-flight / relief /
   /// post-run compaction must stop the compaction, not wait it out. Set
@@ -2658,6 +2667,9 @@ class AgentCli {
   /// «[auto-compacted · continuing]» shows while the run continues after
   /// a mid-run fold and clears when the turn settles.
   int _autoFoldCount = 0;
+
+  /// gh-2423 C3: the near-limit notice fires once per compaction cycle.
+  final ContextNoticeLatch _nearLimitNoticeLatch = ContextNoticeLatch();
 
   /// Test seam: every busy-row phase pushed, in order (issue #653 — the
   /// fold marker must never ride the busy row; see `_pushBusyPhase` in

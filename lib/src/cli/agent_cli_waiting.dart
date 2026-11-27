@@ -61,6 +61,7 @@ final class _ManifestEntry {
     this.pid,
     this.pidStart,
     this.startedAtMs,
+    this.owner,
   });
 
   final String id;
@@ -72,6 +73,17 @@ final class _ManifestEntry {
 
   /// When the entry was written (epoch ms) — the age belt's clock.
   final int? startedAtMs;
+
+  /// Which SESSION wrote the entry (gh-2413): the writing fa process's
+  /// session id. `running.json` is shared by every fa process in the
+  /// workspace, so the boot reconcile adopts only entries whose owner is
+  /// this session (or absent — a legacy record from before owner tags,
+  /// which keeps the pre-gh-2413 adoption); a foreign session's live
+  /// entry stays in the manifest untouched: never adopted here, never a
+  /// reap candidate, never dropped while its pid lives. The SESSION id
+  /// (not the pid) is the owner so a restarted run of the same session
+  /// still re-adopts its own previous-run jobs (issue #478).
+  final String? owner;
 
   /// Parses one raw JSON entry; null for anything without a usable id
   /// (tolerated and dropped — only a structurally broken FILE is
@@ -86,6 +98,9 @@ final class _ManifestEntry {
       pid: int.tryParse('${raw['pid']}'),
       pidStart: raw['pidStart'] is String ? raw['pidStart'] as String : null,
       startedAtMs: raw['startedAtMs'] is int ? raw['startedAtMs'] as int : null,
+      owner: raw['owner'] is String && (raw['owner'] as String).isNotEmpty
+          ? raw['owner'] as String
+          : null,
     );
   }
 
@@ -95,6 +110,7 @@ final class _ManifestEntry {
     'pid': pid?.toString(),
     if (pidStart != null) 'pidStart': pidStart,
     if (startedAtMs != null) 'startedAtMs': startedAtMs,
+    if (owner != null) 'owner': owner,
   };
 }
 
@@ -515,12 +531,18 @@ final class _WaitingCoordinator {
       for (final entry in reconcile.kept) {
         final pid = entry.pid;
         if (pid == null) continue;
+        // gh-2413: a FOREIGN session's live entry is never adopted here —
+        // it stays in the manifest (untouched above, never a reap
+        // candidate below) for its own session's next boot. Legacy
+        // owner-less records keep today's adoption and say so.
+        if (!_isOwnEntry(entry)) continue;
         _jobs.adoptRunningEntry(
           id: entry.id,
           command: entry.command ?? '<unknown cmd>',
           pid: pid,
           pidStart: entry.pidStart,
           startedAtMs: entry.startedAtMs,
+          adoptedFrom: entry.owner == null ? 'unknown owner' : 'this session',
         );
       }
     }
@@ -534,6 +556,7 @@ final class _WaitingCoordinator {
       env: _cli._env,
       candidatePids: pids,
       onWarn: (message) => _cli.io.writeln(tuiWarning('⚠ $message')),
+      groupTableOverride: _groupTableOverride,
     );
     final prunedLogs = await _pruneOldJobLogs();
     final notes = <String>[
@@ -577,9 +600,12 @@ final class _WaitingCoordinator {
       final entries = await _readRegistryEntries(
         onQuarantined: () => quarantined = true,
       );
+      // gh-2413: the #517 sweep's candidates are OWN entries only — a
+      // foreign session's record (its leader may be mid-settle, or its
+      // pid recycled) is never this boot's to group-kill.
       pids = [
         for (final entry in entries)
-          if (entry.pid != null) entry.pid!,
+          if (entry.pid != null && _isOwnEntry(entry)) entry.pid!,
       ];
       // An empty registry has nothing to verify — skip the process probe
       // entirely (the #517 sweep has no pids to work with either).
@@ -646,14 +672,39 @@ final class _WaitingCoordinator {
               ...entries,
               _ManifestEntry(
                 id: id,
-                command: command,
+                command: _manifestCommand(command),
                 pid: pid,
                 pidStart: pidStart,
                 startedAtMs: _clock().millisecondsSinceEpoch,
+                owner: _ownerTag,
               ),
             ];
     });
   }
+
+  /// The manifest `command` field at rest (gh-2413 shared-dir hygiene):
+  /// through the SAME at-rest redactor the job logs get (issue #1408 AC2)
+  /// — raw when no pipeline is configured; the `redact:` policy decides,
+  /// never this file.
+  String _manifestCommand(String command) {
+    final pipeline = _cli.config.redactionPipeline;
+    return pipeline == null ? command : pipeline.redact(command);
+  }
+
+  /// This process's owner tag (gh-2413): the session id, or null when the
+  /// session is not (yet) known — a non-caching storage, or a boot before
+  /// the session opened. Null never claims anything: entries carrying an
+  /// owner are then all foreign, and only legacy owner-less records adopt.
+  String? get _ownerTag => ownerTagOverride ?? _cli._session?.cachedId;
+
+  /// Test seam (gh-2413): pins the owner tag without a session.
+  @visibleForTesting
+  String? ownerTagOverride;
+
+  /// Whether [entry] belongs to THIS session (gh-2413): an owner-less
+  /// legacy record (pre-gh-2413) or one tagged with our owner.
+  bool _isOwnEntry(_ManifestEntry entry) =>
+      entry.owner == null || entry.owner == _ownerTag;
 
   Future<void> _manifestRemove(String id) async {
     await _mutateRegistry(
@@ -868,6 +919,10 @@ final class _WaitingCoordinator {
   /// recorded command.
   Future<_ProcessTable?> Function()? _liveProcesses;
 
+  /// Test seam (gh-2413): the boot sweep's group table (`ps -ax -o pid=,
+  /// pgid=`); null = the real probe.
+  Future<String?> Function()? _groupTableOverride;
+
   /// The boot process snapshot: the injected seam when a test set one,
   /// else the real probe.
   Future<_ProcessTable?> _bootProcessTable() =>
@@ -929,8 +984,34 @@ final class _WaitingCoordinator {
     if (recorded != null && actual != null && recorded != actual) {
       return _BootLiveness.dead;
     }
+    if (recorded == null && _recycledLegacyPid(entry, actual)) {
+      return _BootLiveness.dead;
+    }
     return _BootLiveness.alive;
   }
+
+  /// gh-2413: no start string was ever recorded for this pid (a legacy
+  /// record, or a probe that could not report one) while the table
+  /// reports [actual] now. A pid that started AFTER the entry was written
+  /// ([legacyPidStartToleranceMs] of slack) is a recycled stranger, never
+  /// the recorded job — presence alone must not adopt it (a later
+  /// `bash_job stop` would group-kill it). An entry without a birth time
+  /// keeps today's presence-only liveness (the age belt still applies).
+  bool _recycledLegacyPid(_ManifestEntry entry, String? actual) {
+    final startedAtMs = entry.startedAtMs;
+    if (actual == null || startedAtMs == null) return false;
+    final actualStart = tryParseLstart(actual);
+    if (actualStart == null) return false;
+    return actualStart.millisecondsSinceEpoch >
+        startedAtMs + legacyPidStartToleranceMs;
+  }
+
+  /// How much later than the manifest entry's own birth a live pid may
+  /// have started and still be the recorded job (gh-2413 legacy guard):
+  /// `ps lstart` has one-second resolution and the start probe runs a few
+  /// ms after the job registers, so the slack is generous — anything that
+  /// started a minute after the entry was written is a recycled pid.
+  static const legacyPidStartToleranceMs = 60 * 1000;
 
   /// Boot log GC (issue #478): deletes `*.log` files older than
   /// `jobs.logRetentionDays` (`0` keeps all) and returns how many went.
@@ -1313,8 +1394,8 @@ String adoptedJobSettleDimText(ShellJobEntry job) {
 }
 
 String _plainAdoptedSettleDim(ShellJobEntry job) =>
-    '${job.id} is no longer running (adopted pid ${job.pid}, '
-    'liveness-only)';
+    '${job.id} is no longer running (adopted pid ${job.pid}'
+    '${adoptedFromClause(job)}, liveness-only)';
 
 String _unverifiedStopDim(ShellJobEntry job) =>
     '${job.id} stopped (adopted pid ${job.pid}) — its process group is '
@@ -1341,6 +1422,12 @@ extension AgentCliShellJobSettle on AgentCli {
   /// system-notice steered into the running turn or run as a fresh turn
   /// while idle.
   void _onShellJobSettled(ShellJobEntry job) {
+    // gh-2413: only THIS session's registry jobs settle through here. A
+    // foreign entry — another session's job reaching this host through
+    // the shared manifest or a peer process — must touch nothing: not
+    // the board, not the manifest (that would erase its owner's record),
+    // not the steering queue or an idle reaction run.
+    if (!identical(_shellJobs.job(job.id), job)) return;
     _onShellJobSettledBlock(job);
     // Event-driven waiting-row leave (issue #450).
     unawaited(_waiting.jobSettled(job));
@@ -1503,6 +1590,25 @@ extension AgentCliWaitingSeams on AgentCli {
   set waitingProcessTableForTest(
     Future<({Set<int> pids, Map<int, String> starts})?> Function()? probe,
   ) => _waiting._liveProcesses = probe;
+
+  /// Test seam (gh-2413): pins the owner tag (the session id) the boot
+  /// reconcile adopts by, without opening a session. Null restores the
+  /// live `_session.cachedId`.
+  @visibleForTesting
+  set waitingOwnerTagForTest(String? owner) =>
+      _waiting.ownerTagOverride = owner;
+
+  /// Test seam (gh-2413): the boot sweep's `ps -ax -o pid=,pgid=` fixture
+  /// (`reapOrphanJobGroups`' group table). Null restores the real probe.
+  @visibleForTesting
+  set waitingGroupTableOverrideForTest(Future<String?> Function()? probe) =>
+      _waiting._groupTableOverride = probe;
+
+  /// Test seam (gh-2413): fires the shell-job settle path for [job] as
+  /// the registry's `onSettled` would — the foreign-entry guard is what
+  /// keeps a peer session's job out of this host's board/manifest/run.
+  @visibleForTesting
+  void onShellJobSettledForTest(ShellJobEntry job) => _onShellJobSettled(job);
 
   /// Test seam: arms a real self-addressed timer so tests can drive the
   /// ceiling-wait loop through an actual wake source.

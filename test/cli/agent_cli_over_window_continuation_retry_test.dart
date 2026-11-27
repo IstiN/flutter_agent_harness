@@ -80,6 +80,18 @@ class ScriptedThenHangStream {
   }
 }
 
+/// Waits until the chained diagnostic log (fa.log) carries [needle] —
+/// `_logDiagnostic` appends asynchronously (gh-241 follow-up #5e, E2).
+Future<String> _logUntil(MemoryExecutionEnv env, String needle) async {
+  var log = '';
+  for (var i = 0; i < 100; i++) {
+    log = (await env.readTextFile('/home/.fah/logs/fa.log')).valueOrNull ?? '';
+    if (log.contains(needle)) return log;
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+  }
+  return log;
+}
+
 void main() {
   test(
     'the emergency relief recovers deterministically: no summarizer call',
@@ -123,6 +135,9 @@ void main() {
       ]);
       final cli = AgentCli(
         config: AgentCliConfig(
+          // gh-2411: overflow through messages, not overhead.
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read', 'bash']),
           model: const Model(
             id: 'tiny-window',
             api: 'test-api',
@@ -190,7 +205,11 @@ void main() {
     () async {
       final env = MemoryExecutionEnv(cwd: '/work');
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
-      env.writeFile('big.txt', List.filled(1000, 'x' * 45).join('\n'));
+      // #2416: ~11.8k tokens — the slim manifest shrank the seam's fixed
+      // overhead (~1.9k), so the result grew to push the post-read request
+      // over the window (the over-window relief engages; its keep-recent
+      // floor declines and the funnel backstop takes over).
+      env.writeFile('big.txt', List.filled(1050, 'x' * 45).join('\n'));
       final io = FakeCliIO();
       // The keep-recent floor (400) sits BELOW the newest message: the
       // deterministic relief's valve finds nothing droppable (its budget
@@ -212,12 +231,18 @@ void main() {
       ]);
       final cli = AgentCli(
         config: AgentCliConfig(
-          model: const Model(
+          // gh-2411: overflow through messages, not overhead.
+          systemPrompt: tinyPrompt,
+          homeDir: '/home',
+          runtimeTools: tinyTools(const ['read', 'bash']),
+          // Non-const: the window carries the gh-2423 footprint.
+          model: Model(
             id: 'tiny-window',
             api: 'test-api',
             provider: 'test-provider',
             baseUrl: 'https://example.test',
-            contextWindow: 12000,
+            // + the gh-2423 working-set surface (gh2423ContextIncludesTokens).
+            contextWindow: 12000 + gh2423ContextIncludesTokens,
             maxTokens: 4096,
           ),
           apiKey: '[REDACTED:Sensitive-Value]',
@@ -252,13 +277,39 @@ void main() {
       // …and the loud terminal verdict is GONE.
       expect(output, isNot(contains('did not free it')));
       expect(output, isNot(contains('The task was NOT continued')));
+      // gh-241 follow-up #5e (E2): the stop that compacted and continued
+      // is logged as such — no `stop=error`, `run end` exactly once.
+      final log = await _logUntil(env, 'run end sid=');
+      expect(
+        log,
+        contains('stop=compacting (continuation pending)'),
+        reason: log,
+      );
+      expect(
+        log,
+        isNot(matches(RegExp(r'turn end sid=\S+ stop=error'))),
+        reason: log,
+      );
+      expect('run end sid='.allMatches(log).length, 1, reason: log);
     },
   );
 
   test(
-    'a huge prompt over a tiny window still recovers (issue #1914)',
+    'a huge prompt over a tiny window can never land under it: nothing is '
+    'trimmed, in the regime the request is SENT anyway (#5d), warned once '
+    '(issue #1914 → gh-2411 + owner live tests)',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
+      // gh-2411 (the invariant): a user message is never made invisible.
+      // The 12.5k-token prompt plus the fixed overhead can never land
+      // under the 12k window, so nothing is trimmed. gh-241 follow-up
+      // #5d (D5 — owner live test round 5): in the soft-window regime the
+      // window is below what EVERY request carries and the provider is
+      // the real limit (it accepted 108–123 % requests all along); the
+      // loop guard used to stop the request BEFORE it was sent and a
+      // read-only turn ended in `stop=error`, exit 1. Now the request
+      // goes out as is — an unsent request is worse than a slightly over
+      // one — the session is warned exactly once, and the turn completes.
       final env = MemoryExecutionEnv(cwd: '/work');
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
       final io = FakeCliIO();
@@ -278,6 +329,111 @@ void main() {
       ]);
       final cli = AgentCli(
         config: AgentCliConfig(
+          // gh-2411: overflow through messages, not overhead.
+          systemPrompt: tinyPrompt,
+          homeDir: '/home',
+          runtimeTools: tinyTools(const ['read', 'bash']),
+          model: const Model(
+            id: 'tiny-window',
+            api: 'test-api',
+            provider: 'test-provider',
+            baseUrl: 'https://example.test',
+            contextWindow: 12000,
+            maxTokens: 4096,
+          ),
+          apiKey: '[REDACTED:Sensitive-Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          compactionEngine: CompactionEngine.classic,
+          compactionSettings: const CompactionSettings(
+            enabled: true,
+            reserveTokens: 100,
+            keepRecentTokens: 400,
+          ),
+          // gh-2411 follow-up #5 (owner live test, round 2): until the
+          // provider has answered, an UNMEASURED request is never stopped
+          // on the heuristic alone (see the sibling test below). This
+          // fixture pins the guard's stop itself, so the session starts
+          // measured — exactly like a real one after its first reply.
+          initialOverheadCalibration: const OverheadCalibration(
+            1.0,
+            measured: true,
+          ),
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+
+      final exitCode = await cli.runHeadless('x' * 50000);
+      // gh-241 follow-up #5e (E2): a request that went out is not an
+      // error stop — no `stop=error`, `run end` exactly once.
+      final sentLog = await _logUntil(env, 'run end sid=');
+      expect(
+        sentLog,
+        isNot(matches(RegExp(r'turn end sid=\S+ stop=error'))),
+        reason: sentLog,
+      );
+      expect('run end sid='.allMatches(sentLog).length, 1, reason: sentLog);
+      await io.close();
+
+      expect(exitCode, 0, reason: 'in the regime the guard stands down');
+      expect(
+        fake.calls,
+        1,
+        reason: 'over the window with nothing to free — sent anyway (#5d)',
+      );
+      final output = io.out.toString();
+      const warning =
+          'context window 12000 cannot take a trim below its trigger';
+      expect(output, contains(warning));
+      expect(
+        warning.allMatches(output),
+        hasLength(1),
+        reason: 'ONE visible warning per session — never a per-turn nag',
+      );
+      expect(
+        output,
+        contains(
+          'automatic compaction is skipped while the context stays under '
+          'the window',
+        ),
+      );
+      // Nothing was trimmed and no stop terminal exists: the prompt is
+      // the user's, whole, and it went out.
+      expect(output, isNot(contains('Context window exhausted')));
+      expect(output, isNot(contains('[context trimmed]')));
+      expect(output, isNot(contains('The task was NOT continued')));
+      expect(
+        fake.contexts.single.messages
+            .whereType<UserMessage>()
+            .map((m) => m.content.toString())
+            .join('\n'),
+        contains('x' * 2000),
+        reason: 'the whole prompt went out',
+      );
+    },
+  );
+
+  test(
+    'gh-2411 follow-up #5: an UNMEASURED first request over the window goes '
+    'out — the provider decides, never the heuristic alone (owner live test, '
+    'round 2)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      // Session 01a16eff: a resumed session's first request was priced by
+      // the heuristic alone (+54% on the owner's prompt), the guard stopped
+      // it before the provider could answer — and with no reply there was
+      // never an anchor: every prompt failed identically. The same prompt,
+      // a fresh session, nothing measured: the request is sent.
+      final env = MemoryExecutionEnv(cwd: '/work');
+      await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+      final io = FakeCliIO();
+      final fake = FakeStreamFunction([textTurn('answered')]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read']),
           model: const Model(
             id: 'tiny-window',
             api: 'test-api',
@@ -303,13 +459,13 @@ void main() {
 
       final exitCode = await cli.runHeadless('x' * 50000);
       await io.close();
-
-      expect(exitCode, 0, reason: 'the task continued on the trimmed context');
-      expect(fake.calls, 2, reason: 'one bounded pass, then the continuation');
-      final output = io.out.toString();
-      expect(output, contains('[context trimmed]'));
-      expect(output, isNot(contains('did not free it')));
-      expect(output, isNot(contains('The task was NOT continued')));
+      expect(exitCode, 0);
+      expect(
+        fake.calls,
+        1,
+        reason: 'unmeasured: the heuristic alone never stops a request',
+      );
+      expect(io.out.toString(), isNot(contains('Context window exhausted')));
     },
   );
 
@@ -336,6 +492,9 @@ void main() {
       ]);
       final cli = AgentCli(
         config: AgentCliConfig(
+          // gh-2411: overflow through messages, not overhead.
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read', 'bash']),
           model: const Model(
             id: 'tiny-window',
             api: 'test-api',
@@ -384,14 +543,8 @@ void main() {
         contextWindow: 32768,
         maxTokens: 4096,
       );
-      final shell = FakeShell(
-        stdout:
-            // 45000 chars = 11250 tokens — three of these cross the 32k
-            // window on their own (issue #2416: the slim manifest removed
-            // ~12.5k overhead tokens from every estimate), under the
-            // 51200-byte tool-output cap so truncation keeps them intact.
-            'x' * 45000,
-      );
+      // gh-2411: the overflow is the MESSAGES' (3 × 11k + ~3.4k > 32768).
+      final shell = FakeShell(stdout: 'x' * 44000);
       final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
       final io = FakeCliIO();
@@ -426,6 +579,9 @@ void main() {
       ], hangFromCall: 2);
       final cli = AgentCli(
         config: AgentCliConfig(
+          // gh-2411: overflow through messages, not overhead.
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read', 'bash']),
           model: window32k,
           apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
@@ -490,14 +646,10 @@ void main() {
         contextWindow: 32768,
         maxTokens: 4096,
       );
-      final shell = FakeShell(
-        stdout:
-            // 45000 chars = 11250 tokens — three of these cross the 32k
-            // window on their own (issue #2416: the slim manifest removed
-            // ~12.5k overhead tokens from every estimate), under the
-            // 51200-byte tool-output cap so truncation keeps them intact.
-            'x' * 45000,
-      );
+      // gh-2411: 3 × 11k tokens + the ~3.4k overhead > 32768 — the
+      // overflow is the MESSAGES' (the real prompt's overhead did it
+      // before).
+      final shell = FakeShell(stdout: 'x' * 44000);
       final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
       final io = FakeCliIO();
@@ -533,6 +685,9 @@ void main() {
       ]);
       final cli = AgentCli(
         config: AgentCliConfig(
+          // gh-2411: overflow through messages, not overhead.
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read', 'bash']),
           model: window32k,
           apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
@@ -600,6 +755,9 @@ void main() {
       ], hangFromCall: 3);
       final cli = AgentCli(
         config: AgentCliConfig(
+          // gh-2411: overflow through messages, not overhead.
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read', 'bash']),
           model: const Model(
             id: 'wide-window',
             api: 'test-api',
@@ -697,6 +855,9 @@ void main() {
       ], hangFromCall: 3);
       final cli = AgentCli(
         config: AgentCliConfig(
+          // gh-2411: overflow through messages, not overhead.
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read', 'bash']),
           model: const Model(
             id: 'post-run-window',
             api: 'test-api',
@@ -787,6 +948,9 @@ void main() {
       ], hangFromCall: 3);
       final cli = AgentCli(
         config: AgentCliConfig(
+          // gh-2411: overflow through messages, not overhead.
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read', 'bash']),
           model: const Model(
             id: 'tiny-window',
             api: 'test-api',
@@ -868,6 +1032,9 @@ void main() {
       ], hangFromCall: 2);
       final cli = AgentCli(
         config: AgentCliConfig(
+          // gh-2411: overflow through messages, not overhead.
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read', 'bash']),
           model: const Model(
             id: 'tiny-window',
             api: 'test-api',
@@ -924,20 +1091,24 @@ void main() {
     () async {
       final env = MemoryExecutionEnv(cwd: '/work');
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
-      // The refusal shape: a moderately large real-user prompt (~6.8k
+      // The refusal shape: a moderately large real-user prompt (~7k
       // tokens — real user turns never hide, F8) plus growing read
-      // results (750·i tokens, DISTINCT paths so the dedup has nothing
-      // to fold). With the request-size overhead on top, the first three
-      // requests stay under the trigger and the fourth/fifth go over it,
-      // where the relief's keep-2 hide budget cannot free the overage and
-      // its valve declines (every result exceeds the 200-token keep
-      // budget) — so the window guard REFUSES with BOTH dimensions over:
-      // tokens > window AND count ≥ cap − margin. (issue #2416: the slim
-      // manifest removed ~12.5k overhead tokens from every estimate, so
-      // the per-read size re-tunes from 500·i to hold the same
-      // under/under/under/over/over request shape.)
+      // results (1050·i tokens, DISTINCT paths so the dedup has nothing
+      // to fold). With the request-size overhead on top, the in-turn
+      // requests stay under the window until the fifth read lands, where
+      // the relief's keep-2 hide budget cannot free the overage and its
+      // valve declines (every result exceeds the 200-token keep budget)
+      // — so the window guard REFUSES with BOTH dimensions over: tokens
+      // > window AND count ≥ cap − margin. (issue #2416: the slim
+      // manifest shrank the seam's fixed overhead to ~1.9k, so the
+      // per-read size re-tunes from 700·i to hold the same
+      // under/under/under/under/over request shape.)
       for (var i = 1; i <= 5; i++) {
-        env.writeFile('note$i.txt', List.filled(100 * i, 'x' * 30).join('\n'));
+        // gh-2411 + #2416: 1050·i tokens — with the tiny prompt's ~1.9k
+        // overhead the five reads still push the post-fifth-read request
+        // past the ~21.5k window (7k + 15.75k + 1.9k), as the real
+        // prompt's larger overhead did before.
+        env.writeFile('note$i.txt', List.filled(200 * i, 'x' * 20).join('\n'));
       }
       final home = await Directory.systemTemp.createTemp('fa_2264_');
       // A learned cap (24 → trigger at count ≥ 8) the way a previous
@@ -973,12 +1144,17 @@ void main() {
       ]);
       final cli = AgentCli(
         config: AgentCliConfig(
-          model: const Model(
+          // gh-2411: overflow through messages, not overhead.
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read', 'bash']),
+          // Non-const: the window carries the gh-2423 footprint.
+          model: Model(
             id: 'tiny-window',
             api: 'test-api',
             provider: 'test-provider',
             baseUrl: 'https://example.test',
-            contextWindow: 20000,
+            // + the gh-2423 working-set surface (gh2423ContextIncludesTokens).
+            contextWindow: 20000 + gh2423ContextIncludesTokens,
             maxTokens: 4096,
           ),
           apiKey: '[REDACTED:Sensitive-Value]',

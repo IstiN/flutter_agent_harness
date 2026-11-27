@@ -304,7 +304,49 @@
   count, waiting row) hangs off it (issue #562). The model-facing notice
   (steered mid-run or a fresh idle turn; app `sendText` system-notice)
   is skipped when a foreground call consumed the result inline
-  (`suppressSettleNotification`). gh-1835: a foreground bash call still
+  (`suppressSettleNotification`). gh-2413 (cross-session cross-talk): the
+  shared `.fah/bash_jobs/running.json` is OWNER-TAGGED — every entry
+  carries `owner` = the writing session's id; a boot reconcile adopts only
+  own-owner entries (legacy owner-less records still adopt, and their
+  notices say `adopted from unknown owner`), a foreign session's live entry
+  stays untouched (never adopted, never a reap candidate, never removed by
+  a foreign settle), and the #517 sweep gets own pids only. Survivor
+  detection on hosts without `setsid` (macOS) is MARKER-GATED: the orphan
+  window is bounded on both ends (`execStart`…`execEnd`) and a candidate
+  must be provably a leftover of THE COMPLETED CALL from the same `ps`
+  snapshot: its `ppid` chain leads into that call's subtree — through the
+  call's own pid, or through an ORPHANED (`ppid == 1`) subshell that still
+  carries this harness's wrapper tag `fa_sh_cmd_<pid>_…` (the per-exec
+  script dir a backgrounded subshell inherits in its argv). The tag names
+  the HARNESS, not the call: a process under a LIVE wrapper is another
+  job of this same harness and is never adopted as a duplicate (a settled
+  job once adopted its running sibling's `sleep` and doubled the waiting
+  row); the same shape under a peer's tag, or a detached program
+  (`nohup prog &`, launcher gone), is left alone too; the notice reads `Detected N orphaned process(es) in this
+  session's process group near <cmd>` (never "left by"). `bash_job stop`
+  refuses to signal a pid whose start time was never recorded while the
+  platform reports one now (a recycled pid would be a stranger). gh-2415
+  (fd exhaustion): `bin/fah.dart` raises the descriptor soft limit to
+  min(hard, 10240) first thing in `main()` (`raiseFdLimitOnce` —
+  `setrlimit(RLIMIT_NOFILE)` through dart:ffi on macOS/64-bit Linux, a
+  no-op stub on web/Windows, exactly once; the launchd default 256 was
+  the driver behind "Too many open files" in long orchestrator sessions).
+  The bash tool path guards every `Process.start`
+  (`ShellJobRegistry.guardFdPressure`): above 80 % of the soft limit it
+  first releases settled jobs' leftovers (`ResourceReleaser`) and then
+  refuses with the typed `fd pressure: N/M open — …` tool error instead of
+  an uncaught `ProcessException`; an EMFILE raised by the exec surfaces as
+  the same error. `LocalExecutionEnv.readTextLines(maxLines:)` (the session
+  listing's header reads) is an explicit open/read/close so a descriptor
+  never outlives the call. The scheduler's receipt writer
+  (`ScheduledReceiptLog`) keeps a failed receipt PENDING in memory, retries
+  with exponential backoff (2 s doubling to a 5 min cap) on a timer that
+  survives a quiet queue, warns once per pressure window
+  (`[sched] receipt write deferred: fd pressure — …; N receipt(s) kept in
+  memory`), flushes everything pending in one append on recovery (one
+  `[sched] receipt write recovered` line) — a lost receipt is impossible;
+  pending receipts already count as delivered for the ledger pass.
+  gh-1835: a foreground bash call still
   running after `waiting.autoBackgroundSeconds` (default 60; 0 = kill
   switch) is auto-backgrounded — CONVERTED, never restarted (it already
   runs as a registry job under the soft-yield path): the pending tool call
@@ -410,7 +452,9 @@
   (the `models:` section — per-slot media overrides + named custom model
   definitions `/model <name>` resolves; mutable like the custom-provider
   registry, persisted by the host). Owner context override (issues
-  #273/#729): `agent:`/`contextWindowCap` in `~/.fah/config.yaml` (strict
+  #273/#729): `agent:`/`contextWindowCap` in `~/.fah/config.yaml` — or in
+  the PROJECT `.fah/config.yaml` (`loadProjectContextWindowCap`; the
+  project value wins; gh-241 follow-up #5b) — (strict
   section, minimum 16384 = the compaction reserve) SETS the EFFECTIVE
   context window via `effectiveContextWindow` (model.dart) for the
   compaction thresholds, the CLI ctx meter/footer and the loop's over-window

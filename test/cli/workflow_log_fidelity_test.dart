@@ -882,17 +882,19 @@ void main() {
       );
       final env = MemoryExecutionEnv(
         cwd: '/work',
-        // 45000 chars = 11250 tokens per result — the three outputs
-        // cross the 32k window on their own (issue #2416: the slim
-        // manifest removed ~12.5k overhead tokens from every estimate)
-        // while staying under the 51200-byte tool-output cap.
-        shell: FakeShell(stdout: 'x' * 45000),
+        // gh-2411: 3 × ~11000 tokens + the ~3.4k seam overhead > 32768.
+        shell: FakeShell(stdout: 'x' * 44000),
       );
       // Suppress session-start memory maintenance so the scripted turns
       // feed only the run under test (agent_cli_test pattern).
       await env.writeFile('/work/.fah/memory/.last_maintenance', '');
       return AgentCli(
         config: AgentCliConfig(
+          // gh-2411: overflow through messages, not overhead — with the
+          // real CLI prompt the ~14.4k overhead alone reaches this
+          // 8768 trigger (the soft-window regime: the funnel never runs).
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read', 'bash']),
           model: window32k,
           apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
@@ -922,7 +924,7 @@ void main() {
     }
 
     List<List<AssistantMessageEvent>> turns() => [
-      // Three tool calls whose outputs (~8200 tokens each) push the
+      // Three tool calls whose outputs (~11000 tokens each) push the
       // next request past the window — the over-window guard fires,
       // the deterministic relief declines (the settings pin), and the
       // funnel backstop runs the classic summarizer pass.

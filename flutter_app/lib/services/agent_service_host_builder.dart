@@ -65,6 +65,15 @@ extension AgentServiceHostBuilder on AgentService {
     },
     onAsk: (questions) => _answerAskQuestions(questions),
     onRequestSecret: (name, reason) => _handleSecretRequest(name, reason),
+    // gh-2423 C1: the main agent's working-set store — the live session
+    // plus the app's redaction pipeline (secrets never reach the record).
+    // Every app platform (macOS, iOS, Android, web) shares this builder;
+    // task children bind their own session through the executor.
+    workingSet: SessionWorkingSetStore(
+      openSession: () async => _session,
+      session: () async => _session ?? (throw StateError('no session')),
+      redaction: _redactionPipeline,
+    ),
     // Presence markers (the builder registers no tool for these cells —
     // the extension below carries the surface): the dynamic-messages
     // machinery keeps `js_apps` honestly wired, and the shipped on-device

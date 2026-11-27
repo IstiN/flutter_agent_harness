@@ -1134,6 +1134,335 @@ void main() async {
       await run;
     },
   );
+
+  // gh-2413: owner-tagged manifest — the boot reconcile adopts ONLY this
+  // session's entries (and legacy owner-less ones); a peer session's live
+  // entry stays in the shared manifest untouched: never adopted, never a
+  // reap candidate, never removed by a foreign settle.
+
+  Future<void> seedManifest(List<Object?> entries) async {
+    final dir = env.cwd;
+    await env.createDir('$dir/.fah/bash_jobs');
+    await env.writeFile(
+      '$dir/.fah/bash_jobs/running.json',
+      jsonEncode(entries),
+    );
+  }
+
+  Future<String> readManifest() async => (await env.readTextFile(
+    '${env.cwd}/.fah/bash_jobs/running.json',
+  )).valueOrNull!;
+
+  test('boot reconcile: a FOREIGN-owned live entry is kept, never adopted, '
+      'never counted lost (gh-2413 c)', () async {
+    final cli = cliFor(FakeStreamFunction([textTurn('ok')]));
+    cli.waitingOwnerTagForTest = 'sess-A';
+    cli.waitingProcessTableForTest = () async =>
+        (pids: {4242}, starts: {4242: 'Mon Nov 16 10:00:00 2026'});
+    await seedManifest([
+      {
+        'id': 'sh-peer',
+        'command': 'peer-daemon.sh',
+        'pid': '4242',
+        'pidStart': 'Mon Nov 16 10:00:00 2026',
+        'startedAtMs': DateTime.now().millisecondsSinceEpoch,
+        'owner': 'sess-B',
+      },
+    ]);
+    await cli.waitingCaptureLostJobsForTest();
+    expect(cli.waitingLostJobsForTest, 0);
+    expect(cli.shellJobsRegistryForTest.job('sh-peer'), isNull);
+    expect((await cli.waitersSnapshotForTest()).jobs, isEmpty);
+    // Untouched in the shared file — its own session's next boot owns it.
+    final manifest = await readManifest();
+    expect(manifest, contains('sh-peer'));
+    expect(manifest, contains('"owner":"sess-B"'));
+    expect(io.out.toString(), isNot(contains('sh-peer')));
+  });
+
+  test('boot reconcile: an OWN-owned live entry is adopted with its real '
+      'harness log, tagged "adopted from this session" (gh-2413 c)', () async {
+    final cli = cliFor(FakeStreamFunction([textTurn('ok')]));
+    cli.waitingOwnerTagForTest = 'sess-A';
+    cli.waitingProcessTableForTest = () async =>
+        (pids: {4242}, starts: {4242: 'Mon Nov 16 10:00:00 2026'});
+    await env.createDir('${env.cwd}/.fah/bash_jobs');
+    await env.writeFile(
+      '${env.cwd}/.fah/bash_jobs/sh-mine.log',
+      'native output\n',
+    );
+    await seedManifest([
+      {
+        'id': 'sh-mine',
+        'command': 'my build',
+        'pid': '4242',
+        'pidStart': 'Mon Nov 16 10:00:00 2026',
+        'startedAtMs': DateTime.now().millisecondsSinceEpoch,
+        'owner': 'sess-A',
+      },
+    ]);
+    await cli.waitingCaptureLostJobsForTest();
+    final adopted = cli.shellJobsRegistryForTest.job('sh-mine');
+    expect(adopted, isNotNull);
+    expect(adopted!.isAdopted, isTrue);
+    expect(adopted.adoptedFrom, 'this session');
+    expect(adopted.logPath, '${env.cwd}/.fah/bash_jobs/sh-mine.log');
+    expect(cli.waitingLostJobsForTest, 0);
+  });
+
+  test(
+    'waiting row (no PTY): two own waiters listed once each; the row '
+    'follows the outstanding one after the first settles (gh-2413 / #615)',
+    () async {
+      final cli = cliFor(FakeStreamFunction([textTurn('ok')]));
+      cli.waitingOwnerTagForTest = 'sess-A';
+      // Pids above macOS's pid ceiling: the real stop/liveness probes below
+      // can never match a live process (and the start-tag guard would
+      // refuse it anyway) — they only ever answer "gone".
+      cli.waitingProcessTableForTest = () async => (
+        pids: {990001, 990002},
+        starts: {
+          990001: 'Mon Nov 16 10:00:00 2026',
+          990002: 'Mon Nov 16 10:00:01 2026',
+        },
+      );
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await seedManifest([
+        {
+          'id': 'sh-a',
+          'command': 'sleep 2',
+          'pid': '990001',
+          'pidStart': 'Mon Nov 16 10:00:00 2026',
+          'startedAtMs': now,
+          'owner': 'sess-A',
+        },
+        {
+          'id': 'sh-b',
+          'command': 'sleep 4',
+          'pid': '990002',
+          'pidStart': 'Mon Nov 16 10:00:01 2026',
+          'startedAtMs': now,
+          'owner': 'sess-A',
+        },
+      ]);
+      await cli.waitingCaptureLostJobsForTest();
+      var snap = await cli.waitersSnapshotForTest();
+      expect(snap.jobs, ['adopted: sleep 2 (sh-a)', 'adopted: sleep 4 (sh-b)']);
+      expect(cli.shellJobsRegistryForTest.jobs, hasLength(2));
+      // The first waiter settles (a stop whose fresh probe finds the pid
+      // gone marks it gone without signaling anything): the row re-points
+      // at the outstanding one — exactly once, never a duplicate of the
+      // still-running job.
+      final first = cli.shellJobsRegistryForTest.job('sh-a')!;
+      first.suppressSettleNotification();
+      await first.stop();
+      await pumpEventQueue();
+      snap = await cli.waitersSnapshotForTest();
+      expect(snap.jobs, ['adopted: sleep 4 (sh-b)']);
+      expect(
+        cli.shellJobsRegistryForTest.jobs
+            .where((j) => j.isRunning)
+            .map((j) => j.id),
+        ['sh-b'],
+      );
+    },
+  );
+
+  test('boot reconcile: a LEGACY owner-less entry keeps the old adoption and '
+      'its notices say "adopted from unknown owner" (gh-2413 c)', () async {
+    final cli = cliFor(FakeStreamFunction([textTurn('ok')]));
+    cli.waitingOwnerTagForTest = 'sess-A';
+    var table = (pids: {4242}, starts: {4242: 'Mon Nov 16 10:00:00 2026'});
+    cli.waitingProcessTableForTest = () async => table;
+    await seedManifest([
+      {
+        'id': 'sh-legacy',
+        'command': 'old daemon',
+        'pid': '4242',
+        'pidStart': 'Mon Nov 16 10:00:00 2026',
+        'startedAtMs': DateTime.now().millisecondsSinceEpoch,
+      },
+    ]);
+    await cli.waitingCaptureLostJobsForTest();
+    final adopted = cli.shellJobsRegistryForTest.job('sh-legacy');
+    expect(adopted, isNotNull, reason: 'legacy records still adopt');
+    expect(adopted!.adoptedFrom, 'unknown owner');
+    expect(
+      adoptedJobSettleNoticeText(adopted),
+      contains('adopted from unknown owner'),
+    );
+    // The death notice (idle → fresh reaction run) carries the clause too.
+    table = (pids: <int>{}, starts: <int, String>{});
+    await cli.shellJobsRegistryForTest.adoptedPollTickForTest();
+    await waitForIt(
+      () => io.out.toString().contains('sh-legacy is no longer running'),
+    );
+    expect(io.out.toString(), contains('adopted from unknown owner'));
+  });
+
+  test(
+    'boot reconcile: a legacy entry without pidStart does not adopt onto a '
+    'pid that started AFTER the entry was written (gh-2413 recycled pid)',
+    () async {
+      final cli = cliFor(FakeStreamFunction([textTurn('ok')]));
+      final now = DateTime.now();
+      String lstartOf(DateTime at) {
+        const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        const months = [
+          'Jan',
+          'Feb',
+          'Mar',
+          'Apr',
+          'May',
+          'Jun',
+          'Jul',
+          'Aug',
+          'Sep',
+          'Oct',
+          'Nov',
+          'Dec',
+        ];
+        String two(int v) => v.toString().padLeft(2, '0');
+        return '${days[at.weekday - 1]} ${months[at.month - 1]} ${at.day} '
+            '${two(at.hour)}:${two(at.minute)}:${two(at.second)} ${at.year}';
+      }
+
+      // pid 4242 started 5 minutes AFTER its record was written — a
+      // recycled stranger. pid 4243 started a second before its record:
+      // the job itself.
+      cli.waitingProcessTableForTest = () async => (
+        pids: {4242, 4243},
+        starts: {
+          4242: lstartOf(now.add(const Duration(minutes: 5))),
+          4243: lstartOf(now.subtract(const Duration(seconds: 1))),
+        },
+      );
+      await seedManifest([
+        {
+          'id': 'sh-recycled',
+          'command': 'old daemon',
+          'pid': '4242',
+          'startedAtMs': now.millisecondsSinceEpoch,
+        },
+        {
+          'id': 'sh-fresh',
+          'command': 'fresh daemon',
+          'pid': '4243',
+          'startedAtMs': now.millisecondsSinceEpoch,
+        },
+      ]);
+      await cli.waitingCaptureLostJobsForTest();
+      expect(cli.waitingLostJobsForTest, 1, reason: 'the recycled pid dropped');
+      expect(cli.shellJobsRegistryForTest.job('sh-recycled'), isNull);
+      // A start within the tolerance still adopts: nothing contradicts
+      // the record.
+      expect(cli.shellJobsRegistryForTest.job('sh-fresh'), isNotNull);
+    },
+  );
+
+  test('jobStarted tags the manifest entry with this session\'s owner; a '
+      'foreign settle never touches the board, the manifest or the run '
+      '(gh-2413 d)', () async {
+    final stream = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(stream);
+    cli.waitingOwnerTagForTest = 'sess-A';
+    // Own job → owner tag written.
+    final ownRegistry = cli.shellJobsRegistryForTest;
+    final own = ownRegistry.adoptRunningEntry(
+      id: 'sh-own',
+      command: 'own daemon',
+      pid: 4242,
+      pidStart: 'S',
+    );
+    await cli.waitingJobStartedForTest(own);
+    final manifest = await readManifest();
+    expect(manifest, contains('"owner":"sess-A"'));
+    expect(manifest, contains('sh-own'));
+    // A peer session's job (another registry over the same env) settles
+    // in THIS host: nothing of ours moves.
+    await seedManifest([
+      {
+        'id': 'sh-foreign',
+        'command': 'peer daemon',
+        'pid': '4243',
+        'owner': 'sess-B',
+      },
+    ]);
+    final peerRegistry = ShellJobRegistry(env: env);
+    final foreign = peerRegistry.adoptRunningEntry(
+      id: 'sh-foreign',
+      command: 'peer daemon',
+      pid: 4243,
+    );
+    final before = io.out.toString();
+    cli.onShellJobSettledForTest(foreign);
+    await pumpEventQueue();
+    final after = io.out.toString();
+    expect(after.substring(before.length), isNot(contains('sh-foreign')));
+    expect(after, isNot(contains('Background shell job')));
+    expect(after, isNot(contains('Adopted background process')));
+    expect(stream.calls, 0, reason: 'no idle reaction run started');
+    expect(
+      (await readManifest()),
+      contains('sh-foreign'),
+      reason: 'a foreign settle never removes its owner\'s record',
+    );
+    // Control: our OWN job's settle still runs the full path.
+    cli.waitingProcessTableForTest = () async =>
+        (pids: <int>{}, starts: <int, String>{});
+    cli.onShellJobSettledForTest(own);
+    await pumpEventQueue();
+    expect(io.out.toString().substring(after.length), contains('sh-own'));
+    expect((await readManifest()), isNot(contains('sh-own')));
+  });
+
+  test('boot sweep reaps only OWN orphan groups — a foreign-owned dead leader '
+      'is never a kill candidate (gh-2413 e)', () async {
+    final reaping = _RecordingShell();
+    final localEnv = MemoryExecutionEnv(cwd: '/w', shell: reaping);
+    final localIo = FakeCliIO();
+    addTearDown(localIo.close);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: localEnv,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+      ),
+      io: localIo,
+      streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+    );
+    cli.waitingOwnerTagForTest = 'sess-A';
+    cli.waitingProcessTableForTest = () async =>
+        (pids: <int>{}, starts: <int, String>{});
+    // The group table: member 700 belongs to group 5100, member 701 to
+    // group 5200; both leaders are dead.
+    cli.waitingGroupTableOverrideForTest = () async => '700 5100\n701 5200\n';
+    await localEnv.createDir('/w/.fah/bash_jobs');
+    await localEnv.writeFile(
+      '/w/.fah/bash_jobs/running.json',
+      jsonEncode([
+        {
+          'id': 'sh-peer-dead',
+          'command': 'peer job',
+          'pid': '5100',
+          'owner': 'sess-B',
+        },
+        {
+          'id': 'sh-own-dead',
+          'command': 'my job',
+          'pid': '5200',
+          'owner': 'sess-A',
+        },
+      ]),
+    );
+    await cli.waitingCaptureLostJobsForTest();
+    expect(reaping.commands, [
+      'kill -9 701',
+    ], reason: 'the foreign group is never signaled');
+    expect(localIo.out.toString(), contains('reaped 1 orphaned job process'));
+  });
 }
 
 /// Boot-completion wait: the session persisted (copied from the busy
@@ -1187,4 +1516,21 @@ class _GatedStream {
     }
     return stream;
   }
+}
+
+/// A [Shell] that records every exec and answers success (gh-2413 e).
+final class _RecordingShell implements Shell {
+  final commands = <String>[];
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) async {
+    commands.add(command);
+    return const Ok(ShellExecResult(stdout: '', stderr: '', exitCode: 0));
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

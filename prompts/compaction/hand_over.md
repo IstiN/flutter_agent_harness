@@ -3,6 +3,7 @@ name: hand_over
 description: Appended as the last user message of the compaction hand-over call (GOAL #2394). The call reads the last main request as sent (S0, records tagged `m<N>`); the reply lists records to hide outside the fold range and hands the fold range over to a successor model.
 ---
 Context: {{context_tokens}} of {{window_tokens}} tokens. This is a hand-over: a successor model continues from this conversation.
+Run status: {{run_status}}
 
 Every stored record starts with a tag `m<N>`; refer to records by N. Messages without a tag are the live edge — never list them.
 Fold range: records {{fold_from}}-{{fold_to}} — your text replaces them.

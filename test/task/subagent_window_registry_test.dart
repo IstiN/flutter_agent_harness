@@ -17,6 +17,7 @@ library;
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:flutter_agent_harness/src/task/child_session_io.dart';
 import 'package:test/test.dart';
 
@@ -27,12 +28,35 @@ const _catalogWindow = 4000;
 /// (simulated) live detection.
 const _registeredWindow = 478000;
 
+/// gh-2423 (C1/C7): the two system-prompt includes (`working_set`,
+/// `context_hygiene`) ride every child prompt. The owner-cap fixture
+/// below is calibrated to the pre-gh-2423 request size — a cap must still
+/// admit the child's first request — so it grows by the includes' own
+/// request footprint (4 chars per token, the estimator's heuristic).
+final int _contextIncludesTokens =
+    ((workingSetPrompt.length + contextHygienePrompt.length) / 4).ceil();
+
 final _model = Model(
   id: 'child-model',
   api: 'test-api',
   provider: 'test-provider',
   baseUrl: 'https://example.test',
   contextWindow: _catalogWindow,
+  maxTokens: 4096,
+);
+
+/// gh-241 × gh-2423 fusion: the child request overhead now prices the
+/// monitoring tool schemas (`reply`, `agent_message`) into the estimate —
+/// gh-241's honest basis — which alone outgrew the 400-token fixture
+/// window (measured overhead ≈3226). AC5 grows its own fixture window so
+/// its premise survives: the estimate channel stays under the trigger and
+/// only the observed channel can explain the forced pass.
+final _ac5Model = Model(
+  id: 'child-model-ac5',
+  api: 'test-api',
+  provider: 'test-provider',
+  baseUrl: 'https://example.test',
+  contextWindow: 6000,
   maxTokens: 4096,
 );
 
@@ -145,7 +169,10 @@ final class _ScriptedStream {
   int get calls => contexts.length;
 
   /// The text the next turn is keyed on: the last user message, or —
-  /// after a tool call — the last tool result's text.
+  /// after a tool call — the last tool result's text, skipping gh-2423
+  /// context notices (`isContextNoticeText`: a harness notice rides a
+  /// synthetic user record right before the request and must not
+  /// re-route a turn).
   static String lastUserText(Context context) {
     for (final message in context.messages.reversed) {
       if (message is ToolResultMessage) {
@@ -156,10 +183,16 @@ final class _ScriptedStream {
       }
       if (message is UserMessage) {
         final content = message.content;
-        if (content is String) return content;
-        if (content is List<ContentBlock>) {
-          return content.whereType<TextContent>().map((b) => b.text).join('\n');
+        String text;
+        if (content is String) {
+          text = content;
+        } else if (content is List<ContentBlock>) {
+          text = content.whereType<TextContent>().map((b) => b.text).join('\n');
+        } else {
+          continue;
         }
+        if (isContextNoticeText(text)) continue;
+        return text;
       }
     }
     return '';
@@ -221,6 +254,7 @@ final class _Wiring {
     _ScriptedStream? scriptedStream,
     int fatChars = 2400,
     CompactionTuning? compactionTuning,
+    Model? model,
   }) : stream = scriptedStream ?? _ScriptedStream() {
     manager = SubagentManager(
       parentSessionId: 'parent-session',
@@ -229,7 +263,7 @@ final class _Wiring {
     executor = TaskExecutor(
       childTools: [_fatTool('read', fatChars)],
       streamFunction: () => stream.call,
-      model: () => _model,
+      model: () => model ?? _model,
       registry: TaskAgentRegistry([
         const TaskAgentDefinition(
           name: 'worker',
@@ -251,7 +285,7 @@ final class _Wiring {
             'agent': 'subagent',
             'id': childId,
             'parent': parentId,
-            'model': _model.id,
+            'model': (model ?? _model).id,
           },
         ),
       ),
@@ -328,10 +362,11 @@ void main() {
           window: _registeredWindow,
           source: ContextWindowSource.endpointReport,
         );
-        final wiring = _Wiring(registry: registry, contextWindowCap: 2000);
+        final cap = 2000 + _contextIncludesTokens;
+        final wiring = _Wiring(registry: registry, contextWindowCap: cap);
         await wiring.spawn('w1', 'capped');
         // The owner cap wins in whichever direction it points.
-        expect(wiring.manager['w1']!.windowTokens, 2000);
+        expect(wiring.manager['w1']!.windowTokens, cap);
       },
     );
 
@@ -343,44 +378,42 @@ void main() {
       // built WITHOUT the cap guards against the raw registered value.
       // Here the served window is 478k and the owner caps at 200
       // tokens — every child request is grossly over the CAPPED basis,
-      // so the mid-turn guard must refuse BEFORE the first request is
-      // sent. With the uncapped guard this request goes out (and the
-      // run completes normally).
+      // so the mid-turn guard must refuse. With the uncapped guard the
+      // requests go out (and the run completes normally).
       final registry = ContextWindowRegistry();
       registry.publish(
         model: _model,
         window: _registeredWindow,
         source: ContextWindowSource.endpointReport,
       );
-      final wiring = _Wiring(registry: registry, contextWindowCap: 200);
+      // gh-241 follow-up #5 (owner live test, round 2): until the
+      // provider has answered, an unmeasured request is never stopped on
+      // the heuristic alone — so the FIRST request goes out; the one
+      // after it is over the cap and takes the relief path.
+      final stream = _ScriptedStream();
+      stream.rules['over-capped'] = () => _toolTurn('c1');
+      final wiring = _Wiring(
+        registry: registry,
+        contextWindowCap: 200,
+        scriptedStream: stream,
+      );
       final result = await wiring.spawn('guarded', 'over-capped');
-      expect(
-        wiring.stream.contexts,
-        isEmpty,
-        reason:
-            'the child guard must refuse at the capped basis before any '
-            'request is sent (an uncapped guard sends against 478k)',
-      );
-      // The run surfaces the guard's terminal, not a silent success:
-      // the flushed transcript's last assistant message carries the
-      // exhausted marker.
+      // The guard's STOP is no longer observable in this geometry (the
+      // cap sits below the fixed overhead: no trim can ever land under
+      // it — the window is a soft target there, the owner's rule). What
+      // still pins the capped basis is the child's context bounding: a
+      // pass ran, and only because of the cap — against the registered
+      // 478k nothing is over any trigger and no pass ever runs.
       await wiring.settle('guarded');
-      final records = await wiring.sessionRecords('guarded');
-      final messages = records
-          .whereType<MessageRecord>()
-          .map((record) => record.message)
-          .toList();
+      expect(result.status, TaskSpawnStatus.completed, reason: result.error);
       expect(
-        messages.any(
-          (message) =>
-              message is AssistantMessage &&
-              isContextWindowExhaustedError(message.errorMessage),
-        ),
-        isTrue,
+        wiring.manager['guarded']!.compactions,
+        greaterThanOrEqualTo(1),
         reason:
-            'no over-window guard terminal in the transcript '
-            '(${result.status}, ${messages.length} messages)',
+            'the capped basis drives the child\'s context bounding (an '
+            'uncapped guard sends against 478k and never compacts)',
       );
+      expect(wiring.stream.contexts, isNotEmpty);
     });
   });
 
@@ -482,14 +515,21 @@ void main() {
       'observed over window − headroom with the estimate under the trigger '
       '→ the compactor runs (forced), the estimate alone would not',
       () async {
-        final wiring = _Wiring(registry: ContextWindowRegistry());
-        // forWindow(4000): reserve 1024 → trigger 2976.
-        const trigger = _catalogWindow - 1024;
+        final wiring = _Wiring(
+          registry: ContextWindowRegistry(),
+          model: _ac5Model,
+        );
+        // forWindow(6000): reserve 1024 → trigger 4976. gh-241 × gh-2423:
+        // the honest request overhead (≈3226 with the monitoring tool
+        // schemas priced in) already crosses the old 4000-token window's
+        // trigger — the fixture window grows so the estimate channel can
+        // stay under it at all.
+        final trigger = _ac5Model.contextWindow - 1024;
 
         // Turn 1: tool call (usage-less). Tool result fattens the
         // transcript. Turn 2: another tool call carrying the gateway
         // report — total_tokens 100 (excludes the cached prefix), real
-        // accepted context = input 100 + cacheRead 3400 = 3500 > 2976.
+        // accepted context = input 100 + cacheRead 5000 = 5100 > 4976.
         // The boundary before turn 3 must force the pass: the estimate
         // anchors on total_tokens (100) and stays far under the trigger.
         wiring.stream.rules.addAll({
@@ -498,9 +538,9 @@ void main() {
           // Turn 2 (keyed on the fattened tool result): another tool call
           // carrying the gateway report — total_tokens 100 (excludes the
           // cached prefix), real accepted context =
-          // 100 input + 3400 cacheRead = 3500 > 2976.
+          // 100 input + 5000 cacheRead = 5100 > 4976.
           'fat:': () =>
-              _toolTurn('c2', input: 100, cacheRead: 3400, totalTokens: 100),
+              _toolTurn('c2', input: 100, cacheRead: 5000, totalTokens: 100),
         });
         final result = await wiring.executor.runSpawn(
           item: const TaskItem(
@@ -555,9 +595,13 @@ void main() {
     );
 
     test('observed usage alone under the trigger stays quiet', () async {
-      final wiring = _Wiring(registry: ContextWindowRegistry());
+      final wiring = _Wiring(
+        registry: ContextWindowRegistry(),
+        model: _ac5Model,
+      );
       // Same gateway shape, but the real accepted context (600) is under
-      // the trigger: no compaction call, no record.
+      // the trigger (4976 on the grown fixture window): no compaction
+      // call, no record.
       wiring.stream.rules.addAll({
         'quiet-observed': () => _toolTurn('c1'),
         'fat:': () =>
