@@ -236,12 +236,17 @@ ToolAvailabilityResolution _keep12Resolution() {
 /// Drives one run: turn 1 mounts [mountName] via `others`, turn 2 calls
 /// [callName], turn 3 ends with text. The config installs the same
 /// per-request tools provider the Agent wires (gh-2458), plus the
-/// CLI-shaped missing-tool routing. Returns the recording fake and the
-/// run's messages.
+/// CLI-shaped missing-tool routing (unless [useResolver] is false —
+/// the review-round-2 case where no `missingToolResolver` is wired at
+/// all, like a raw SDK host following the gate's own docs). When
+/// [transformContext] is non-null the host hook is installed too.
+/// Returns the recording fake and the run's messages.
 Future<(_RecordingStream, List<Message>)> _runMountThenCall({
   required _MountRig rig,
   required String mountName,
   required String callName,
+  bool useResolver = true,
+  TransformContextHook? transformContext,
 }) async {
   rig.gate.apply(
     _keep12Resolution(),
@@ -262,7 +267,8 @@ Future<(_RecordingStream, List<Message>)> _runMountThenCall({
     config: AgentLoopConfig(
       model: _model,
       toolsProvider: () => rig.mountTarget.state.tools,
-      missingToolResolver: rig.resolve,
+      missingToolResolver: useResolver ? rig.resolve : null,
+      transformContext: transformContext,
     ),
     streamFunction: fake.call,
     toolExecutor: rig.executor,
@@ -305,6 +311,58 @@ void main() {
         rig: rig,
         mountName: 'agent_message',
         callName: 'agent_message',
+      );
+
+      expect(rig.executed, contains('agent_message'));
+      final result = messages.whereType<ToolResultMessage>().firstWhere(
+        (r) => r.toolName == 'agent_message',
+      );
+      expect(result.isError, isFalse);
+      expect(
+        (result.content.single as TextContent).text,
+        equals('agent_message executed'),
+      );
+    });
+
+    test('(b2) REVIEW: a transformContext hook must not clobber the '
+        'live-tools rewrite — the mounted tool still rides the next '
+        'request', () async {
+      // The transformContext rebuild was reading `tools: context.tools`
+      // (the run-start snapshot), discarding the liveTools rewrite made
+      // ten lines above — any host with the public Agent.transformContext
+      // hook installed reproduced gh-2458 verbatim.
+      final rig = _MountRig(['agent_message']);
+      final (fake, _) = await _runMountThenCall(
+        rig: rig,
+        mountName: 'agent_message',
+        callName: 'agent_message',
+        transformContext: (messages, _) async => messages,
+      );
+
+      expect(fake.calls, 3);
+      expect(
+        fake.contexts[1].tools!.map((t) => t.name),
+        contains('agent_message'),
+        reason:
+            'the transformContext rebuild must thread requestContext.tools '
+            '(the live list), not the run-start snapshot',
+      );
+    });
+
+    test('(b3) REVIEW: mounts mid-loop with NO resolver — the call routes '
+        'to the executor, not the snapshot not-found', () async {
+      // An SDK host wiring gate + othersTool + wrapExecutor per the gate's
+      // own docs installs NO missingToolResolver. Routing must agree with
+      // the schema: the mounted tool is in the LIVE list, so the call
+      // must reach its executor instead of dead-ending on
+      // "Tool agent_message not found" (#680 honesty untouched — an
+      // un-mounted name is in neither list and still tombstones/not-founds).
+      final rig = _MountRig(['agent_message']);
+      final (_, messages) = await _runMountThenCall(
+        rig: rig,
+        mountName: 'agent_message',
+        callName: 'agent_message',
+        useResolver: false,
       );
 
       expect(rig.executed, contains('agent_message'));

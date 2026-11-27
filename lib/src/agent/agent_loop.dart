@@ -1731,7 +1731,11 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
     requestContext = Context(
       systemPrompt: context.systemPrompt,
       messages: await transformContext(List.of(context.messages), cancelToken),
-      tools: context.tools,
+      // gh-2458 (review round 2): thread `requestContext.tools`, not the
+      // run-start `context.tools` — the liveTools rewrite above may have
+      // already swapped in the mounted list, and this rebuild must not
+      // clobber it back to the snapshot.
+      tools: requestContext.tools,
     );
   }
   // Session image registry (#171): unique history images ride once as
@@ -2153,7 +2157,7 @@ Future<_ExecutedToolCallBatch> _executeToolCalls(
       config.toolExecution == ToolExecutionMode.sequential;
   if (!hasSequentialToolCall) {
     for (final toolCall in toolCalls) {
-      var tool = _findTool(context, toolCall.name);
+      var tool = _findTool(context, toolCall.name, config);
       if (tool == null && config.missingToolResolver != null) {
         tool = await config.missingToolResolver!(toolCall.name);
       }
@@ -2338,7 +2342,7 @@ Future<_ToolCallPreparation> _prepareToolCall(
   AgentLoopConfig config,
   CancelToken? cancelToken,
 ) async {
-  var tool = _findTool(context, toolCall.name);
+  var tool = _findTool(context, toolCall.name, config);
   if (tool == null) {
     // GOAL #28 (issue #2416 review round 2): a direct call to a
     // deferred-but-enabled tool routes to the deferred-mount path — the
@@ -2423,9 +2427,23 @@ _ToolCallPreparation? _abortIfCancelled(CancelToken? cancelToken) {
   return null;
 }
 
-Tool? _findTool(Context context, String name) {
+Tool? _findTool(Context context, String name, [AgentLoopConfig? config]) {
   for (final tool in context.tools ?? const <Tool>[]) {
     if (tool.name == name) return tool;
+  }
+  // gh-2458 (review round 2): a mid-loop `others` mount lands in the LIVE
+  // tool list (`agent.state.tools` via the gate apply), never in this
+  // run-start snapshot. When the host wires `toolsProvider` — the same
+  // provider the schema half already consults per request — fall back to
+  // it so routing agrees with what the schema advertised. Un-mounted
+  // discoverables are in neither list: the honest not-found (and the
+  // #680 tombstone contract) is unchanged; `missingToolResolver` stays
+  // the last resort with its mount side effect.
+  final liveTools = config?.toolsProvider?.call();
+  if (liveTools != null) {
+    for (final tool in liveTools) {
+      if (tool.name == name) return tool;
+    }
   }
   return null;
 }
@@ -2543,7 +2561,7 @@ Future<_FinalizedToolCall> _finalizeExecutedToolCall(
             .whereType<TextContent>()
             .map((block) => block.text)
             .join('\n'),
-        toolDescription: _findTool(context, toolCall.name)?.description,
+        toolDescription: _findTool(context, toolCall.name, config)?.description,
       );
     } else {
       breaker.observeSuccess(toolCall.name);
