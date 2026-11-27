@@ -418,6 +418,7 @@ final class AgentLoopConfig {
     this.finalizeGate = false,
     this.operativeSkills = const [],
     this.workingSetProvider,
+    this.toolsProvider,
     this.takePendingNotices,
     this.reportedOrphanKeys,
     this.budgetLineProvider,
@@ -655,6 +656,17 @@ final class AgentLoopConfig {
   /// lands on the very next call.
   final Future<WorkingSetSnapshot?> Function()? workingSetProvider;
 
+  /// gh-2458: the loop's LIVE tool list — resolved before EVERY provider
+  /// call, like [overheadCalibration] ("read per request"). A mid-run
+  /// tool-surface change (`others` → `ToolAvailabilityGate.apply` →
+  /// `agent.state.tools`, GOAL #28) lands here without a new run: the
+  /// next request in the SAME run advertises the mounted tool instead of
+  /// the run-start snapshot the model can never call. When installed, a
+  /// non-null result REPLACES `Context.tools` for the outbound request
+  /// only (the transcript is never touched); hosts that build configs
+  /// directly (null provider) keep the run-start snapshot unchanged.
+  final List<Tool>? Function()? toolsProvider;
+
   /// gh-2423 (C3): drains the host's pending context notices (the
   /// post-hide / near-limit `<system-notice>` records). Called right
   /// before the queued steering is injected — a notice rides the NEXT
@@ -722,6 +734,7 @@ final class AgentLoopConfig {
       finalizeGate: finalizeGate,
       operativeSkills: operativeSkills,
       workingSetProvider: workingSetProvider,
+      toolsProvider: toolsProvider,
       takePendingNotices: takePendingNotices,
       reportedOrphanKeys: reportedOrphanKeys,
       budgetLineProvider: budgetLineProvider,
@@ -1699,6 +1712,20 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   // pi applies transformContext (then convertToLlm) before each provider
   // call; only the request payload is rewritten, never the transcript.
   var requestContext = context;
+  // gh-2458: the LIVE tool list rides every request — a mid-loop mount
+  // (`others` → `ToolAvailabilityGate.apply` → `agent.state.tools`) must
+  // be advertised by the NEXT request in the SAME run; the run-start
+  // snapshot would keep the mounted tool invisible to the provider, so
+  // the model can never emit its call. First rewrite, so every later
+  // payload rewrite captures the fresh list.
+  final liveTools = config.toolsProvider?.call();
+  if (liveTools != null) {
+    requestContext = Context(
+      systemPrompt: requestContext.systemPrompt,
+      messages: requestContext.messages,
+      tools: liveTools,
+    );
+  }
   final transformContext = config.transformContext;
   if (transformContext != null) {
     requestContext = Context(
