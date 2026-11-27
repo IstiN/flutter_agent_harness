@@ -57,11 +57,11 @@ void main() {
       productId: 'aiin',
       displayName: 'AIIN Agent',
       authEndpoint: Uri.parse('https://auth.aiin.by'),
-      oauthCallback: Uri.parse('https://www.aiin.by/agent/oauth/ain.html'),
+      oauthCallback: Uri.parse('https://www.aiin.by/agent/oauth/aiin.html'),
     );
     expect(
       aiinOAuthCallbackForProduct(config),
-      'https://www.aiin.by/agent/oauth/ain.html',
+      'https://www.aiin.by/agent/oauth/aiin.html',
     );
   });
 

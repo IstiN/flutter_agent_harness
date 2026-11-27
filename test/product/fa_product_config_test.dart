@@ -48,10 +48,10 @@ void main() {
         final config = FaProductConfig.fromJson({
           ..._valid(),
           'defaultProviderKey': 'aiin',
-          'localeStorageKey': 'ain_lang',
+          'localeStorageKey': 'aiin_lang',
         });
         expect(config.defaultProviderKey, 'aiin');
-        expect(config.localeStorageKey, 'ain_lang');
+        expect(config.localeStorageKey, 'aiin_lang');
         expect(
           () => FaProductConfig.fromJson({
             ..._valid(),
@@ -307,6 +307,483 @@ void main() {
       );
     });
   });
+
+  group('hostConnection (issue #2391)', () {
+    test('parses the full section: bridge, roles, slots, quota', () {
+      final config = FaProductConfig.fromJson(
+        _valid(featureFlags: <Object?>[], hostConnection: _hostConnection()),
+      );
+      final host = config.hostConnection;
+      expect(host, isNotNull);
+      expect(host!.name, 'Host');
+      expect(host.baseUrl, Uri.parse('https://api.example/v1'));
+      expect(host.sessionBridge.storage, 'localStorage');
+      expect(host.sessionBridge.key, 'host_agent_session');
+      expect(host.defaultModel, 'host/flash');
+      expect(host.modelRoles, {
+        'default': 'host/flash',
+        'slow': 'host/pro',
+        'smol': 'host/flash',
+      });
+      expect(host.mediaSlots['imageGeneration']!.model, 'host/image_gen');
+      expect(host.mediaSlots['audioTts']!.model, 'host/tts');
+      expect(host.quota!.status, 429);
+      expect(host.quota!.errorCode, 'limit_reached');
+      expect(host.quota!.url, Uri.parse('https://app.example/'));
+    });
+
+    test(
+      'name defaults to displayName; empty roles and slots read as empty',
+      () {
+        final config = FaProductConfig.fromJson(
+          _valid(
+            featureFlags: <Object?>[],
+            hostConnection: _hostConnection(
+              name: null,
+              modelRoles: null,
+              mediaSlots: null,
+              quota: null,
+            ),
+          ),
+        );
+        expect(config.hostConnection!.name, 'Host Workspace');
+        expect(config.hostConnection!.modelRoles, isEmpty);
+        expect(config.hostConnection!.mediaSlots, isEmpty);
+        expect(config.hostConnection!.quota, isNull);
+      },
+    );
+
+    test('absent section stays null (stock and existing profiles)', () {
+      expect(FaProductConfig.stock.hostConnection, isNull);
+      expect(FaProductConfig.fromJson(_valid()).hostConnection, isNull);
+    });
+
+    test('baseUrl must exist, be a secure endpoint, and carry no query', () {
+      for (final bad in [
+        _hostConnection(baseUrl: 'ftp://api.example/v1'),
+        _hostConnection(baseUrl: 'api.example/v1'),
+        _hostConnection(baseUrl: 'https://'),
+        _hostConnection(baseUrl: 'https://other.example/v1'),
+        _hostConnection(baseUrl: 'https://api.example/v1?token=x'),
+        _hostConnection(baseUrl: 'https://user:pw@api.example/v1'),
+        _hostConnection(baseUrl: 'https://api.example/v1#frag'),
+        _hostConnection(baseUrl: 42),
+      ]) {
+        expect(
+          () => FaProductConfig.fromJson(
+            _valid(featureFlags: <Object?>[], hostConnection: bad),
+          ),
+          throwsFormatException,
+          reason: 'baseUrl case: $bad',
+        );
+      }
+    });
+
+    test('apiEndpoint becomes required and pins the origin', () {
+      expect(
+        () => FaProductConfig.fromJson(
+          _valid(
+            featureFlags: <Object?>[],
+            apiEndpoint: null,
+            hostConnection: _hostConnection(),
+          ),
+        ),
+        throwsFormatException,
+      );
+      // Loopback http is legal for development but must match apiEndpoint.
+      expect(
+        () => FaProductConfig.fromJson(
+          _valid(
+            featureFlags: <Object?>[],
+            hostConnection: _hostConnection(
+              baseUrl: 'http://127.0.0.1:8080/v1',
+            ),
+          ),
+        ),
+        throwsFormatException,
+      );
+      final loopback = FaProductConfig.fromJson(
+        _valid(
+          featureFlags: <Object?>[],
+          apiEndpoint: 'http://localhost:8080',
+          hostConnection: _hostConnection(baseUrl: 'http://localhost:8080/v1'),
+        ),
+      );
+      expect(
+        loopback.hostConnection!.baseUrl,
+        Uri.parse('http://localhost:8080/v1'),
+      );
+    });
+
+    test('sessionBridge storage is localStorage only and keys are strict', () {
+      for (final bad in [
+        _hostConnection(sessionBridge: {'storage': 'cookie', 'key': 'k'}),
+        _hostConnection(sessionBridge: {'storage': 'localStorage', 'key': ''}),
+        _hostConnection(
+          sessionBridge: {'storage': 'localStorage', 'key': 'bad key!'},
+        ),
+        _hostConnection(
+          sessionBridge: {'storage': 'localStorage', 'key': 'x' * 65},
+        ),
+        _hostConnection(sessionBridge: {'storage': 'localStorage'}),
+        _hostConnection(sessionBridge: {'key': 'k'}),
+      ]) {
+        expect(
+          () => FaProductConfig.fromJson(
+            _valid(featureFlags: <Object?>[], hostConnection: bad),
+          ),
+          throwsFormatException,
+          reason: 'bridge case: $bad',
+        );
+      }
+      final ok = FaProductConfig.fromJson(
+        _valid(
+          featureFlags: <Object?>[],
+          hostConnection: _hostConnection(
+            sessionBridge: {'storage': 'localStorage', 'key': 'A.z_9-X'},
+          ),
+        ),
+      );
+      expect(ok.hostConnection!.sessionBridge.key, 'A.z_9-X');
+    });
+
+    test('defaultModel is required opaque text 1..200 chars', () {
+      for (final bad in [
+        _hostConnection(defaultModel: null),
+        _hostConnection(defaultModel: ''),
+        _hostConnection(defaultModel: 'x' * 201),
+        _hostConnection(defaultModel: 'bad\nmodel'),
+      ]) {
+        expect(
+          () => FaProductConfig.fromJson(
+            _valid(featureFlags: <Object?>[], hostConnection: bad),
+          ),
+          throwsFormatException,
+          reason: 'defaultModel case: $bad',
+        );
+      }
+    });
+
+    test('modelRoles keys are exactly the harness role ids', () {
+      expect(
+        () => FaProductConfig.fromJson(
+          _valid(
+            featureFlags: <Object?>[],
+            hostConnection: _hostConnection(
+              modelRoles: {'vision': 'host/vision'},
+            ),
+          ),
+        ),
+        throwsFormatException,
+      );
+      final config = FaProductConfig.fromJson(
+        _valid(
+          featureFlags: <Object?>[],
+          hostConnection: _hostConnection(
+            modelRoles: {for (final role in modelRoleIds) role: 'host/$role'},
+          ),
+        ),
+      );
+      expect(
+        config.hostConnection!.modelRoles.keys.toSet(),
+        modelRoleIds.toSet(),
+      );
+    });
+
+    test(
+      'mediaSlots keys are exactly the slot ids and values are model-only',
+      () {
+        for (final bad in [
+          _hostConnection(
+            mediaSlots: {
+              'screensaver': {'model': 'host/x'},
+            },
+          ),
+          _hostConnection(mediaSlots: {'vision': 'host/flash'}),
+          _hostConnection(
+            mediaSlots: {
+              'vision': {'model': 'host/flash', 'apiKey': 'sk-nope'},
+            },
+          ),
+          _hostConnection(mediaSlots: {'vision': <String, Object?>{}}),
+        ]) {
+          expect(
+            () => FaProductConfig.fromJson(
+              _valid(featureFlags: <Object?>[], hostConnection: bad),
+            ),
+            throwsFormatException,
+            reason: 'mediaSlots case: $bad',
+          );
+        }
+        final config = FaProductConfig.fromJson(
+          _valid(
+            featureFlags: <Object?>[],
+            hostConnection: _hostConnection(
+              mediaSlots: {
+                for (final slot in mediaModelSlotIds)
+                  slot: {'model': 'host/$slot'},
+              },
+            ),
+          ),
+        );
+        expect(
+          config.hostConnection!.mediaSlots.keys.toSet(),
+          mediaModelSlotIds.toSet(),
+        );
+      },
+    );
+
+    test('quota fields validate; url must be HTTPS', () {
+      for (final bad in [
+        _hostConnection(quota: {'status': 200, 'errorCode': 'x'}),
+        _hostConnection(quota: {'status': 600, 'errorCode': 'x'}),
+        _hostConnection(quota: {'status': 429}),
+        _hostConnection(quota: {'errorCode': 'x'}),
+        _hostConnection(
+          quota: {'status': 429, 'errorCode': 'x', 'url': 'http://e.com/'},
+        ),
+        _hostConnection(quota: {'status': 429, 'errorCode': ''}),
+        _hostConnection(quota: {'status': 429, 'errorCode': 'x' * 65}),
+      ]) {
+        expect(
+          () => FaProductConfig.fromJson(
+            _valid(featureFlags: <Object?>[], hostConnection: bad),
+          ),
+          throwsFormatException,
+          reason: 'quota case: $bad',
+        );
+      }
+    });
+
+    test('hostConnection conflicts with the cloudSync flag', () {
+      expect(
+        () => FaProductConfig.fromJson(
+          _valid(
+            featureFlags: ['cloudSync'],
+            hostConnection: _hostConnection(),
+          ),
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test(
+      'providerCatalog host-only + signInUrl parse (gh-2391 addendum 4)',
+      () {
+        final config = FaProductConfig.fromJson(
+          _valid(
+            featureFlags: <Object?>[],
+            hostConnection: _hostConnection(),
+            providerCatalog: 'host-only',
+            signInUrl: 'https://app.example/app/?return=%2Fagent%2F',
+          ),
+        );
+        expect(config.providerCatalog, 'host-only');
+        expect(config.hostOnlyProviderCatalog, isTrue);
+        expect(
+          config.signInUrl,
+          Uri.parse('https://app.example/app/?return=%2Fagent%2F'),
+        );
+      },
+    );
+
+    test('the fields are absent by default — stock byte-identical (REG)', () {
+      expect(FaProductConfig.stock.providerCatalog, isNull);
+      expect(FaProductConfig.stock.hostOnlyProviderCatalog, isFalse);
+      expect(FaProductConfig.stock.signInUrl, isNull);
+      expect(FaProductConfig.fromJson(_valid()).providerCatalog, isNull);
+      expect(FaProductConfig.fromJson(_valid()).signInUrl, isNull);
+    });
+
+    test('providerCatalog must be host-only and requires hostConnection', () {
+      for (final bad in [
+        (
+          _valid(
+            featureFlags: <Object?>[],
+            hostConnection: _hostConnection(),
+            providerCatalog: 'allowlist',
+          ),
+          'unknown catalog value',
+        ),
+        (
+          _valid(featureFlags: <Object?>[], providerCatalog: 'host-only'),
+          'no hostConnection',
+        ),
+        (_valid(featureFlags: <Object?>[], providerCatalog: 42), 'non-string'),
+      ]) {
+        expect(
+          () => FaProductConfig.fromJson(bad.$1),
+          throwsFormatException,
+          reason: bad.$2,
+        );
+      }
+    });
+
+    test('channels host-only parse (gh-2391 addendum 5)', () {
+      final config = FaProductConfig.fromJson(
+        _valid(
+          featureFlags: <Object?>[],
+          hostConnection: _hostConnection(),
+          channels: 'host-only',
+        ),
+      );
+      expect(config.channels, 'host-only');
+      expect(config.hostOnlyChannels, isTrue);
+    });
+
+    test('channels absent by default — stock byte-identical (REG)', () {
+      expect(FaProductConfig.stock.channels, isNull);
+      expect(FaProductConfig.stock.hostOnlyChannels, isFalse);
+      expect(FaProductConfig.fromJson(_valid()).channels, isNull);
+    });
+
+    test('channels must be host-only and requires hostConnection', () {
+      for (final bad in [
+        (
+          _valid(
+            featureFlags: <Object?>[],
+            hostConnection: _hostConnection(),
+            channels: 'local-only',
+          ),
+          'unknown channels value',
+        ),
+        (
+          _valid(featureFlags: <Object?>[], channels: 'host-only'),
+          'no hostConnection',
+        ),
+        (_valid(featureFlags: <Object?>[], channels: 42), 'non-string'),
+      ]) {
+        expect(
+          () => FaProductConfig.fromJson(bad.$1),
+          throwsFormatException,
+          reason: bad.$2,
+        );
+      }
+    });
+
+    test('theme picker locked parse (gh-2391 addendum 5)', () {
+      final config = FaProductConfig.fromJson(
+        _valid(
+          featureFlags: <Object?>[],
+          hostConnection: _hostConnection(),
+          themePackIdOverride: 'aiin-porcelain',
+          themePicker: 'profile-locked',
+        ),
+      );
+      expect(config.themePicker, 'profile-locked');
+      expect(config.themePickerLocked, isTrue);
+    });
+
+    test('themePicker absent by default — stock byte-identical (REG)', () {
+      expect(FaProductConfig.stock.themePicker, isNull);
+      expect(FaProductConfig.stock.themePickerLocked, isFalse);
+    });
+
+    test('themePicker must be profile-locked and requires themePackId', () {
+      for (final bad in [
+        (
+          _valid(featureFlags: <Object?>[], themePicker: 'free'),
+          'unknown picker value',
+        ),
+        (
+          _valid(
+            featureFlags: <Object?>[],
+            hostConnection: _hostConnection(),
+            themePicker: 'profile-locked',
+          )..remove('themePackId'),
+          'no themePackId',
+        ),
+      ]) {
+        expect(
+          () => FaProductConfig.fromJson(bad.$1),
+          throwsFormatException,
+          reason: bad.$2,
+        );
+      }
+    });
+
+    test('signInUrl must be HTTPS and requires hostConnection', () {
+      for (final bad in [
+        (
+          _valid(
+            featureFlags: <Object?>[],
+            hostConnection: _hostConnection(),
+            signInUrl: 'http://app.example/app/',
+          ),
+          'plain http',
+        ),
+        (
+          _valid(featureFlags: <Object?>[], signInUrl: 'https://app.example/'),
+          'no hostConnection',
+        ),
+      ]) {
+        expect(
+          () => FaProductConfig.fromJson(bad.$1),
+          throwsFormatException,
+          reason: bad.$2,
+        );
+      }
+    });
+
+    test('credential-shaped fields are rejected anywhere in the section', () {
+      for (final bad in [
+        _hostConnection(apiKeyValue: 'sk-hunt'),
+        _hostConnection(
+          mediaSlots: {
+            'vision': {'model': 'host/flash', 'accessToken': 't'},
+          },
+        ),
+      ]) {
+        expect(
+          () => FaProductConfig.fromJson(
+            _valid(featureFlags: <Object?>[], hostConnection: bad),
+          ),
+          throwsFormatException,
+          reason: 'credential case: $bad',
+        );
+      }
+    });
+  });
+}
+
+/// The hostConnection section under test, with every field overridable.
+Map<String, Object?> _hostConnection({
+  Object? name = 'Host',
+  Object? baseUrl = 'https://api.example/v1',
+  Object? sessionBridge = const {
+    'storage': 'localStorage',
+    'key': 'host_agent_session',
+  },
+  Object? defaultModel = 'host/flash',
+  Object? modelRoles = const {
+    'default': 'host/flash',
+    'slow': 'host/pro',
+    'smol': 'host/flash',
+  },
+  Object? mediaSlots = const {
+    'imageGeneration': {'model': 'host/image_gen'},
+    'audioTts': {'model': 'host/tts'},
+  },
+  Object? quota = const {
+    'status': 429,
+    'errorCode': 'limit_reached',
+    'url': 'https://app.example/',
+  },
+  Object? apiKeyValue,
+}) {
+  final json = <String, Object?>{
+    'name': ?name,
+    'baseUrl': baseUrl,
+    'sessionBridge': ?sessionBridge,
+    'defaultModel': ?defaultModel,
+    'modelRoles': ?modelRoles,
+    'mediaSlots': ?mediaSlots,
+    'quota': ?quota,
+  };
+  // Placed at the TOP level of the section object (never a URL field) so
+  // the recursive secret rejection is what fires.
+  if (apiKeyValue != null) json['apiKeyValue'] = apiKeyValue;
+  return json;
 }
 
 Map<String, Object?> _valid({
@@ -322,6 +799,12 @@ Map<String, Object?> _valid({
   List<Object?> featureFlags = const ['cloudSync'],
   Object? apiKey,
   Object? extension,
+  Object? hostConnection,
+  Object? providerCatalog,
+  Object? signInUrl,
+  Object? channels,
+  Object? themePicker,
+  Object? themePackIdOverride,
 }) {
   final json = <String, Object?>{
     'productId': productId,
@@ -337,6 +820,11 @@ Map<String, Object?> _valid({
     'legalLinks': legalLinks,
     'featureFlags': featureFlags,
   };
+  if (hostConnection != null) json['hostConnection'] = hostConnection;
+  if (providerCatalog != null) json['providerCatalog'] = providerCatalog;
+  if (signInUrl != null) json['signInUrl'] = signInUrl;
+  if (channels != null) json['channels'] = channels;
+  if (themePicker != null) json['themePicker'] = themePicker;
   if (apiKey case final key?) json['apiKey'] = key;
   if (extension case final value?) json['extension'] = value;
   return json;

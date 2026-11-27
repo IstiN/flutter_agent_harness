@@ -6253,6 +6253,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Any OpenAI-compatible endpoint'**
   String get onboardingProviderDescCustom;
+
+  /// Host-only catalog: the sign-in step headline
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in to {displayName}'**
+  String onboardingHostSignInTitle(Object displayName);
+
+  /// Host-only catalog: the sign-in step explainer
+  ///
+  /// In en, this message translates to:
+  /// **'{displayName} runs on your {displayName} account — sign in once in the {displayName} app and come right back. Third-party providers are not part of this workspace.'**
+  String onboardingHostSignInBody(Object displayName);
+
+  /// Host-only catalog: the external-browser sign-in button
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in to {displayName}'**
+  String onboardingHostSignInCta(Object displayName);
+
+  /// The host one-shot 401 re-resolution succeeded — invite a retry
+  ///
+  /// In en, this message translates to:
+  /// **'Host session restored — try sending your message again.'**
+  String get hostSessionRestored;
 }
 
 class _AppLocalizationsDelegate

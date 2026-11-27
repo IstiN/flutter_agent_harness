@@ -1536,5 +1536,30 @@
   "onboardingProviderDescMinimax": "Модели MiniMax — API-ключ",
   "onboardingProviderDescZai": "Модели GLM — API-ключ",
   "onboardingProviderDescOllama": "api.ollama.com — API-ключ",
-  "onboardingProviderDescCustom": "Любой эндпоинт, совместимый с OpenAI"
+  "onboardingProviderDescCustom": "Любой эндпоинт, совместимый с OpenAI",
+  "onboardingHostSignInTitle": "Вход в {displayName}",
+  "@onboardingHostSignInTitle": {
+    "placeholders": {
+      "displayName": {}
+    },
+    "description": "Host-only catalog: the sign-in step headline"
+  },
+  "onboardingHostSignInBody": "{displayName} работает под вашим аккаунтом {displayName} — войдите один раз в приложении {displayName} и вернитесь. Сторонние провайдеры в это рабочее пространство не входят.",
+  "@onboardingHostSignInBody": {
+    "placeholders": {
+      "displayName": {}
+    },
+    "description": "Host-only catalog: the sign-in step explainer"
+  },
+  "onboardingHostSignInCta": "Войти в {displayName}",
+  "@onboardingHostSignInCta": {
+    "placeholders": {
+      "displayName": {}
+    },
+    "description": "Host-only catalog: the external-browser sign-in button"
+  },
+  "hostSessionRestored": "Сессия хоста восстановлена — попробуйте отправить сообщение ещё раз.",
+  "@hostSessionRestored": {
+    "description": "The host one-shot 401 re-resolution succeeded — invite a retry"
+  }
 }

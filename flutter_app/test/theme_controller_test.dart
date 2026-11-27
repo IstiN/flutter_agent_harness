@@ -4,8 +4,60 @@ import 'package:fa_ui/fa_ui.dart' show FaFontPreset, FaVisualDirection;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fa/analytics/product_analytics_bridge.dart';
 
 void main() {
+  group('ThemeController product analytics (gh-2391 addendum)', () {
+    test('a user pack change forwards agent_theme_changed {packId}', () async {
+      final recorded = <List<Object?>>[];
+      ProductAnalyticsBridge.instance.useSinkForTest((event, params) {
+        recorded.add([event, params]);
+      });
+      addTearDown(ProductAnalyticsBridge.instance.restorePlatformSinkResolver);
+      final controller = ThemeController.inMemory();
+      await controller.setPack('aiin-porcelain');
+      expect(recorded.single[0], 'agent_theme_changed');
+      expect(recorded.single[1], {'packId': 'aiin-porcelain'});
+    });
+
+    test('a revert to the stock look forwards an empty packId', () async {
+      final recorded = <List<Object?>>[];
+      ProductAnalyticsBridge.instance.useSinkForTest((event, params) {
+        recorded.add([event, params]);
+      });
+      addTearDown(ProductAnalyticsBridge.instance.restorePlatformSinkResolver);
+      final controller = ThemeController.inMemory();
+      await controller.setPack('pack');
+      recorded.clear();
+      await controller.setPack(null);
+      expect(recorded.single[1], {'packId': ''});
+    });
+
+    test('boot applies opt out (productTracked: false)', () async {
+      final recorded = <List<Object?>>[];
+      ProductAnalyticsBridge.instance.useSinkForTest((event, params) {
+        recorded.add([event, params]);
+      });
+      addTearDown(ProductAnalyticsBridge.instance.restorePlatformSinkResolver);
+      final controller = ThemeController.inMemory();
+      await controller.setPack('aiin-porcelain', productTracked: false);
+      expect(recorded, isEmpty);
+    });
+
+    test('an unchanged selection never re-fires', () async {
+      final recorded = <List<Object?>>[];
+      ProductAnalyticsBridge.instance.useSinkForTest((event, params) {
+        recorded.add([event, params]);
+      });
+      addTearDown(ProductAnalyticsBridge.instance.restorePlatformSinkResolver);
+      final controller = ThemeController.inMemory();
+      await controller.setPack('pack');
+      recorded.clear();
+      await controller.setPack('pack');
+      expect(recorded, isEmpty);
+    });
+  });
+
   group('ThemeController', () {
     test('defaults to system mode', () {
       final controller = ThemeController.inMemory();
@@ -44,7 +96,10 @@ void main() {
       'corrupt file loads as the default mode instead of crashing',
       () async {
         final env = MemoryExecutionEnv();
-        await env.writeFile(appStateFilePath(env, ThemeController.fileName), 'not json {');
+        await env.writeFile(
+          appStateFilePath(env, ThemeController.fileName),
+          'not json {',
+        );
         final controller = await ThemeController.load(env);
         expect(controller.mode, FahThemeMode.system);
       },

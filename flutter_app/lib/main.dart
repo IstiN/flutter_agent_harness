@@ -9,6 +9,7 @@ import 'package:fa/services/relay_agent_service.dart';
 import 'package:fa/services/relay/ext_runtime.dart';
 import 'package:fa/services/relay/relay_probe.dart';
 import 'package:fa/boot/app_boot.dart';
+import 'package:fa/analytics/product_analytics_bridge.dart';
 import 'package:fa/boot/boot_config_codec.dart';
 import 'package:fa/boot/boot_watchdog.dart';
 import 'package:fa/network/network_mode.dart';
@@ -33,6 +34,8 @@ import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/l10n/locale_override.dart';
 import 'package:fa/services/media_models_store.dart';
+import 'package:fa/boot/host_connection_resolver.dart';
+import 'package:fa/boot/host_session_bridge.dart';
 import 'package:fa/services/onboarding_store.dart';
 import 'package:fa/services/ondevice_config_store.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -53,6 +56,7 @@ import 'package:fa_ui/fa_ui.dart'
     show
         buildFaTheme,
         FaDuoLayoutScope,
+        MediaSlotPickerCatalogScope,
         MediaModelsScope,
         SandboxAudioControllerFactory,
         SandboxVideoControllerFactory,
@@ -117,6 +121,7 @@ Future<void> bootAppRoutes(
       networkMode: stores.networkMode,
       networkSessions: stores.networkSessions,
       productConfig: stores.productConfig,
+      hostSession: stores.hostSession,
       analytics: analytics,
     ),
   );
@@ -200,6 +205,7 @@ class MyApp extends StatelessWidget {
     this.networkMode,
     this.networkSessions,
     this.productConfig = FaProductConfig.stock,
+    this.hostSession,
   });
 
   /// The shared execution env; `null` lets [AgentService.create] build the
@@ -276,6 +282,10 @@ class MyApp extends StatelessWidget {
   /// Host product identity; existing tests/hosts default to stock Fa.
   final FaProductConfig productConfig;
 
+  /// The resolved host session (issue #2391); null keeps every stock boot
+  /// decision byte-identical.
+  final HostSessionState? hostSession;
+
   /// Fallback for [themeController] when none is injected (tests): a single
   /// shared in-memory controller so every [MyApp] build sees the same one.
   static final ThemeController _fallbackThemeController =
@@ -303,7 +313,7 @@ class MyApp extends StatelessWidget {
         final uiTheme = packs
             ?.byId(productConfig.themePackId ?? theme.packId)
             ?.spec
-            .toFaUiTheme();
+            .toFaUiTheme(lockAccents: productConfig.themePickerLocked);
         return FaUiThemeProvider(
           data: uiTheme ?? const FaUiTheme(),
           child: _materialApp(theme, uiTheme),
@@ -366,17 +376,36 @@ class MyApp extends StatelessWidget {
         networkMode: networkMode,
         networkSessions: networkSessions,
         productConfig: productConfig,
+        hostSession: hostSession,
+        mediaModelsStore: mediaModelsStore,
       ),
     );
   }
 
   Widget _navigatorBuilder(BuildContext context, Widget? navigatorChild) {
+    // The ambient product identity scope (issue #2391 addendum): every
+    // surface — the work bar, the chat overlay, js apps, settings — reads
+    // ProductConfigScope.of(context), so branded builds never render the
+    // stock Fa mark and stock Fa renders it unchanged.
+    // gh-2391 review r3: the AIN-only picker restriction rides the same
+    // ambient layer — one scope above the navigator restricts EVERY
+    // MediaSlotProviderPickerPage (model chip, roles, slots, queues,
+    // ASR), so no construction site can leak the third-party zoo.
+    final child = MediaSlotPickerCatalogScope(
+      restrictToProviderId: productConfig.hostOnlyProviderCatalog
+          ? 'host'
+          : null,
+      child: ProductConfigScope(
+        productConfig: productConfig,
+        child: navigatorChild ?? const SizedBox.shrink(),
+      ),
+    );
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.macOS) {
-      return _plainNavigatorChild(navigatorChild);
+      return child;
     }
     return Stack(
       children: [
-        Positioned.fill(child: _plainNavigatorChild(navigatorChild)),
+        Positioned.fill(child: child),
         // Transparent drag strip for window movement.
         const Positioned(
           top: 0,
@@ -388,9 +417,6 @@ class MyApp extends StatelessWidget {
       ],
     );
   }
-
-  Widget _plainNavigatorChild(Widget? navigatorChild) =>
-      navigatorChild ?? const SizedBox.shrink();
 
   /// The scope wrappers over the optional stores: every present store gets
   /// its InheritedWidget down the tree.
@@ -532,9 +558,26 @@ class BootstrapScreen extends StatefulWidget {
     this.networkMode,
     this.networkSessions,
     this.productConfig = FaProductConfig.stock,
+    this.hostSession,
+    this.mediaModelsStore,
+    this.hostBridge,
   });
 
   final FaProductConfig productConfig;
+
+  /// The resolved host session (issue #2391): a populated bridge boots the
+  /// product's own connection straight to the workspace — no provider
+  /// gate, no onboarding, no connect flow. Null keeps the stock decisions.
+  final HostSessionState? hostSession;
+
+  /// The media-model overrides store (gh-2391 addendum 4): the onboarding
+  /// return path needs it to resolve a host session that appeared AFTER
+  /// boot (sign-in at the host cabinet, back to the shell).
+  final MediaModelsStore? mediaModelsStore;
+
+  /// The host-session bridge reader (gh-2391 addendum 4); injectable for
+  /// tests, defaults to the platform reader.
+  final HostSessionBridge? hostBridge;
 
   /// The shared execution env handed to [AgentService.create].
   final ExecutionEnv? env;
@@ -594,6 +637,16 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   /// First-launch onboarding shows only when nothing can be restored
   /// (upgraders with a saved connection never see it) and the persisted
   /// flag is still unseen.
+  /// Whether this boot will actually render the stock onboarding flow
+  /// (the source: stock analytics case — fresh, nothing restorable).
+  bool _stockOnboardingWillShow() {
+    final store = widget.onboardingStore;
+    final restorableNetwork =
+        widget.networkMode?.mode == AppMode.network &&
+        widget.networkMode?.networkId != null;
+    return store != null && !store.seen && !restorableNetwork;
+  }
+
   bool get _showOnboarding {
     final store = widget.onboardingStore;
     final restorableNetwork =
@@ -620,11 +673,25 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       );
       return;
     }
-    _config = restorableBootConfig(
-      connection: widget.lastConnectionStore?.connection,
-      registry: widget.registry,
-      sessionKeysStore: widget.sessionKeysStore,
+    _config = bootConfigWithHostSession(
+      restorable: restorableBootConfig(
+        connection: widget.lastConnectionStore?.connection,
+        registry: widget.registry,
+        sessionKeysStore: widget.sessionKeysStore,
+      ),
+      hostSession: widget.hostSession,
     );
+    // Product analytics (gh-2391 addendum 3): the boot's session source,
+    // once per process. The bridge is a no-op without the host hook.
+    if (widget.hostSession != null) {
+      ProductAnalyticsBridge.instance.track('agent_session_started', {
+        'source': 'host',
+      });
+    } else if (_config == null && _stockOnboardingWillShow()) {
+      ProductAnalyticsBridge.instance.track('agent_session_started', {
+        'source': 'stock',
+      });
+    }
     // The skills-consent dialog fires only for an EXPLICIT `ask` choice
     // (Settings) — discovery is on by default, so a fresh install never
     // sees it. Mobile never asks: the third-party roots don't exist there.
@@ -872,6 +939,7 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       networkMode: widget.networkMode,
       networkSessions: widget.networkSessions,
       productConfig: widget.productConfig,
+      hostBridge: widget.hostBridge,
       onFinished: ({required bool skipped}) => _onboardingFinished(),
     );
   }
@@ -890,7 +958,37 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       _onboardingDone = true;
       _config = config;
     });
-    if (config != null) unawaited(_boot());
+    if (config != null) {
+      unawaited(_boot());
+    } else {
+      unawaited(_resolveHostSessionAfterOnboarding());
+    }
+  }
+
+  /// The host-only return path (gh-2391 addendum 4): the visitor signed in
+  /// at the host cabinet and came back with a fresh bridge key — no
+  /// restorable connection exists, so resolve the host session NOW and
+  /// boot straight into the workspace. A still-empty bridge is the stock
+  /// post-onboarding state (home with an empty manager).
+  Future<void> _resolveHostSessionAfterOnboarding() async {
+    final connection = widget.productConfig.hostConnection;
+    final registry = widget.registry;
+    final taskModels = widget.taskModelsStore;
+    final mediaModels = widget.mediaModelsStore;
+    if (connection == null || registry == null) return;
+    final state = await resolveHostSession(
+      productConfig: widget.productConfig,
+      registry: registry,
+      taskModels: taskModels ?? TaskModelsStore.inMemory(),
+      mediaModels: mediaModels ?? MediaModelsStore.inMemory(),
+      bridge: widget.hostBridge,
+    );
+    if (state == null || !mounted) return;
+    HostSessionHandle.instance.install(state, registry: registry);
+    setState(() {
+      _config = state.bootConfig;
+    });
+    unawaited(_boot());
   }
 
   @override

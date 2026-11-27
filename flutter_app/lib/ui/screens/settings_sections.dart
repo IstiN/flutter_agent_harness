@@ -387,10 +387,16 @@ class ThemePacksSection extends StatelessWidget {
     required ThemeController controller,
     required bool canPick,
   }) {
+    // The profile-locked picker (gh-2391 addendum 5): a branded build
+    // locks the Theme page to the profile's own pack — no stock pack
+    // list, no default row, no import, no delete.
+    final lockedId = ProductConfigScope.of(context).themePickerLocked
+        ? ProductConfigScope.of(context).themePackId
+        : null;
     return SettingsGroup(
       label: context.l10n.themePacksTitle,
       hint: context.l10n.themePacksSubtitle,
-      action: canPick
+      action: (canPick && lockedId == null)
           ? faui.FaButton(
               label: context.l10n.themePackImport,
               icon: Icons.upload_file,
@@ -399,13 +405,22 @@ class ThemePacksSection extends StatelessWidget {
             )
           : null,
       children: [
-        SettingsRadioRow(
-          selected: controller.packId == null,
-          onTap: () => controller.setPack(null),
-          title: Text(context.l10n.themePackDefault),
-        ),
+        if (lockedId == null)
+          SettingsRadioRow(
+            selected: controller.packId == null,
+            onTap: () => controller.setPack(null),
+            title: Text(context.l10n.themePackDefault),
+          ),
         for (final pack in store.packs)
-          _packTile(context, theme, store, controller, pack),
+          if (lockedId == null || pack.id == lockedId)
+            _packTile(
+              context,
+              theme,
+              store,
+              controller,
+              pack,
+              deletable: lockedId == null,
+            ),
       ],
     );
   }
@@ -415,8 +430,9 @@ class ThemePacksSection extends StatelessWidget {
     ThemeData theme,
     ThemePackStore store,
     ThemeController controller,
-    InstalledThemePack pack,
-  ) {
+    InstalledThemePack pack, {
+    bool deletable = true,
+  }) {
     return SettingsRadioRow(
       key: ValueKey('theme-pack-${pack.id}'),
       selected: controller.packId == pack.id,
@@ -429,11 +445,13 @@ class ThemePacksSection extends StatelessWidget {
           (pack.spec.wallpaper == null && pack.spec.contrastWarnings.isEmpty)
           ? null
           : _packNotes(context, theme, pack),
-      trailing: faui.FaIconButton(
-        tooltip: context.l10n.themePackDelete,
-        icon: Icons.delete_outline,
-        onPressed: () => _remove(context, store, controller, pack),
-      ),
+      trailing: deletable
+          ? faui.FaIconButton(
+              tooltip: context.l10n.themePackDelete,
+              icon: Icons.delete_outline,
+              onPressed: () => _remove(context, store, controller, pack),
+            )
+          : null,
     );
   }
 

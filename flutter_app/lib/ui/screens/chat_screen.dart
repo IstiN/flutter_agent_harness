@@ -20,6 +20,7 @@ import 'package:fa/apps/dynamic_widget_tile.dart';
 import 'package:fa/apps/dynamic_widget_graduation.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/boot/host_connection_resolver.dart';
 import 'package:fa/services/agent_network_transport.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/asr_service.dart';
@@ -520,6 +521,14 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       },
       onAuthRecovery: (providerId) async {
+        // The host session (gh-2391) owns its own recovery path — kept
+        // out of this build method (the CRAP ratchet: build is at the
+        // ratchet's edge; the branch-heavy recovery lives in
+        // [_handleHostAuthRecovery]).
+        if (providerId == 'host') {
+          unawaited(_handleHostAuthRecovery(context));
+          return;
+        }
         if (providerId != 'codemie') return;
         final ok = await runCodemieSsoFlow(
           context: context,
@@ -540,6 +549,34 @@ class _ChatScreenState extends State<ChatScreen> {
       wallpaperBuilder: (_) => const FahWallpaper(),
       videoControllerFactory: widget.videoControllerFactory,
     );
+  }
+
+  /// The host session's auth-expired recovery (gh-2391): one silent
+  /// bridge re-read first — the host page may have re-published a fresh
+  /// scoped key since the failure. Restored → invite a retry; still gone →
+  /// the providers screen (the host entry reads "not configured" there;
+  /// the stock connect flows remain reachable). Local session data is
+  /// never touched, and never a manual key dialog.
+  Future<void> _handleHostAuthRecovery(BuildContext context) async {
+    final service = widget.service;
+    final restored = HostSessionHandle.instance.reResolveKey();
+    if (!context.mounted) return;
+    if (restored) {
+      fa_ui.showFahSnack(context, context.l10n.hostSessionRestored);
+    } else {
+      unawaited(
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => SettingsScreen(
+              service: service,
+              env: service.env,
+              registry: widget.registry,
+              lastConnectionStore: widget.lastConnectionStore,
+            ),
+          ),
+        ),
+      );
+    }
   }
 }
 

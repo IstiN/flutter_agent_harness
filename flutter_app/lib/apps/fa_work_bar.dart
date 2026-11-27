@@ -10,7 +10,7 @@ import 'package:flutter/material.dart';
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/app_theme.dart';
-import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:fa/ui/widgets/product_brand.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show SubagentEvent, SubagentHandle, SubagentStatus;
 
@@ -393,7 +393,10 @@ class FaOrbitIndicator extends StatelessWidget {
                 painter: _OrbitPainter(animation.value),
               ),
             ),
-            FaMark(size: size * 0.45),
+            ProductBrandMark(
+              productConfig: ProductConfigScope.of(context),
+              size: size * 0.45,
+            ),
           ],
         ),
       ),
