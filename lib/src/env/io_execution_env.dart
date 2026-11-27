@@ -15,6 +15,10 @@ import '../cancel_token.dart';
 import '../cube/config/fs_policy.dart';
 import 'bash_guard_io.dart';
 import 'execution_env.dart';
+// Issue #2415: dart:ffi does not compile on ANY web flavor (pure dart2js
+// AND flutter web, whose stubbed dart:io still makes dart.library.io
+// true here) — gate on dart.library.ffi, false on both webs.
+import 'fd_limit_stub.dart' if (dart.library.ffi) 'fd_limit_io.dart';
 import 'free_space_io.dart';
 import 'job_log_ceiling.dart';
 import 'job_log_redaction.dart';
@@ -878,6 +882,30 @@ final class LocalShell implements Shell, BackgroundShell {
       return (Ok<Process, ExecutionError>(process), scriptDir);
     } on Object catch (error) {
       _deleteScriptNow(scriptDir);
+      // Issue #2415: fd-table exhaustion is the environment's state — not
+      // a broken command and not a harness defect. Type it so the tool
+      // layer can retry once and the transcript carries an honest,
+      // actionable line instead of the "uncaught ProcessException"
+      // mislabel that told the model its bash tool was broken.
+      if (isFdExhaustion(error)) {
+        final limits = fdLimits();
+        final soft = limits?.soft;
+        return (
+          Err<Process, ExecutionError>(
+            ExecutionError(
+              ExecutionErrorCode.fdExhausted,
+              'fd pressure: cannot spawn "$executable" ($error)'
+              '${soft == null ? '' : ' — the process fd soft limit is $soft'}'
+              '. Not a command failure: the session is out of open file '
+              'descriptors (pipes of running bash jobs, hooks, watchers). '
+              'Wait for background jobs to settle, stop unneeded jobs, or '
+              'raise the limit (ulimit -n).',
+              cause: error,
+            ),
+          ),
+          null,
+        );
+      }
       return (
         Err<Process, ExecutionError>(
           ExecutionError(
@@ -1319,8 +1347,7 @@ final class LocalShell implements Shell, BackgroundShell {
 
 /// A [ShellJob] over a local [Process]: stdout/stderr stream into the log
 /// file; timeout and the cancel token both stop the process.
-final class _LocalShellJob
-    implements ShellJob, SurvivorReporting, ResourceReleaser {
+final class _LocalShellJob implements ShellJob, SurvivorReporting {
   _LocalShellJob({
     required this.id,
     required this.command,
@@ -1492,20 +1519,6 @@ final class _LocalShellJob
   final Process _process;
   final RandomAccessFile _logSink;
   final JobLogCeiling _ceiling;
-
-  /// Gh-2415 [ResourceReleaser]: the settle path already closes the
-  /// stdin pipe, the stream subscriptions and the log sink; this is the
-  /// idempotent backstop the registry calls under fd pressure (a job
-  /// settled through the capped drain may still sit on a subscription).
-  @override
-  void releaseResources() {
-    // Both subscriptions are assigned in the constructor body, so the
-    // `late final` reads cannot throw; cancelling an already-cancelled
-    // subscription is a no-op, which is what makes this idempotent.
-    unawaited(_stdoutSub.cancel());
-    unawaited(_stderrSub.cancel());
-    unawaited(_process.stdin.close().catchError((_) {}));
-  }
 
   /// This job's spawn moment (issue #2201): the lower bound of the
   /// orphan-window survivor scan on non-ownGroup hosts.

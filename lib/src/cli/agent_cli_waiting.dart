@@ -1036,7 +1036,35 @@ final class _WaitingCoordinator {
   /// time rides along (issue #478) so a later boot can tell a recycled
   /// pid from the real owner — probed INSIDE the manifest lock (issue
   /// #2275) so a fast-settling job's remove can only land after this add.
-  Future<void> jobStarted(ShellJobEntry job) async {
+  /// In-flight add chains by job id (issue #2415 follow-up, the drilled
+  /// #2355 family shape): adoption fires an UNAWAITED chain (onStart,
+  /// issue #450) while a caller may await the same add again — two
+  /// concurrent chains for one id are two lock contenders, and the
+  /// duplicate's queued-wait bound can expire behind the first chain's
+  /// in-lock pid-start probe, RE-surfacing the timeout notice the first
+  /// chain already cleared (the surface notice is the AC2 contract, so a
+  /// stale contender's late expiry lies about the registry state). The
+  /// add is idempotent — a second jobStarted for an in-flight id JOINS
+  /// the first chain instead of contending.
+  final _inFlightJobStarts = <String, Future<void>>{};
+
+  Future<void> jobStarted(ShellJobEntry job) {
+    final inFlight = _inFlightJobStarts[job.id];
+    if (inFlight != null) return inFlight;
+    final chain = _runJobStarted(job);
+    _inFlightJobStarts[job.id] = chain;
+    // Swallow on the derived future only — the real callers get the
+    // chain's own error via the returned future.
+    unawaited(
+      chain.then(
+        (_) => _inFlightJobStarts.remove(job.id),
+        onError: (Object _) => _inFlightJobStarts.remove(job.id),
+      ),
+    );
+    return chain;
+  }
+
+  Future<void> _runJobStarted(ShellJobEntry job) async {
     await _manifestAdd(
       job.id,
       job.command,

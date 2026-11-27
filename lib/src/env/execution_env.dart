@@ -319,6 +319,12 @@ enum ExecutionErrorCode {
   /// The process could not be spawned.
   spawnError,
 
+  /// The spawn failed because the process fd table is exhausted
+  /// (EMFILE/ENFILE, issue #2415). Environmental — not a command failure
+  /// and not a harness defect: the tool layer retries once and the
+  /// transcript carries the honest fd-pressure text.
+  fdExhausted,
+
   /// An output callback threw.
   callbackError,
 
@@ -608,16 +614,6 @@ abstract interface class BackgroundShell {
     required String logPath,
     ShellExecOptions? options,
   });
-}
-
-/// A job backend that can drop what it still holds AFTER settling
-/// (gh-2415): the registry asks every settled entry's backend to release
-/// under fd pressure — a leftover stdin pipe, a late stream subscription,
-/// a retained buffer. Running jobs are never asked. Implement what the
-/// backend really holds; a no-op is a valid answer.
-abstract interface class ResourceReleaser {
-  /// Idempotent: safe to call on an already-released job.
-  void releaseResources();
 }
 
 /// Optional [ShellJob] capability (issue #2201): the environment observed
