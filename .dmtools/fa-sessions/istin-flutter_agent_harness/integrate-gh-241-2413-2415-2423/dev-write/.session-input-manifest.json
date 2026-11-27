@@ -1,0 +1,197 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-27T02:20:07.966Z",
+  "ticketKey": "pr-2435",
+  "headSha": "5fd0115e22ed1e53b22b95eb26a7cd5e8aff7ebb",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:1f17012ad5b448cb",
+      "size": 12306
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:bbd38775db4fc070",
+      "size": 22260
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:bf403f8f889b26bc",
+      "size": 3093
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:342aecd3bff60680",
+      "size": 10437
+    },
+    "request.md": {
+      "hash": "fnv1a64:9fb7bc587fe28882",
+      "size": 10071
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:908087de7446d91b",
+      "size": 802
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:2865c10ac9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:ed4cd723a2676a06",
+      "size": 10291
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:9fb7bc587fe28882",
+      "size": 10071
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc68ne2H",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "docs/compaction.md:230",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the doc's quote of the soft-window warning is half-updated — it no longer matches the emitted text**\n\nThe F2 fix (636323c8d5) reworded the warning, but `docs/compaction.md` re-quotes only the first clause. The code emits (`agent_cli_compaction.dart:843-849`):\n\n```\nwarning: context window 25000 cannot take a trim below its trigger — fixed\nrequest overhead ≈21000 tokens + the newest user turn ≈6000 tokens already\nreach it (estimated from the system prompt, tool schemas and the turn);\nraising the window or disabling tools is the only fix; automatic compaction\nis skipped while the context stays under the window\n```\n\nwhile the doc still quotes:\n\n```\n`context window {window} cannot take a trim below its trigger\n≈{overhead} tokens (estimated from the system prompt + tool schemas) — …`\n```\n\nThe quote omits \"+ the newest user turn ≈{turn} tokens already reach it\" — the exact substance the fix added — and keeps the stale estimation parenthetical (\"system prompt + tool schemas\" vs \"system prompt, tool schemas and the turn\"). Before the fix the doc matched the old text verbatim, so this is a regression of the honest-docs contract this PR champions, introduced by the fixing commit itself. Please sync the quote to the emitted text (the 4 byte-pinning suites already pin the code side)."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc68ne4D",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "prompts/skills/self-settings/SKILL.md:110",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the `set` scope-defaults line still hides the `agent.contextWindowCap` exception (residual of the spills thread's \"while there\" remark)**\n\nThis line now lists `memory`/`cube`/`tools`/`spills` → project, then says \"everything else → the user file\". But `fa config set agent.contextWindowCap 25000` **also** defaults to the project file: `resolveWriteScope` (`config_service.dart:549-552`) returns project for every `_projectParticipates` key, and `_projectAgentKeys = {'agent.contextWindowCap'}` (`config_service.dart:65`) participates. The doc's own `get` row (:105) and file table (:59) name the exception — only this line misses it, so an agent reading it writes to the project file while believing it went to the user file.\n\nSuggested one-liner: \"…everything else → the user file (`agent.contextWindowCap` excepted — it also defaults to project)\". This is the surviving shard of F1's closing remark; the spills contradiction itself is fixed (warning, `get`/`set` resolution, CLI boot reader, and the doc rows all aligned in 6d362b3aac — 99 tests green here, the 3 new config pins included)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:35b8930e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the soft-window warning can state a condition that is false**\n\nThe regime triggers when `overhead + newestUserTurn >= window − reserve` (`windowBelowFixedOverhead`, soft_window.dart:29) — not when the window is below the overhead. Yet the once-per-session warning hard-codes \"context window N **is below the fixed request overhead** ≈M tokens\". When a large newest user turn (not the overhead) is what crossed the trigger — M < N — the warning names a condition that does not hold, on the PR whose own contract is honest numbers (gh-2411 \"honest logs\", gh-2423 C3 \"honest notices\"; docs/compaction.md quotes this exact text).\n\nSuggested shape: report what actually holds, e.g.\n\n```\nwarning: context window 25000 cannot take a trim below its trigger — fixed\nrequest overhead ≈21000 + the newest user turn ≈6000 already reach it\n(estimated from the system prompt, tool schemas and the turn); raising the\nwindow or disabling tools is the only fix; automatic compaction is skipped\nwhile the context stays under the window\n```\n\nor at minimum hedge the overhead clause (\"is at/below the fixed request overhead plus the newest user turn\"). The diagnostic line above it (`soft window sid=… overhead≈…`) is already accurate — this is only the user-facing wording."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:d287609a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Reply — PRRT_kwDOTXdlLc68kjRt (spills project scope vs the dead-config warning)\n\n**Picked a truth and aligned: the project scope now teaches the `spills:` section** — your first option (loader + `_projectSections` + CLI boot reader). The doc rows were already the intended truth; the code caught up. Fixed in `6d362b3aac`.\n\n## What changed\n\n1. **`lib/src/config/config_service.dart`** — `_projectSections` gains `'spills'`:\n   - `config check` no longer warns a project `spills:` section as dead config;\n   - `config get spills.*` resolves project-wins (your SKILL.md:105 claim now holds);\n   - `config set spills.*` defaults to the project scope, like `memory`/`cube`/`tools`.\n2. **`lib/src/cli/agent_cli_spill.dart`** — both spill wiring entry points (`attachSpillWiring`, `attachUserSpillWiring`) resolve `loadProjectSpillsConfig(_env.cwd) ?? config.spills`, exactly the app host's composition (`bin/fah_runapp.dart:1059`): a project `spills:` section now applies on the fa CLI boot too, so the section no longer silently drops on this host.\n3. **`prompts/skills/self-settings/SKILL.md`** — the two rows you flagged follow: \"scope defaults by key\" now lists `memory`/`cube`/`tools`/`spills` → project, and the no-home-directory host note lists `spills` among the sections that persist there (`prompts.g.dart` regenerated; the sync test pins it).\n\n## Validation (TDD)\n\n- 3 new tests in `test/config/config_service_test.dart`, RED before the change (spills warned as dead config; `set spills.threshold` refused project scope), GREEN after: check reads-not-warns + `get` project-wins (`scope: project`, file `_projectConfig`) + `set` default-scope-project pinning the tolerant-parse contract (a mistyped scalar writes with a note, never throws — `spills:` is tolerant by design, issue #678).\n- New boot-parity test in `test/spill/spill_env_wiring_test.dart` (real temp dir as cwd, since `loadProjectSpillsConfig` reads via `dart:io`): a project `threshold: 1024` under an absent user section is picked up by `attachSpillWiring`, observed through the env-retune notice `1024 → 512`.\n- `dart test test/config/config_service_test.dart test/spill/ test/prompts/prompts_sync_test.dart` green (config 92, spill 21); `dart analyze` clean."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:ce018746",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Reply — PRRT_kwDOTXdlLc68kjUd (soft-window warning wording)\n\n**Agreed — the warning now states the actual regime condition.** Fixed in `636323c8d5`.\n\n## The new wording\n\nYour suggested shape, adapted to the code's numbers. `lib/src/cli/agent_cli_compaction.dart` (`_skipCompactionSoftWindow`) now computes the newest user turn's tokens the same way `softWindowRegime` does (`newestRealUserTurnIndex` + `estimateTokens`) and emits:\n\n```\nwarning: context window 25000 cannot take a trim below its trigger — fixed\nrequest overhead ≈21000 tokens + the newest user turn ≈6000 tokens already\nreach it (estimated from the system prompt, tool schemas and the turn);\nraising the window or disabling tools is the only fix; automatic compaction\nis skipped while the context stays under the window\n```\n\n- The condition reported is the real one: `overhead + newestUserTurn >= window − reserve` (`windowBelowFixedOverhead`) — when a fat newest turn alone crossed the trigger, the warning no longer claims the overhead alone did it.\n- The diagnostic line above it is untouched (already accurate, per your note) — this is only the user-facing wording, exactly as scoped.\n- `docs/compaction.md`'s quote of the old text updated in the same commit so the doc stays truthful.\n\n## Validation\n\nThe four byte-pinning suites (`agent_cli_soft_window_warning_once_test.dart`, `agent_cli_soft_window_context_notices_test.dart`, `agent_cli_headless_over_window_test.dart`, `agent_cli_over_window_continuation_retry_test.dart`) were re-pinned to the new substring (`cannot take a trim below its trigger`) — 31 tests green; `dart analyze` clean.\n\nSide note on your digest item: the `scripts/ci_fast_gate.sh:368` duplicate `local attempt=0` and the `TODO(link)` placeholders in the PR description are both already handled on this branch — the former in the earlier quarantine commit, the latter pending the owner's follow-up issue links (the PR stays draft until they land)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:b0ca62aa",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the doc's quote of the soft-window warning is half-updated — it no longer matches the emitted text**\n\nThe F2 fix (636323c8d5) reworded the warning, but `docs/compaction.md` re-quotes only the first clause. The code emits (`agent_cli_compaction.dart:843-849`):\n\n```\nwarning: context window 25000 cannot take a trim below its trigger — fixed\nrequest overhead ≈21000 tokens + the newest user turn ≈6000 tokens already\nreach it (estimated from the system prompt, tool schemas and the turn);\nraising the window or disabling tools is the only fix; automatic compaction\nis skipped while the context stays under the window\n```\n\nwhile the doc still quotes:\n\n```\n`context window {window} cannot take a trim below its trigger\n≈{overhead} tokens (estimated from the system prompt + tool schemas) — …`\n```\n\nThe quote omits \"+ the newest user turn ≈{turn} tokens already reach it\" — the exact substance the fix added — and keeps the stale estimation parenthetical (\"system prompt + tool schemas\" vs \"system prompt, tool schemas and the turn\"). Before the fix the doc matched the old text verbatim, so this is a regression of the honest-docs contract this PR champions, introduced by the fixing commit itself. Please sync the quote to the emitted text (the 4 byte-pinning suites already pin the code side)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:7bcf59eb",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the `set` scope-defaults line still hides the `agent.contextWindowCap` exception (residual of the spills thread's \"while there\" remark)**\n\nThis line now lists `memory`/`cube`/`tools`/`spills` → project, then says \"everything else → the user file\". But `fa config set agent.contextWindowCap 25000` **also** defaults to the project file: `resolveWriteScope` (`config_service.dart:549-552`) returns project for every `_projectParticipates` key, and `_projectAgentKeys = {'agent.contextWindowCap'}` (`config_service.dart:65`) participates. The doc's own `get` row (:105) and file table (:59) name the exception — only this line misses it, so an agent reading it writes to the project file while believing it went to the user file.\n\nSuggested one-liner: \"…everything else → the user file (`agent.contextWindowCap` excepted — it also defaults to project)\". This is the surviving shard of F1's closing remark; the spills contradiction itself is fixed (warning, `get`/`set` resolution, CLI boot reader, and the doc rows all aligned in 6d362b3aac — 99 tests green here, the 3 new config pins included)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:b18f172f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "**Addendum (owner directive, live-test follow-up): `3bc3d30d35` — unanswered inbound agent mail is never a compaction candidate.\n\n**Trigger.** A live clip from a DAP multi-agent session: a peer's mail delivered into a busy agent, the autonomous chain then paused on its budget with one message queued — while earlier delivered-but-unanswered mail was foldable by every mechanical tier. The prompt-level belt (`## Open User Requests`, #81 v2) is judgment-only (AC9: the summarizer LLM judges openness), and the ledger's `kind=='user'` exempt tag only binds the JUDGE — the relief's keep-N hide, the checkpoint foldable range, and the local trim valve all folded delivered mail like noise. The channel delivery shape (`from <id> in #<channel>:`) additionally escapes the DM-only `_agentMailPattern` in `isSyntheticUserText`.\n\n**The belt (`compaction/inbound_mail.dart`).** One record- and message-level definition consumed by all tiers:\n- `isAgentMailText` (user_text.dart): DM shape, channel shape, reply anchor;\n- a mail record with no later reply never enters the engine's foldable range, never passes `validateHidePicks` (pinned), never joins the relief's keep-N veto (passes 1/2), and the trim valve CARRIES it across the cut like the pinned newest user turn;\n- reply evidence is deliberately conservative: an `agent_message` tool call or pure prose closes the mail; ordinary tool-call carriers are the agent working, not answering (the naive any-assistant rule made the invariant dead code in agentic sessions — caught by the tests before it shipped);\n- answered mail folds like any other data (protection stays bounded).\n\n**Scope decision.** Channel mail intentionally stays OUT of `isSyntheticUserText` — flipping it changes newest-real-user-turn semantics far beyond this belt (obligations ledger, checkpoint auto-close, gh-241 pin tests). The unanswered-mail invariant is the targeted fix.\n\n**Validation.** 16 new tests (`inbound_mail_test.dart`): text shapes, record/message matrices, validateHidePicks pins incl. the judge-exempt regression guard, valve carry/drop, relief end-to-end (fixture geometry pinned: transcript > relief target, newest result inside the valve's keep budget, so the carried path actually runs). Full `test/compaction/` + `auto_compactor`: 955 green; analyze clean.\n\nAlso captured in this thread: live validation runs of the PR's compaction stack on a copy of a real 544 KB DAP session — manual `/compact` (judge call to glm-5.3-flash, honest empty-range hand-over) and a fully AUTO `structured·hand-over` pass at cap 34000 (82 records hidden, 29848→18642 tokens, −38%, durable checkpoint with identities/agreements/verbatim errors preserved)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:afb6037c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "**Addendum 2 (owner directive): `dec76c67d6` — the chain token budget is OFF by default.**\n\nThe clip that motivated the mail-compaction belt also exposed the #2226 budget pause as a wake-gate that fires AFTER the spend: the evidence line showed 34.8M tokens booked across one marathon run, with the pause landing on the next wake and the peer's mail queued behind it. Per the owner's directive (\"let the mail arrive\"), `messaging.chainBudgetTokens` now defaults to **0**: spend alone never pauses a chain. The loop detector (content-similarity + no-progress evidence) stays ON as the default bound for true storms; a positive `messaging.chainBudgetTokens` re-enables the #2226 pause verbatim (400000 was the pre-#2435 default).\n\nTests: config defaults pin cap OFF + detection ON + budget OFF; the bare-policy guard never budget-pauses after a 50M-token marathon spend; the explicit-positive parse is unchanged. messaging (185) + cli inbox-wake suites green; analyze clean."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:d82a5fcc",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the new dead-config warning and the self-settings doc disagree about `spills:`**\n\nThis PR edits both sides of the project-scope contract but leaves them contradictory for `spills:`:\n\n- the skill doc edited here now says the project file participates in `memory:`/`cube:`/`tools:`/**`spills:`** + `agent.contextWindowCap`, and that `fa config get` resolves project-wins for those (prompts/skills/self-settings/SKILL.md:59, :66, :105);\n- the new dead-config warning text below names only `memory/cube/tools/compaction` + `agent.contextWindowCap` — `spills:` in a project file still warns as **dead config** (`_projectSections` at `config_service.dart:60` never gained `spills`);\n- the app boot **does** read project spills (`bin/fah_runapp.dart:1059`, `loadProjectSpillsConfig(cwd) ?? saved.spills`), while the fa CLI boot does not, and `config get spills.*` / `config set spills.* --scope project` go through `_projectParticipates` → user-only.\n\nAn agent following the skill's own workflow (edit → `config check` → report) gets told a live section is dead and may delete it; on the app host that silently drops the spilling config.\n\nThe mismatch predates this PR (`_projectSections` was already spills-less), but this diff sharpens it: it rewrote this exact message and the doc rows without reconciling them. Please pick one truth and align: either teach the project scope the `spills` section (loader + `_projectSections` + CLI boot reader), or scope the doc rows to \"app host only\" and keep the warning. While there, the skill's \"scope defaults by key\" line (~SKILL.md:117) still lists only `memory`/`cube`/`tools` — `agent.contextWindowCap` now also defaults to project scope via `_projectParticipates`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:eef6e7ed",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: A large, well-pinned integration (gh-2411 soft-window/overhead, gh-2412 echo strip, gh-2413 job ownership, gh-2415 partial, gh-2423 phase 1 + two owner addenda). No blocking or important findings; two suggestion-level polish threads and a ranked digest below. `dart analyze` re-run on the merged tree is clean for `lib/`, `bin/`, `test/`, `scripts/`, and the targeted pin suites (record-tag echo 8, soft window 16, inbound mail 16, newest user turn 6, fd limit/pressure, prompts sync — 73 tests) pass here.\n\n**Key Issues**:\n- 💡 `config_service.dart:384` — the new dead-config warning still names `spills:` as dead while the same PR's SKILL.md rows say project `spills:` wins (and the app boot reads it); align one of the two.\n- 💡 `agent_cli_compaction.dart:832` — the soft-window warning hard-codes \"window is below the fixed request overhead\", false when a fat newest user turn crossed the trigger.\n- Digest (ranked, no threads): `scripts/ci_fast_gate.sh:368-369` — duplicated `local attempt=0` (the quarantine commit added a second declaration); `inbound_mail.dart:57` — the reply-anchor matches anywhere, so a user turn quoting a peer mail becomes a fold-exempt pin until the next assistant record (documented trade-off; watch pin accumulation); `agent.dart` `_echoCleaned` — the raw/clean pair is retained if the turn never ends (bounded, next strip overwrites); `token_estimation.dart` — the record-tag overhead rides outside `calibration.apply` (small); gh-2412 residual per the PR description — legacy stored echoes still skip stamping in `tagTranscript` (`record_tag.dart:187`, disclosed follow-up); PR description still carries three `TODO(link)` placeholders for the follow-up issues.\n\n**Next Steps**:\n1. Reconcile the `spills:` project-scope story (warning text vs SKILL.md vs the two boots) — one-line doc fix or a loader change.\n2. Reword the soft-window warning to state the actual regime condition.\n3. Replace the `TODO(link)` placeholders in the PR description before marking ready; the owner live-test checkbox stays open by design (draft)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-26:cb165ec3",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer e275e54e9f1ec3e5e6ebd01789d31a75578c32d1 — run 45904204030 still queued at 2026-11-26T22:56:54.141Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-27:c1bd49af",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 6d362b3aacebab1049986ed7289d98c5c3a10dec — stale base at 2026-11-27T01:05:16.174Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:c9ebb6ed",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (re-review, head `5fd0115e22`)\n\n**Summary**: The re-review delta (5 commits since `e275e54e`) cleanly closes both open suggestion threads — F1 spills project scope (`6d362b3aac`: `_projectSections` + both CLI boot entry points + SKILL.md rows, app-host parity) and F2 soft-window warning wording (`636323c8d5`: the warning now computes the newest user turn exactly like `softWindowRegime` and states the real condition) — plus a byte-identical file-split refactor (2800-line gate, `part` files, no behavior change) and a new flutter grid-fit pin test. Both fixes verified: the F1/F2 pin suites pass here (99 tests: config 92 incl. 3 new, spill 21 incl. boot-parity, soft-window warning-once); root `dart analyze` surfaces only 78 pre-existing errors confined to the standalone `office_addin/dart` nested package (no nested package_config in a fresh checkout; zero errors in `lib/`/`bin/`/`test/`/`scripts/`; this delta touches no office_addin file). Two new suggestion-level doc residuals remain (details in threads), nothing blocking or important.\n\n**Key Issues** (suggestion-level only — non-blocking):\n- 💡 `docs/compaction.md:230` — the warning quote is half-updated: it drops \"+ the newest user turn ≈Y tokens already reach it\" and keeps the stale estimation parenthetical (thread 1).\n- 💡 `prompts/skills/self-settings/SKILL.md:110` — the `set` scope-defaults line still implies `agent.contextWindowCap` goes to the user file, but `resolveWriteScope` defaults it to project (thread 2).\n- Digest (ranked, no threads): `agent_cli_compaction.dart:833-834` — with no real user turn in the transcript (`newestRealUserTurnIndex < 0`) the warning reads \"the newest user turn ≈0 tokens already reach it\"; arithmetically consistent with the regime predicate (it passes 0), wording only. PR description still carries the `TODO(link)` placeholders for the follow-up issues (carried from the previous round; blocks only the draft→ready flip).\n\n**Next Steps**:\n1. Sync the `docs/compaction.md:230` quote to the emitted warning text (one line).\n2. Add the `agent.contextWindowCap` exception to the SKILL.md `set` scope-defaults line (one line).\n3. Replace the `TODO(link)` placeholders in the PR description before marking ready — gh-2415 stays correctly partial (limit raise, fd-pressure guard, receipt backoff landed; watcher dedup, install/GUI `ulimit` and the app host `raiseFdLimitOnce` are disclosed follow-ups)."
+    }
+  ]
+}
