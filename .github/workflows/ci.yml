@@ -4841,6 +4841,14 @@ jobs:
       # mid-upload draft is never touched.
       - name: Draft lifecycle guard (delete orphaned draft on failure)
         if: always() && job.status != 'success'
+        # gh-2432 (run 45643151796): this is the only bash-scripts run-step
+        # in a windows-capable matrix job without an explicit shell — on the
+        # windows-latest row the pwsh default interpolated `"${GITHUB_REF_NAME}"`
+        # as an UNDEFINED PowerShell variable (empty), the guard died on
+        # `${1:?usage: release_draft_guard.sh <tag>}` and the leg's
+        # orphan-draft cleanup never ran. Pin the shell; pinned by
+        # test/ci_2432_draft_lifecycle_guard_shell_test.dart (update both together).
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_DRAFT_IDENTITY: run/${{ github.run_id }}/job/${{ github.job }}-${{ matrix.os }}-${{ matrix.arch }}
