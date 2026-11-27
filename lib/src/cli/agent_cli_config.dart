@@ -138,6 +138,13 @@ final class AgentCliConfig {
     this.emptyHiccupRetries = 3,
     this.emptyHiccupBaseDelay = const Duration(milliseconds: 500),
     this.emptyHiccupMaxBackoff = const Duration(milliseconds: 8000),
+    // The inbox watcher tick (agent_cli_lifecycle _startInboxWatcher):
+    // drives the mail wake-ups, the fabric presence touch, and the
+    // every-other-tick lease heartbeat (~4s cadence inside the 15s
+    // staleness window). Tests compress that cadence — the #2257
+    // lease-beat rigs need 3 failing beats, ≈12s of real wall at the
+    // default — by passing a small interval; production never overrides.
+    this.inboxTickInterval = const Duration(seconds: 2),
     // gh-1603: the headless empty-reply nudge budget (see
     // [headlessEmptyReplyNudges]).
     this.headlessEmptyReplyNudges = 2,
@@ -316,6 +323,13 @@ final class AgentCliConfig {
 
   /// gh-1577: cap on the exponential empty-hiccup backoff.
   final Duration emptyHiccupMaxBackoff;
+
+  /// The inbox watcher tick interval (`_startInboxWatcher`): mail
+  /// wake-ups, the fabric presence touch, and the every-other-tick
+  /// lease heartbeat (~4s cadence, inside the 15s staleness window).
+  /// Tests compress the cadence by passing a small interval; the
+  /// production default keeps the 2s tick unchanged.
+  final Duration inboxTickInterval;
 
   /// gh-1603: the empty-reply `continue` nudge budget for HEADLESS runs.
   /// Interactive keeps the issue #1085 M2b one-nudge semantics (a user is
