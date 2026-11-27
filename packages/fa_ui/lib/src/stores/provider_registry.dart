@@ -18,6 +18,12 @@ import 'package:fa_ui/src/stores/session_keys_store.dart';
 /// local) rows is visible, not silent.
 const localProviderProvenance = 'local';
 
+/// Provenance of the host-session entry (issue #2391): upserted by the
+/// boot resolver from the product profile, single source of truth — the
+/// profile — and read-only on the Providers screen (`[host]` badge, no
+/// key/reconnect/delete).
+const hostProviderProvenance = 'host';
+
 /// A user-added OpenAI-compatible provider definition.
 ///
 /// Definitions are non-secret (name, endpoint, default model) and are
@@ -316,6 +322,46 @@ class ProviderRegistry extends ChangeNotifier {
     if (index < 0) return;
     _providers[index] = updated;
     await _save();
+    notifyListeners();
+  }
+
+  /// Appends [entry], or replaces the existing entry with the same id in
+  /// place (insertion order preserved) — the boot-time seam for entries
+  /// whose id is fixed by contract (the host-session `host` row, issue
+  /// #2391). Persists and notifies. Content (not the id-only [==-based]
+  /// equality) decides whether a write happens at all.
+  Future<CustomProvider> upsert(CustomProvider entry) async {
+    final index = _providers.indexWhere((p) => p.id == entry.id);
+    if (index >= 0) {
+      final existing = _providers[index];
+      final same =
+          existing.name == entry.name &&
+          existing.baseUrl == entry.baseUrl &&
+          existing.modelId == entry.modelId &&
+          existing.provenance == entry.provenance &&
+          existing.kind == entry.kind &&
+          existing.requiresKey == entry.requiresKey;
+      if (same) return existing;
+      _providers[index] = entry;
+    } else {
+      _providers.add(entry);
+    }
+    await _save();
+    notifyListeners();
+    return entry;
+  }
+
+  /// Remembers [key] for provider [id] in PROCESS MEMORY ONLY — the
+  /// host-session bridge's invariant (issue #2391): the bridged key is
+  /// never written to providers.json, never flipped onto the entry's
+  /// requiresKey marker, and never persisted to any secure store. A reload
+  /// re-reads it from the bridge. An empty key forgets the entry.
+  void rememberSessionKey(String id, String key) {
+    if (key.isEmpty) {
+      _sessionKeys.remove(id);
+    } else {
+      _sessionKeys[id] = key;
+    }
     notifyListeners();
   }
 

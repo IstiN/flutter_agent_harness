@@ -524,7 +524,11 @@ extension AgentServiceSessions on AgentService {
     final file = _sessionFile;
     if (file == null || _disposed) return;
     final info = (await env.fileInfo(file)).valueOrNull;
-    if (info == null) return;
+    // The stat await spans an async gap: the service can be disposed
+    // while it is in flight (gh-2391 CI — a tick resumed post-dispose
+    // and bumped externalSessionRevision on the dead notifier). Nothing
+    // after dispose may write.
+    if (_disposed || info == null) return;
     if (_sessionWatchBytes < 0) {
       _sessionWatchBytes = info.size;
       return;

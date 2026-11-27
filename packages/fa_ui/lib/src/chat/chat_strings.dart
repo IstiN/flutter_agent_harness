@@ -162,6 +162,18 @@ abstract class FaChatStrings {
 
   /// The auth-expired banner's re-authorize button label.
   String get chatAuthExpiredBannerAction;
+
+  /// The host-quota card title (gh-2391): the bridged connection answered
+  /// the profile's terminal quota shape.
+  String get chatHostQuotaTitle;
+
+  /// The host-quota card body: out of allowance for the signed-in user;
+  /// the host owns budgets and refills.
+  String get chatHostQuotaBody;
+
+  /// The host-quota card link label; the link itself is the profile's
+  /// `quota.url` (never read from a response body).
+  String get chatHostQuotaLinkLabel;
 }
 
 /// Built-in English chat strings.
@@ -396,6 +408,14 @@ class FaChatStringsEn extends FaChatStrings {
       'your message.';
   @override
   String get chatAuthExpiredBannerAction => 'Authorize';
+  @override
+  String get chatHostQuotaTitle => 'Out of allowance';
+  @override
+  String get chatHostQuotaBody =>
+      'The allowance for this signed-in account is used up. The host owns '
+      'budgets and refills — no retry was made.';
+  @override
+  String get chatHostQuotaLinkLabel => 'Open allowance page';
 }
 
 /// Built-in Russian chat strings.
@@ -641,6 +661,14 @@ class FaChatStringsRu extends FaChatStrings {
       'ещё раз.';
   @override
   String get chatAuthExpiredBannerAction => 'Авторизоваться';
+  @override
+  String get chatHostQuotaTitle => 'Лимит исчерпан';
+  @override
+  String get chatHostQuotaBody =>
+      'Лимит для этого аккаунта исчерпан. Бюджетами управляет хост — '
+      'повторная попытка не выполнялась.';
+  @override
+  String get chatHostQuotaLinkLabel => 'Открыть страницу лимита';
 }
 
 /// Installs a custom [FaChatStrings] implementation above the chat.

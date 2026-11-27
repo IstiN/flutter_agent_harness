@@ -9,6 +9,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/ui/screens/providers_section.dart' show agentConfigFrom;
+import 'package:fa/ui/widgets/product_brand.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
         FahColors,
@@ -165,6 +166,11 @@ MediaSlotProviderPickerPage quickModelPickerPage(
     connectedOnly: true,
     // Editing the main connection: no "Same as main" row.
     allowMainConnection: false,
+    // The host-only catalog (gh-2391 addendum 5): the picker shows ONLY
+    // the host row — never a third-party provider or an add-provider row.
+    restrictToProviderId: ProductConfigScope.of(context).hostOnlyProviderCatalog
+        ? 'host'
+        : null,
   );
 }
 

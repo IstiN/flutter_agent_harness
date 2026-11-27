@@ -276,6 +276,207 @@ void main() {
     expect(called, isFalse);
   });
 
+  group('hostConnection emission (issue #2391)', () {
+    test('validate-only accepts a valid hostConnection profile', () async {
+      profile.writeAsStringSync(jsonEncode(_profile(hostConnection: true)));
+      await buildProductWeb(
+        profilePath: profile.path,
+        assetsPath: assets.path,
+        outputPath: '${temp.path}/not-built',
+        validateOnly: true,
+        builder: (path) async => throw StateError('must not build'),
+      );
+    });
+
+    test(
+      'validate-only rejects the malformed variants before Flutter',
+      () async {
+        Object? mutateA(Object? section) =>
+            (section! as Map<String, Object?>)
+              ..['baseUrl'] = 'https://other.example/v1';
+        Object? mutateB(Object? section) =>
+            (section! as Map<String, Object?>)..remove('defaultModel');
+        Object? mutateC(Object? section) =>
+            (section! as Map<String, Object?>)['sessionBridge'] = {
+              'storage': 'cookie',
+              'key': 'k',
+            };
+        Object? mutateD(Object? section) =>
+            (section! as Map<String, Object?>)['modelRoles'] = {
+              'nonsense': 'host/x',
+            };
+        Object? mutateE(Object? section) =>
+            (section! as Map<String, Object?>)['apiKey'] = 'sk-hunt';
+        for (final mutation in [mutateA, mutateB, mutateC, mutateD, mutateE]) {
+          final json = _profile(hostConnection: true, mutate: mutation);
+          profile.writeAsStringSync(jsonEncode(json));
+          var called = false;
+          await expectLater(
+            buildProductWeb(
+              profilePath: profile.path,
+              assetsPath: assets.path,
+              outputPath: '${temp.path}/not-built',
+              validateOnly: true,
+              builder: (path) async => called = true,
+            ),
+            throwsFormatException,
+            reason: 'variant produced by $mutation',
+          );
+          expect(called, isFalse);
+        }
+      },
+    );
+
+    test(
+      'validate-only rejects hostConnection together with cloudSync',
+      () async {
+        final json = _profile()
+          ..['hostConnection'] = {
+            'baseUrl': 'https://api.example/v1',
+            'sessionBridge': {'storage': 'localStorage', 'key': 'k'},
+            'defaultModel': 'host/flash',
+          };
+        profile.writeAsStringSync(jsonEncode(json));
+        await expectLater(
+          buildProductWeb(
+            profilePath: profile.path,
+            assetsPath: assets.path,
+            outputPath: '${temp.path}/not-built',
+            validateOnly: true,
+            builder: (path) async {},
+          ),
+          throwsFormatException,
+        );
+      },
+    );
+
+    test(
+      'emitted product_config carries the section verbatim, no secrets',
+      () async {
+        profile.writeAsStringSync(jsonEncode(_profile(hostConnection: true)));
+        final output = '${temp.path}/branded-host';
+        await buildProductWeb(
+          profilePath: profile.path,
+          assetsPath: assets.path,
+          outputPath: output,
+          builder: (path) async => _fixtureShell(Directory(path)),
+        );
+        final emitted =
+            jsonDecode(File('$output/product_config.json').readAsStringSync())
+                as Map<String, Object?>;
+        expect(emitted['hostConnection'], {
+          'name': 'Host',
+          'baseUrl': 'https://api.example/v1',
+          'sessionBridge': {
+            'storage': 'localStorage',
+            'key': 'host_agent_session',
+          },
+          'defaultModel': 'host/flash',
+          'modelRoles': {'default': 'host/flash', 'smol': 'host/flash'},
+          'mediaSlots': {
+            'imageGeneration': {'model': 'host/image_gen'},
+          },
+          'quota': {'status': 429, 'errorCode': 'limit_reached'},
+        });
+        final js = File('$output/product_config.js').readAsStringSync();
+        expect(js, contains('"sessionBridge"'));
+        expect(js.contains('sk-'), isFalse);
+      },
+    );
+
+    test('providerCatalog + signInUrl ride the emitted profile', () async {
+      final json = _profile(hostConnection: true)
+        ..['providerCatalog'] = 'host-only'
+        ..['signInUrl'] = 'https://app.example/app/';
+      profile.writeAsStringSync(jsonEncode(json));
+      final output = '${temp.path}/branded-hostonly';
+      await buildProductWeb(
+        profilePath: profile.path,
+        assetsPath: assets.path,
+        outputPath: output,
+        builder: (path) async => _fixtureShell(Directory(path)),
+      );
+      final emitted =
+          jsonDecode(File('$output/product_config.json').readAsStringSync())
+              as Map<String, Object?>;
+      expect(emitted['providerCatalog'], 'host-only');
+      expect(emitted['signInUrl'], 'https://app.example/app/');
+    });
+
+    test(
+      'channels + themePicker ride the emitted profile (addendum 5)',
+      () async {
+        final json = _profile(hostConnection: true)
+          ..['channels'] = 'host-only'
+          ..['themePicker'] = 'profile-locked'
+          ..['themePack'] = {
+            'name': 'AIIN Porcelain',
+            'version': '1.0.0',
+            'colors': {
+              'dark': {
+                'background': '#07080D',
+                'surface': '#101218',
+                'text': '#E9EAEE',
+                'accent': '#4ADE80',
+                'accent2': '#A78BFA',
+                'onAccent': '#07080D',
+              },
+              'light': {
+                'background': '#F4F2EE',
+                'surface': '#FAF8F5',
+                'text': '#1C1B18',
+                'accent': '#4ADE80',
+                'accent2': '#A78BFA',
+                'onAccent': '#07080D',
+              },
+            },
+          }
+          ..['themePackId'] = 'aiin-porcelain';
+        profile.writeAsStringSync(jsonEncode(json));
+        final output = '${temp.path}/branded-add5';
+        await buildProductWeb(
+          profilePath: profile.path,
+          assetsPath: assets.path,
+          outputPath: output,
+          builder: (path) async => _fixtureShell(Directory(path)),
+        );
+        final emitted =
+            jsonDecode(File('$output/product_config.json').readAsStringSync())
+                as Map<String, Object?>;
+        expect(emitted['channels'], 'host-only');
+        expect(emitted['themePicker'], 'profile-locked');
+        // Stock: no fields → no keys (REG).
+        final plain = _profile();
+        profile.writeAsStringSync(jsonEncode(plain));
+        final plainOut = '${temp.path}/branded-plain-add5';
+        await buildProductWeb(
+          profilePath: profile.path,
+          assetsPath: assets.path,
+          outputPath: plainOut,
+          builder: (path) async => _fixtureShell(Directory(path)),
+        );
+        final plainEmitted =
+            jsonDecode(File('$plainOut/product_config.json').readAsStringSync())
+                as Map<String, Object?>;
+        expect(plainEmitted.containsKey('channels'), isFalse);
+        expect(plainEmitted.containsKey('themePicker'), isFalse);
+      },
+    );
+
+    test('profile without the section emits no hostConnection key', () async {
+      final output = '${temp.path}/branded-plain';
+      await buildProductWeb(
+        profilePath: profile.path,
+        assetsPath: assets.path,
+        outputPath: output,
+        builder: (path) async => _fixtureShell(Directory(path)),
+      );
+      final emitted =
+          jsonDecode(File('$output/product_config.json').readAsStringSync())
+              as Map<String, Object?>;
+      expect(emitted.containsKey('hostConnection'), isFalse);
+    });
+  });
   test(
     'a failed Flutter build preserves the previously published shell',
     () async {
@@ -366,34 +567,58 @@ void main() {
   );
 }
 
-Map<String, Object?> _profile() => {
-  'productId': 'host-product',
-  'displayName': 'Host & Workspace',
-  'description': 'A host-owned & private workspace',
-  'themePackId': 'host-theme',
-  'themePack': {
-    'name': 'Host Theme',
-    'version': '1.0.0',
-    'colors': {
-      'dark': {'accent': '#2E7D32'},
+Map<String, Object?> _profile({
+  bool hostConnection = false,
+  Object? Function(Object? section)? mutate,
+}) {
+  final json = <String, Object?>{
+    'productId': 'host-product',
+    'displayName': 'Host & Workspace',
+    'description': 'A host-owned & private workspace',
+    'themePackId': 'host-theme',
+    'themePack': {
+      'name': 'Host Theme',
+      'version': '1.0.0',
+      'colors': {
+        'dark': {'accent': '#2E7D32'},
+      },
     },
-  },
-  'authEndpoint': 'https://auth.example/authorize',
-  'apiEndpoint': 'https://api.example/v1',
-  'driveEndpoint': 'https://drive.example/v1',
-  'sessionEndpoint': 'https://sessions.example/v1',
-  'oauthCallback': 'https://app.example/oauth/callback',
-  'defaultProviderKey': 'aiin',
-  'localeStorageKey': 'host_lang',
-  'legalLinks': {'privacy': 'https://legal.example/privacy'},
-  'featureFlags': ['cloudSync'],
-  'brandAssets': {
-    'icon192': 'icon-192.png',
-    'icon512': 'icon-512.png',
-    'favicon': 'favicon.png',
-    'splash': 'splash.png',
-  },
-};
+    'authEndpoint': 'https://auth.example/authorize',
+    'apiEndpoint': 'https://api.example/v1',
+    'driveEndpoint': 'https://drive.example/v1',
+    'sessionEndpoint': 'https://sessions.example/v1',
+    'oauthCallback': 'https://app.example/oauth/callback',
+    'defaultProviderKey': 'aiin',
+    'localeStorageKey': 'host_lang',
+    'legalLinks': {'privacy': 'https://legal.example/privacy'},
+    'featureFlags': hostConnection ? <String>[] : ['cloudSync'],
+    'brandAssets': {
+      'icon192': 'icon-192.png',
+      'icon512': 'icon-512.png',
+      'favicon': 'favicon.png',
+      'splash': 'splash.png',
+    },
+  };
+  if (hostConnection) {
+    var section = <String, Object?>{
+      'name': 'Host',
+      'baseUrl': 'https://api.example/v1',
+      'sessionBridge': {'storage': 'localStorage', 'key': 'host_agent_session'},
+      'defaultModel': 'host/flash',
+      'modelRoles': {'default': 'host/flash', 'smol': 'host/flash'},
+      'mediaSlots': {
+        'imageGeneration': {'model': 'host/image_gen'},
+      },
+      'quota': {'status': 429, 'errorCode': 'limit_reached'},
+    };
+    if (mutate != null) {
+      final mutated = mutate(section);
+      if (mutated is Map<String, Object?>) section = mutated;
+    }
+    json['hostConnection'] = section;
+  }
+  return json;
+}
 
 void _writeAssets(Directory root) {
   File('${root.path}/icon-192.png').writeAsBytesSync(_png(192));
