@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-27T01:17:44.028Z",
+  "ticketKey": "pr-2444",
+  "headSha": "8751a447ebf91daa2fbe2c84584ca7a54af594fa",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:650c377620a47ec6",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:7a8a9daca67c8355",
+      "size": 5336
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:42c830c1be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:e60b6cb4ddff213f",
+      "size": 2995
+    },
+    "request.md": {
+      "hash": "fnv1a64:a4ca6bcd6214fabc",
+      "size": 2658
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:6948b151c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:1469094a657cd259",
+      "size": 2769
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:a4ca6bcd6214fabc",
+      "size": 2658
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:914c5e9f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: `_transferKeyKind` skips the JWT-shape tie-breaker the other classification sites apply**\n\nThe PR's contract is that legacy entries classify consistently at **every\nread-time classification site** (PR description: \"now classify as SSO cookie\nauth at every read-time classification site\"). Two of the sites this change\ntouches implement the RULE-P shape tie-breaker —\n`_switchToSavedCodeMieProvider` routes a JWT-shaped stored token to the Bearer\nleg, and `_findCodeMieSsoEntry`'s `isSsoEntry` excludes one\n(`lib/src/cli/codemie_provider_commands.dart`:\n`if (token != null && isCodeMieJwtToken(token)) return false;`) — but\n`_transferKeyKind` classifies by `authMethod` only:\n\n```dart\nreturn entry.authMethod == CustomProviderAuthMethod.jwt\n    ? ProviderTransferKeyKind.apiKey\n    : ProviderTransferKeyKind.sso;\n```\n\nSo a **legacy** entry (no `authMethod`) whose stored credential is JWT-shaped\nexports as the `sso` kind: the transfer manifest's `auth.type` and the\nreceiving machine's `imported provider codmie (sso)` prompt misdescribe a\ncredential that switch/boot route as Bearer JWT. Functionally harmless today —\n`_applyImportedEntry` stores the value and the read-time shape check re-derives\nthe JWT leg on the other side — but the exported label disagrees with what the\nimporter will actually do with the same value.\n\nMirror the tie-breaker for full RULE-P parity, e.g. pass the resolved value\n`_transferKeyFor` already holds into `_transferKeyKind` and treat a\nJWT-shaped credential as the `apiKey` kind exactly like an explicit `jwt`\nentry:\n\n```dart\nfinal ridesBearer = entry.authMethod == CustomProviderAuthMethod.jwt ||\n    isCodeMieJwtToken(resolvedValue);\nreturn ridesBearer\n    ? ProviderTransferKeyKind.apiKey\n    : ProviderTransferKeyKind.sso;\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:4390d488",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION fixed — `_transferKeyKind` now applies the JWT-shape tie-breaker (RULE-P parity)**\n\nAgreed — the PR's contract is classification consistency at every read-time site, and export is one of them. Applied exactly the suggested tie-breaker.\n\n**Fix** (`lib/src/cli/provider_export_command.dart`, `_transferKeyKind`):\n\n```dart\nfinal ridesBearer =\n    entry.authMethod == CustomProviderAuthMethod.jwt ||\n    (resolvedValue != null && isCodeMieJwtToken(resolvedValue));\nreturn ridesBearer\n    ? ProviderTransferKeyKind.apiKey\n    : ProviderTransferKeyKind.sso;\n```\n\n`_transferKeyFor` already holds the resolved credential (`_providerKeyFor(spec, baseUrl)`), so it now passes it through as `resolvedValue`. The exported manifest's `auth.type` (and the receiver's `imported provider codmie (...)` prompt) now describe a legacy JWT-shaped credential as `api-key` — the same leg `_switchToSavedCodeMieProvider` and `_findCodeMieSsoEntry`'s `isSsoEntry` route it to on the other side.\n\n**Test** (TDD, red→green): `test/cli/provider_transfer_test.dart` — `legacy CodeMie entry with a JWT-shaped token exports as the api-key kind (gh-2424 RULE-P shape tie-breaker)` pins the manifest kind (`ProviderTransferKeyKind.apiKey` decoded from the container) and the `(api-key)` import prompt. It failed with `sso` before the fix, passes after; the two sibling no-regression tests (`sso` kind for cookie-shaped legacy entries, `api-key` for explicit `jwt`) still pass.\n\nNo other classification sites changed — explicit `sso` entries and cookie-shaped legacy entries keep today's `sso` kind verbatim."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:429ca81c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: The gh-2424 fix works as designed: legacy `/code-assistant-api/`\nentries classify as SSO at every read-time site (boot restore, saved-entry\ndispatch, export kind), RULE-M×RULE-P holds, config.yaml is never rewritten on\nload, and 10 new tests pin it (`dart test test/cli/codemie_setup_test.dart\ntest/cli/provider_transfer_test.dart` — 72 passed locally, `dart analyze`\nclean). One suggestion thread below; nothing blocks merge.\n\n**Key Issues** (digest — none blocking):\n- `lib/src/cli/codemie_provider_commands.dart:539` — `_looksLikeCookieHeader`\n  treats any value containing `=`/`;` as a cookie, so a raw key with base64\n  padding (`sk-abc=`) still rides the Cookie header; the E4 shape guard stays\n  best-effort (same heuristic as the pre-existing `_resolveCodeMieCookie`\n  fallback — no regression, the wire 302 + SO re-login still repair).\n- Deferred tier (documented in the PR): `/v1`-less legacy entries now switch\n  and export as CodeMie, but model refresh (`lib/src/cli/provider_models.dart:542`)\n  and the wizard's SSO mint option (`lib/src/cli/provider_commands.dart:143`)\n  still use `.contains('/code-assistant-api/')` — the follow-up card should\n  cover those so `/model` works for the same entry class this PR fixes.\n\n**Next Steps**:\n1. Optional polish: apply the JWT-shape tie-breaker in `_transferKeyKind`\n   (see inline thread) for full RULE-P parity across classification sites.\n2. Land the deferred tree-wide `.contains` consolidation as the follow-up\n   card, including the `/model` refresh gap above."
+    }
+  ]
+}
