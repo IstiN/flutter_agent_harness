@@ -105,12 +105,65 @@ fi
 # race-lost create is tolerated (the winner owns the release), but a REAL
 # create failure is not (gh-237): the body was already bounded above by
 # release_notes_cap.sh, so a surviving failure is a genuine API error.
+#
+# gh-2432 (run 45643151796, v1.0.778): that single shot made every
+# TRANSIENT GitHub API server error fatal. All three hosted binaries legs
+# got `HTTP 500 (…/releases)` from the create within two minutes (the body
+# was already bounded to 119,961 bytes — NOT the gh-237 422 cap), each
+# leg's lone post-failure re-view ~0.5s later still saw nothing, and the
+# train red'd: release-provenance (the sole publish point) was skipped and
+# the staged draft rotted until the daily sweeper reclaimed it (the
+# recurring sweep issue gh-2432). One 500'd attempt evidently CREATED the
+# draft server-side — the self-hosted macOS legs resolved it minutes
+# later — but nothing in-run ever re-checked. Retry TRANSIENT 5xx only,
+# with the race re-view at every failure boundary (which heals the
+# landed-500 shape with a single create); a deterministic 4xx cannot
+# answer differently on attempt 2 and still fails loud after exactly one
+# attempt (gh-237 contract). Knobs follow the repo's env-override
+# convention (RELEASE_TRAIN_VERIFY_TRIES/SLEEP, FA_DRIFT_RETRY_SLEEP):
+# RELEASE_LAZY_CREATE_TRIES (default 3) / RELEASE_LAZY_CREATE_SLEEP
+# (default 2s).
 create_rc=0
-gh release create "$tag" \
-  --repo "$repo" \
-  --title "$tag" \
-  --draft \
-  --notes-file "$notes_file" || create_rc=$?
+create_tries="${RELEASE_LAZY_CREATE_TRIES:-3}"
+create_sleep="${RELEASE_LAZY_CREATE_SLEEP:-2}"
+create_err="$(mktemp "${TMPDIR:-/tmp}/release-lazy-create.XXXXXX")"
+trap 'rm -f "$notes_file" "$create_err"' EXIT
+attempt=1
+while :; do
+  create_rc=0
+  gh release create "$tag" \
+    --repo "$repo" \
+    --title "$tag" \
+    --draft \
+    --notes-file "$notes_file" 2>"$create_err" || create_rc=$?
+  # gh's stderr must stay in the Actions log ("fix the create failure
+  # above", gh-237) — the capture file is a CLASSIFIER, not a sink.
+  [ -s "$create_err" ] && cat "$create_err" >&2
+  if [ "$create_rc" -eq 0 ]; then
+    break
+  fi
+  # gh-1801's `|| true` tolerated ONLY the view→create race — a sibling
+  # leg creating the release between our view and create. gh-237 (run
+  # 44680647719, v1.0.756): that swallow ALSO ate real create failures
+  # (body-too-long 422), printed "✅ lazy draft ready", and failed every
+  # attach gate with "release not found". Re-view at EVERY failure
+  # boundary now: the release existing means we lost the race — or our
+  # own 500'd-but-landed attempt materialized late (the v1.0.778 shape);
+  # either way the caller uploads into the winner's release.
+  if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+    echo "release create failed but $tag now exists — lost the view→create race, the winner owns the release"
+    echo "✅ lazy draft ready for $tag (owner $identity) — publish is provenance-owned (gh-1801)"
+    exit 0
+  fi
+  if [ "$attempt" -lt "$create_tries" ] \
+    && grep -Eq 'HTTP 5[0-9][0-9]' "$create_err" 2>/dev/null; then
+    echo "transient GitHub API error on the draft create (attempt $attempt of $create_tries) — retrying in ${create_sleep}s" >&2
+    attempt=$((attempt + 1))
+    sleep "$create_sleep"
+    continue
+  fi
+  break
+done
 if [ "$create_rc" -eq 0 ]; then
   # gh-2372: the create SUCCEEDED, but a same-run sibling leg may have
   # created its own draft inside the view→create race window (GitHub
@@ -122,20 +175,5 @@ if [ "$create_rc" -eq 0 ]; then
   echo "✅ lazy draft ready for $tag (owner $identity) — publish is provenance-owned (gh-1801)"
   exit 0
 fi
-if [ "$create_rc" -ne 0 ]; then
-  # gh-1801's `|| true` tolerated ONLY the view→create race — a sibling
-  # leg creating the release between our view and create. gh-237 (run
-  # 44680647719, v1.0.756): that swallow ALSO ate real create failures
-  # (body-too-long 422), printed "✅ lazy draft ready", and failed every
-  # attach gate with "release not found". Re-view: the release existing
-  # NOW means we lost the race (upload into the winner's release); it
-  # still being missing means the create itself failed — the leg must
-  # go red, there is nothing to attach to.
-  if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
-    echo "release create failed but $tag now exists — lost the view→create race, the winner owns the release"
-    echo "✅ lazy draft ready for $tag (owner $identity) — publish is provenance-owned (gh-1801)"
-    exit 0
-  fi
-  echo "::error::the draft create for $tag failed (rc $create_rc) and no concurrent release appeared — nothing to attach to; fix the create failure above (e.g. the release body exceeding the 125,000-character API cap, gh-237)" >&2
-  exit 1
-fi
+echo "::error::the draft create for $tag failed (rc $create_rc) and no concurrent release appeared — nothing to attach to; fix the create failure above (e.g. the release body exceeding the 125,000-character API cap, gh-237)" >&2
+exit 1
