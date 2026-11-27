@@ -458,11 +458,7 @@ TranscriptDocument parseVerboseTranscriptionPayload({
         ? payload['language'] as String
         : null,
     durationSeconds: payload['duration'],
-    rawSegments: _asListOrWarn(
-      payload['segments'],
-      'segments',
-      allWarnings,
-    ),
+    rawSegments: _asListOrWarn(payload['segments'], 'segments', allWarnings),
     rawWords: _asListOrWarn(payload['words'], 'words', allWarnings),
     warnings: allWarnings,
     source: source,

@@ -271,8 +271,7 @@ Future<(_BindOutcome, SocketException?)> _bindWithRetry(
   const attempts = 5;
   SocketException? lastError;
   for (var attempt = 1; attempt <= attempts; attempt++) {
-    final (outcome, error) =
-        await _bindAttempt(hub, port, attempt == attempts);
+    final (outcome, error) = await _bindAttempt(hub, port, attempt == attempts);
     if (outcome != _BindOutcome.retry) return (outcome, error);
     lastError = error;
     await Future<void>.delayed(_bindBackoff(attempt));
@@ -312,7 +311,9 @@ Future<int> hubServe(
   final (outcome, bindError) = await _bindWithRetry(hub, spec.port);
   switch (outcome) {
     case _BindOutcome.alreadyRunning:
-      stdout.writeln('DAP hub already running on ws://127.0.0.1:${spec.port}/ws');
+      stdout.writeln(
+        'DAP hub already running on ws://127.0.0.1:${spec.port}/ws',
+      );
       return 0;
     case _BindOutcome.refused:
       stderr.writeln(
@@ -426,9 +427,8 @@ List<StreamSubscription<ProcessSignal>> wireHubTerminate(
   LocalHub hub,
   File pidFile, {
   void Function(int code) exitProcess = exit,
-  List<StreamSubscription<ProcessSignal>> Function(
-    void Function() onTerminate,
-  )? watchSignals,
+  List<StreamSubscription<ProcessSignal>> Function(void Function() onTerminate)?
+  watchSignals,
 }) {
   final signalSubs = <StreamSubscription<ProcessSignal>>[];
   signalSubs.addAll(

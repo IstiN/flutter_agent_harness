@@ -128,7 +128,9 @@ String? validateSkillPointerTarget(String path, String content) {
   final dir = path.contains('/')
       ? path.substring(0, path.lastIndexOf('/'))
       : '';
-  final dirName = dir.contains('/') ? dir.substring(dir.lastIndexOf('/') + 1) : dir;
+  final dirName = dir.contains('/')
+      ? dir.substring(dir.lastIndexOf('/') + 1)
+      : dir;
   if (dirName.isNotEmpty && dirName != name) {
     return 'pointer target $target does not match the skill directory '
         '$dirName';

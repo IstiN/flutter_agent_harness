@@ -300,10 +300,7 @@ final class SessionListingIndex {
     final dirs = json['dirs'];
     final rows = json['entries'];
     final writtenAt = json['writtenAt'];
-    if (version is! int ||
-        dirs is! Map ||
-        rows is! List ||
-        writtenAt is! int) {
+    if (version is! int || dirs is! Map || rows is! List || writtenAt is! int) {
       return null;
     }
     final dirStats = <String, ListingDirStats>{};
@@ -374,7 +371,8 @@ final class SessionListingIndexStore {
         return null; // torn / foreign content — cold scan, never a crash.
       }
       final index = SessionListingIndex.fromJson(decoded);
-      if (index == null || index.version != SessionListingIndex.currentVersion) {
+      if (index == null ||
+          index.version != SessionListingIndex.currentVersion) {
         return null;
       }
       return index;
@@ -387,7 +385,11 @@ final class SessionListingIndexStore {
   /// over the final name (renamable backends), or a direct write of the
   /// final name otherwise. Returns true when a write was observed
   /// successful; any failure is swallowed (cache-only concern).
-  Future<bool> write(FileSystem fs, String root, SessionListingIndex index) async {
+  Future<bool> write(
+    FileSystem fs,
+    String root,
+    SessionListingIndex index,
+  ) async {
     try {
       final finalPath = await _finalPath(fs, root);
       final tmpPath = '$finalPath$_tmpSuffix';

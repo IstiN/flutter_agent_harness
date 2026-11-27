@@ -85,15 +85,6 @@ extension AgentCliLifecycle on AgentCli {
     unawaited(_subagentBoardSub?.cancel());
     _subagentBoardSub = null;
     _subagentBoard.dispose();
-    // gh-2415: a deferred receipt retry (fd-pressure backoff) must never
-    // hold the event loop past exit — a pending Timer keeps the VM alive
-    // up to the 5-minute cap. Untouched when no boot reached the trail.
-    try {
-      _scheduledReceipts.dispose();
-    } on Error {
-      // The `late final` trail was never initialized (no boot reached the
-      // wake path) — nothing to release.
-    }
     await releasePowerAssertions();
     final exitSpec = _cubeEnv.activeSpec;
     if (exitSpec != null) {

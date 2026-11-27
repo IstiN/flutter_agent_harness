@@ -117,8 +117,7 @@ final class ToolMisuseBreaker {
   /// Bounds an embedded error text like the tool-description excerpt: a
   /// bash failure can carry kilobytes of command output, and the note rides
   /// the next request payload (issue #862 review).
-  String _excerpt(String text) =>
-      text.length <= descriptionLimit
+  String _excerpt(String text) => text.length <= descriptionLimit
       ? text
       : '${text.substring(0, descriptionLimit)}…';
 
@@ -127,7 +126,7 @@ final class ToolMisuseBreaker {
     final contract = excerpt.isEmpty
         ? ''
         : '\nTool contract (excerpt): '
-            '${excerpt.length <= descriptionLimit ? excerpt : '${excerpt.substring(0, descriptionLimit)}…'}\n';
+              '${excerpt.length <= descriptionLimit ? excerpt : '${excerpt.substring(0, descriptionLimit)}…'}\n';
     return '[tool-misuse notice] The "$toolName" tool has rejected the '
         'identical call ${state.failures} consecutive times. Last error: '
         '${_excerpt(state.lastError)}.$contract'

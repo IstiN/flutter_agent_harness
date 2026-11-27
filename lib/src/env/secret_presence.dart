@@ -2,7 +2,6 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-
 /// Secret PRESENCE signaling for sandbox `env` listings (gh-1444 AC4).
 ///
 /// A secret's existence must be verifiable without its value ever
@@ -24,10 +23,11 @@ import 'secrets_execution_env.dart';
 const String secretPresenceEnvVar = 'FA_SECRET_VARS';
 
 /// The secret names announced by [secretPresenceEnvVar] in [env].
-Set<String> secretNamesFromEnv(Map<String, String> env) => (env[secretPresenceEnvVar] ?? '')
-    .split(RegExp(r'\s+'))
-    .where((name) => name.isNotEmpty)
-    .toSet();
+Set<String> secretNamesFromEnv(Map<String, String> env) =>
+    (env[secretPresenceEnvVar] ?? '')
+        .split(RegExp(r'\s+'))
+        .where((name) => name.isNotEmpty)
+        .toSet();
 
 /// The `env` listing line for the secret [name]: `NAME: PRESENT` when a
 /// non-empty value is live in [env], else `NAME: ABSENT`. The VALUE never

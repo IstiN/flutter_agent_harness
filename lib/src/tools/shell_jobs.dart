@@ -29,9 +29,6 @@ import 'dart:math';
 import 'package:meta/meta.dart';
 
 import '../env/execution_env.dart';
-import '../env/fd_pressure.dart';
-import '../env/fd_pressure_stub.dart'
-    if (dart.library.io) '../env/fd_pressure_io.dart';
 import '../env/job_log_ceiling.dart';
 import '../env/job_log_redaction.dart';
 import 'job_id_resolution.dart';
@@ -369,7 +366,6 @@ final class ShellJobRegistry {
     this.adoptedLivenessNoticeMinutes = 0,
     this.onAdopt,
     this.onAdoptedLiveness,
-    this.fdPressureProbe,
     @visibleForTesting this.livenessTableOverride,
     @visibleForTesting this.stopAdoptedOverride,
     DateTime? bootTime,
@@ -449,13 +445,6 @@ final class ShellJobRegistry {
   /// Cadence reminder for a still-running adopted job (issue #2201 AC4);
   /// default cadence 0 = never fires.
   final void Function(ShellJobEntry job, Duration elapsed)? onAdoptedLiveness;
-
-  /// The fd-table probe behind [guardFdPressure] (gh-2415): open
-  /// descriptors vs the soft limit, null when the host has no descriptor
-  /// table (web). Null falls back to the platform default probe
-  /// (`defaultFdPressureSnapshot`, itself null on web) — tests inject a
-  /// scripted sample. Mutable so a long-lived host can re-point it.
-  FdPressureSnapshot? Function()? fdPressureProbe;
 
   /// Test seam: the adoption poll's process table. Null restores the
   /// real `ps` probe. A null RETURN from the function models "probe
@@ -819,42 +808,6 @@ final class ShellJobRegistry {
     } else {
       _adoptedLastNotice.clear();
     }
-  }
-
-  FdPressureSnapshot? _sampleFdPressure() =>
-      (fdPressureProbe ?? defaultFdPressureSnapshot)();
-
-  /// Gh-2415: the bash tool path's fd-pressure guard, run before every
-  /// `Process.start` (foreground exec or background job). Below
-  /// [fdPressureThreshold] of the soft limit: a no-op. Above it: first
-  /// release what SETTLED jobs still hold ([releaseSetledJobResources])
-  /// and re-sample; still above → the typed, visible
-  /// [FdPressureException] — never an uncaught
-  /// `ProcessException: Too many open files` ("the tool may be
-  /// unavailable in this environment"). Never throws on a null sample.
-  void guardFdPressure() {
-    var sample = _sampleFdPressure();
-    if (sample == null || !fdPressureExceeded(sample)) return;
-    releaseSettledJobResources();
-    sample = _sampleFdPressure();
-    if (sample == null || !fdPressureExceeded(sample)) return;
-    throw FdPressureException(open: sample.open, limit: sample.limit);
-  }
-
-  /// Drops what SETTLED jobs still hold (gh-2415): every exited entry
-  /// whose backend implements [ResourceReleaser] is asked to release.
-  /// Running jobs are never touched — their pipes are live. Returns how
-  /// many backends were asked.
-  int releaseSettledJobResources() {
-    var released = 0;
-    for (final entry in _jobs) {
-      if (entry.isRunning) continue;
-      if (entry.job case ResourceReleaser releaser) {
-        releaser.releaseResources();
-        released++;
-      }
-    }
-    return released;
   }
 
   /// The poll's process table from the real `ps` probe; null when the

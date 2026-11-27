@@ -14,7 +14,8 @@ import '../session/session_repo.dart';
 import '../session/session_tree.dart';
 import '../session_io_retry.dart';
 import '../types.dart';
-import 'deliverables.dart' show deliverableArtifactRecordType, deliverableToolNames;
+import 'deliverables.dart'
+    show deliverableArtifactRecordType, deliverableToolNames;
 import 'subagent_manager.dart' show subagentRegistryRecordType;
 import 'subagent_tools.dart' show ChildMessageReader;
 

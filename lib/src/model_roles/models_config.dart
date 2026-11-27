@@ -320,8 +320,7 @@ final class ModelsConfig {
 
   /// True when neither section carries an entry (the config file then
   /// omits the whole `models:` section on save).
-  bool get isEmpty =>
-      slots.isEmpty && custom.isEmpty && overrides.isEmpty;
+  bool get isEmpty => slots.isEmpty && custom.isEmpty && overrides.isEmpty;
 
   /// Registers (or replaces) the capability override for
   /// [provider]/[modelId].

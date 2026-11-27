@@ -83,9 +83,7 @@ MediaImageInput parseMediaImageInput(String raw) {
   if (value.startsWith('b64:')) {
     final data = value.substring(4);
     if (data.isEmpty) {
-      throw MediaException(
-        'b64: reference image is missing its payload',
-      );
+      throw MediaException('b64: reference image is missing its payload');
     }
     return MediaImageInput.base64(data);
   }

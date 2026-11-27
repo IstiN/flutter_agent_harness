@@ -1324,8 +1324,7 @@ final class LocalShell implements Shell, BackgroundShell {
 
 /// A [ShellJob] over a local [Process]: stdout/stderr stream into the log
 /// file; timeout and the cancel token both stop the process.
-final class _LocalShellJob
-    implements ShellJob, SurvivorReporting, ResourceReleaser {
+final class _LocalShellJob implements ShellJob, SurvivorReporting {
   _LocalShellJob({
     required this.id,
     required this.command,
@@ -1497,20 +1496,6 @@ final class _LocalShellJob
   final Process _process;
   final RandomAccessFile _logSink;
   final JobLogCeiling _ceiling;
-
-  /// Gh-2415 [ResourceReleaser]: the settle path already closes the
-  /// stdin pipe, the stream subscriptions and the log sink; this is the
-  /// idempotent backstop the registry calls under fd pressure (a job
-  /// settled through the capped drain may still sit on a subscription).
-  @override
-  void releaseResources() {
-    // Both subscriptions are assigned in the constructor body, so the
-    // `late final` reads cannot throw; cancelling an already-cancelled
-    // subscription is a no-op, which is what makes this idempotent.
-    unawaited(_stdoutSub.cancel());
-    unawaited(_stderrSub.cancel());
-    unawaited(_process.stdin.close().catchError((_) {}));
-  }
 
   /// This job's spawn moment (issue #2201): the lower bound of the
   /// orphan-window survivor scan on non-ownGroup hosts.

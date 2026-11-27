@@ -302,10 +302,7 @@ Future<String> _renderAgentDirectory(
 /// Appends authenticated fa_network correspondents without exposing their
 /// opaque encrypted routes. Both the display name and short id resolve in
 /// `agent_message` through [_resolveNetworkDmPeerAddress].
-void _writeDirectoryNetworkPeers(
-  SubagentManager manager,
-  StringBuffer buffer,
-) {
+void _writeDirectoryNetworkPeers(SubagentManager manager, StringBuffer buffer) {
   for (final peer in manager.networkDmPeers) {
     buffer
       ..writeln()
@@ -1020,7 +1017,7 @@ List<MailboxEntry> _nameMatches(List<MailboxEntry> entries, String to) {
     return (
       null,
       'network DM peer name "$to" is ambiguous — use one of: '
-      '${named.map((peer) => peer.id).join(', ')}',
+          '${named.map((peer) => peer.id).join(', ')}',
     );
   }
   return (named.single.address, null);

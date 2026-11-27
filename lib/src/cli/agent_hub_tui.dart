@@ -267,8 +267,10 @@ final class FaHubState {
   /// node. `null` = not a collapse key.
   (FaHubState, FaHubAction)? _treeCollapseKey(String key) {
     return switch (key) {
-      'left' || 'h' || 'right' || 'l' =>
-        (toggleCollapseSelected(), FaHubAction.none),
+      'left' ||
+      'h' ||
+      'right' ||
+      'l' => (toggleCollapseSelected(), FaHubAction.none),
       _ => null,
     };
   }
