@@ -44,6 +44,12 @@
 //   AC7  ordering: mirror update → checkout → dart pub get → sqlite3
 //        prewarm → dart build cli (the existing sqlite3 guards pin the
 //        second half of this chain; the mirror swap must not disturb it).
+//   AC8  the workspace move-back loop carries the gh-1600 rework's
+//        collision semantics (desktop-matrix parity): on a name
+//        collision the STALE workspace stub is parked into the $STALE
+//        sidecar and the FRESH clone entry is moved in — the pre-rework
+//        branch only warned and left the fresh entry in $CLONE_TARGET,
+//        which the trailing rm -rf then deleted (stale silently won).
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -76,8 +82,9 @@ String executableScriptOf(Object step) => _stripComments(scriptOf(step));
 /// Index of the first step whose `uses:` ends with [actionSuffix].
 int stepIndexUsing(YamlMap job, String actionSuffix) {
   final steps = stepsOf(job).toList();
-  final i = steps.indexWhere((s) =>
-      ((s as YamlMap)['uses']?.toString() ?? '').endsWith(actionSuffix));
+  final i = steps.indexWhere(
+    (s) => ((s as YamlMap)['uses']?.toString() ?? '').endsWith(actionSuffix),
+  );
   if (i == -1) fail('no build-macos-cli step uses <$actionSuffix>');
   return i;
 }
@@ -110,9 +117,9 @@ void main() {
   final script = jobScript(job);
 
   test('AC1: build-macos-cli has NO actions/checkout step (gh-2453)', () {
-    final uses = stepsOf(job)
-        .map((s) => (s as YamlMap)['uses']?.toString() ?? '')
-        .toList();
+    final uses = stepsOf(
+      job,
+    ).map((s) => (s as YamlMap)['uses']?.toString() ?? '').toList();
     expect(
       uses.where((u) => u.startsWith('actions/checkout')),
       isEmpty,
@@ -123,17 +130,18 @@ void main() {
     );
   });
 
-  test('AC2: job updates the local git mirrors via the bootstrapped script',
-      () {
-    stepIndexNamed(job, 'Update local git mirrors');
-    expect(script, contains('scripts/update_git_mirror.sh'));
-    // gh-1644/gh-1665 bootstrap: commit-pinned raw URL, mirror fallback.
-    expect(script, contains('raw.githubusercontent.com'));
-    expect(script, contains(r'${{ github.sha }}'));
-  });
-
   test(
-      'AC3: checkout is mirror-seeded (--reference) and blobless FULL '
+    'AC2: job updates the local git mirrors via the bootstrapped script',
+    () {
+      stepIndexNamed(job, 'Update local git mirrors');
+      expect(script, contains('scripts/update_git_mirror.sh'));
+      // gh-1644/gh-1665 bootstrap: commit-pinned raw URL, mirror fallback.
+      expect(script, contains('raw.githubusercontent.com'));
+      expect(script, contains(r'${{ github.sha }}'));
+    },
+  );
+
+  test('AC3: checkout is mirror-seeded (--reference) and blobless FULL '
       '(--filter=blob:none, no --depth)', () {
     expect(script, contains('--reference'));
     expect(script, contains('--filter=blob:none'));
@@ -163,10 +171,7 @@ void main() {
     );
     expect(
       checkoutScript,
-      allOf(
-        contains('http.lowSpeedLimit'),
-        contains('http.lowSpeedTime'),
-      ),
+      allOf(contains('http.lowSpeedLimit'), contains('http.lowSpeedTime')),
       reason:
           'gh-1644 semantics: an attempt moving <1 KB/s for 60s is dead — '
           'abort and retry instead of holding the step for an hour',
@@ -201,17 +206,69 @@ void main() {
     expect(checkoutScript, contains('GITHUB_SHA'));
   });
 
-  test('AC7: ordering mirror update → checkout → pub get → prewarm → build',
-      () {
-    final update = stepIndexMatching(job, 'update_git_mirror.sh');
-    final checkout = stepIndexNamed(job, checkoutStepName);
-    final pubGet = stepIndexMatching(job, 'dart pub get');
-    final prewarm = stepIndexUsing(job, 'sqlite3-native-assets-prewarm');
-    final build = stepIndexMatching(job, 'dart build cli');
-    expect(update, lessThan(checkout), reason: 'mirror seeded before clone');
-    expect(checkout, lessThan(pubGet), reason: 'clone before pub get');
-    expect(pubGet, lessThan(prewarm),
-        reason: 'prewarm reads .dart_tool/package_config.json (gh-2072)');
-    expect(prewarm, lessThan(build));
+  test(
+    'AC7: ordering mirror update → checkout → pub get → prewarm → build',
+    () {
+      final update = stepIndexMatching(job, 'update_git_mirror.sh');
+      final checkout = stepIndexNamed(job, checkoutStepName);
+      final pubGet = stepIndexMatching(job, 'dart pub get');
+      final prewarm = stepIndexUsing(job, 'sqlite3-native-assets-prewarm');
+      final build = stepIndexMatching(job, 'dart build cli');
+      expect(update, lessThan(checkout), reason: 'mirror seeded before clone');
+      expect(checkout, lessThan(pubGet), reason: 'clone before pub get');
+      expect(
+        pubGet,
+        lessThan(prewarm),
+        reason: 'prewarm reads .dart_tool/package_config.json (gh-2072)',
+      );
+      expect(prewarm, lessThan(build));
+    },
+  );
+
+  test('AC8: stub collision parks the stale stub — fresh content wins', () {
+    final checkoutScript = executableScriptOf(
+      stepsOf(job)[stepIndexNamed(job, checkoutStepName)],
+    );
+    // gh-1600 rework (review thread on this PR): on a name collision the
+    // STALE workspace stub must move into the $STALE sidecar and the
+    // FRESH clone entry must move in. The pre-rework branch only warned
+    // and left the fresh entry in $CLONE_TARGET — the trailing
+    // rm -rf "$CLONE_TARGET" then deleted it, silently keeping the stale
+    // leftover at that repo path. The desktop-matrix checkout in this
+    // same workflow carries the reworked branch; the CLI copy must too.
+    final collision = checkoutScript.indexOf(
+      r'if [ -e "$GITHUB_WORKSPACE/$name" ]',
+    );
+    expect(
+      collision,
+      isNot(-1),
+      reason: 'the move-back loop collision branch is present',
+    );
+    final body = checkoutScript.substring(collision);
+    final park = body.indexOf(r'mv "$GITHUB_WORKSPACE/$name" "$STALE');
+    expect(
+      park,
+      isNot(-1),
+      reason:
+          'the stale stub must be parked into the \$STALE sidecar '
+          '(desktop-matrix gh-1600 semantics) — not left in the workspace '
+          'while the fresh entry is dropped and deleted',
+    );
+    final fresh = body.indexOf(r'mv "$entry" "$GITHUB_WORKSPACE/"');
+    expect(
+      fresh,
+      greaterThan(park),
+      reason:
+          'the fresh entry must move in AFTER the stub is parked — fresh '
+          'content always wins on the collision path (gh-1600 rework)',
+    );
+    final fallback = body.indexOf('::warning::stub collision on');
+    expect(
+      fallback,
+      greaterThan(fresh),
+      reason:
+          'the warn-only skip may remain only as the last-resort fallback '
+          'when even parking the stub fails (gh-1600 rework)',
+    );
   });
 }
