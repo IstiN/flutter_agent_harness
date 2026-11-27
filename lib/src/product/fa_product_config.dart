@@ -33,6 +33,8 @@ final class FaProductConfig {
     this.hostConnection,
     this.providerCatalog,
     this.signInUrl,
+    this.channels,
+    this.themePicker,
   }) : _stock = false;
 
   const FaProductConfig._stock()
@@ -56,6 +58,8 @@ final class FaProductConfig {
       hostConnection = null,
       providerCatalog = null,
       signInUrl = null,
+      channels = null,
+      themePicker = null,
       _stock = true;
 
   /// Default Fa identity. No profile file is required to retain this behavior.
@@ -108,6 +112,25 @@ final class FaProductConfig {
   /// own return parameter). Requires [hostConnection] — the cabinet
   /// publishes the bridge key on sign-in.
   final Uri? signInUrl;
+
+  /// The section-catalog policy (gh-2391 addendum 5): `"host-only"` hides
+  /// the Networks surface in a branded build — the rail keeps Local, Apps
+  /// (and Devices where an account exists), Settings. Requires
+  /// [hostConnection]; absent (stock and every existing profile) all
+  /// sections render byte-identically.
+  final String? channels;
+
+  /// Whether [channels] pins the host-only section set.
+  bool get hostOnlyChannels => channels == 'host-only';
+
+  /// The theme-picker policy (gh-2391 addendum 5): `"profile-locked"`
+  /// locks the Theme page to the profile's pack — the stock pack list and
+  /// the theme import entry are hidden. Requires [themePackId]; absent
+  /// (stock) the picker renders byte-identically.
+  final String? themePicker;
+
+  /// Whether [themePicker] locks the Theme page to the profile pack.
+  bool get themePickerLocked => themePicker == 'profile-locked';
 
   final bool _stock;
 
@@ -258,6 +281,20 @@ final class FaProductConfig {
       signInUrlRaw,
       hasHostConnection: hostConnection != null,
     );
+    final channels = _catalogPolicy(
+      json['channels'],
+      name: 'channels',
+      allowed: const {'host-only'},
+      requires: hostConnection != null,
+      requirement: 'hostConnection',
+    );
+    final themePicker = _catalogPolicy(
+      json['themePicker'],
+      name: 'themePicker',
+      allowed: const {'profile-locked'},
+      requires: themePackId != null,
+      requirement: 'themePackId',
+    );
     final rawThemePack = json['themePack'];
     Map<String, Object?>? themePack;
     if (rawThemePack != null) {
@@ -314,6 +351,8 @@ final class FaProductConfig {
       storageSchemaVersion: schema,
       hostConnection: hostConnection,
       providerCatalog: providerCatalog,
+      channels: channels,
+      themePicker: themePicker,
       signInUrl: signInUrl,
     );
     if (config.oauthCallback != null && config.authEndpoint == null) {
@@ -325,6 +364,28 @@ final class FaProductConfig {
   /// The `providerCatalog` profile field (gh-2391 addendum 4): absent =
   /// the full stock catalog; the only supported value in this card is
   /// `host-only`, and it requires the bridge section.
+  /// Shared single-value catalog-policy validator (gh-2391 addendum 5):
+  /// `channels` / `themePicker` — an optional string from a fixed value
+  /// set with a structural prerequisite.
+  static String? _catalogPolicy(
+    Object? value, {
+    required String name,
+    required Set<String> allowed,
+    required bool requires,
+    required String requirement,
+  }) {
+    if (value == null) return null;
+    if (value is! String || !allowed.contains(value)) {
+      throw FormatException(
+        '$name must be one of ${allowed.map((e) => '"$e"').join(', ')}',
+      );
+    }
+    if (!requires) {
+      throw FormatException('$name "$value" requires $requirement');
+    }
+    return value;
+  }
+
   static String? _providerCatalog(
     Object? value, {
     required bool hasHostConnection,

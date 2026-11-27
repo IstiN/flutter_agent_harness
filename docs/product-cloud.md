@@ -38,6 +38,8 @@ A profile is external JSON, not a source-tree edit:
   "localeStorageKey": "host_lang",
   "providerCatalog": "host-only",
   "signInUrl": "https://app.host.example/app/?return=%2Fagent%2F",
+  "channels": "host-only",
+  "themePicker": "profile-locked",
   "legalLinks": {"privacy": "https://legal.host.example/privacy"},
   "featureFlags": ["cloudSync"],
   "brandAssets": {
@@ -89,6 +91,20 @@ host cabinet, the published bridge key completes onboarding on app resume
 and the workspace boots without any gate. Absent (stock and every
 existing profile) the full catalog applies byte-identically; the field
 requires `hostConnection`, and `signInUrl` must be HTTPS.
+
+`channels: "host-only"` (gh-2391 addendum 5) hides the Networks surface in
+a branded build — the navigation rail keeps Local, Apps (and Devices where
+an account exists) and Settings; every Networks entry point (rail row,
+narrow profile row, sidebar surface) disappears. Requires `hostConnection`;
+absent (stock) all sections render byte-identically.
+
+`themePicker: "profile-locked"` (gh-2391 addendum 5) locks the Theme page
+to the profile's own pack: the stock pack list, the default row, the
+import entry and per-pack delete are hidden — one visual language. It also
+co-derives an undefined `accent2` from the pack's own `accent` (a locked
+pack never falls back to the stock vivid indigo). Requires `themePackId`;
+the pack's readable pairs must hold WCAG AA (≥4.5:1 — the loader warns,
+ship compliant values).
 
 account partition. Upgrading `storageSchemaVersion` creates a new cache; the
 service worker deletes only caches under the same product root, never stock or

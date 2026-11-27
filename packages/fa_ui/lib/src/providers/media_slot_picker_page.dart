@@ -56,6 +56,7 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
     this.allowMainConnection = true,
     this.onDeviceRoutes = const [],
     this.addProviderPage,
+    this.restrictToProviderId,
   });
 
   /// The media slot being configured ([MediaSlot] name); null for the
@@ -102,6 +103,12 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
   /// [AddProviderPresetPickerPage] is built from this picker's registry
   /// (issue #975: every add-provider entry opens the ONE settings flow).
   final WidgetBuilder? addProviderPage;
+
+  /// The host-only catalog restriction (gh-2391 addendum 5): set to a
+  /// provider id and the picker shows ONLY that registry row — no hosted
+  /// presets, no on-device routes, no Add-provider row. The branded
+  /// build's model/role/slot flows never advertise third parties.
+  final String? restrictToProviderId;
 
   @override
   Widget build(BuildContext context) {
@@ -191,13 +198,17 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
                 // Dedupe: a saved custom provider on a hosted preset's
                 // endpoint covers it (the CodeMie/ChatGPT/OpenRouter flows
                 // register their instance there) — never show both.
-                for (final preset in hostedProviderPresets.where(
-                  (preset) =>
-                      !registry.providers.any(
-                        (custom) => custom.baseUrl == preset.baseUrl,
-                      ) &&
-                      (!connectedOnly || hostedProviderConnected(preset)),
-                ))
+                for (final preset
+                    in (restrictToProviderId == null
+                        ? hostedProviderPresets.where(
+                            (preset) =>
+                                !registry.providers.any(
+                                  (custom) => custom.baseUrl == preset.baseUrl,
+                                ) &&
+                                (!connectedOnly ||
+                                    hostedProviderConnected(preset)),
+                          )
+                        : const <ProviderPreset>[]))
                   _providerTile(
                     context,
                     theme,
@@ -206,7 +217,11 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
                     checked: selected == preset,
                     onTap: () => _openModelPage(context, registry, preset),
                   ),
-                for (final provider in registry.providers)
+                for (final provider in registry.providers.where(
+                  (provider) =>
+                      restrictToProviderId == null ||
+                      provider.id == restrictToProviderId,
+                ))
                   _providerTile(
                     context,
                     theme,
@@ -215,22 +230,25 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
                     checked: selected == provider,
                     onTap: () => _openModelPage(context, registry, provider),
                   ),
-                for (final route in onDeviceRoutes)
+                if (restrictToProviderId == null)
+                  for (final route in onDeviceRoutes)
+                    _providerTile(
+                      context,
+                      theme,
+                      label: route.label,
+                      leading: Icons.memory_outlined,
+                      onTap: () => _openOnDevice(context, route),
+                    ),
+                if (restrictToProviderId == null) ...[
+                  const Divider(),
                   _providerTile(
                     context,
                     theme,
-                    label: route.label,
-                    leading: Icons.memory_outlined,
-                    onTap: () => _openOnDevice(context, route),
+                    label: strings.settingsAddProvider,
+                    leading: Icons.add,
+                    onTap: () => _addProvider(context, registry),
                   ),
-                const Divider(),
-                _providerTile(
-                  context,
-                  theme,
-                  label: strings.settingsAddProvider,
-                  leading: Icons.add,
-                  onTap: () => _addProvider(context, registry),
-                ),
+                ],
               ],
             );
           },

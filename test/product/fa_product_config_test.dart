@@ -48,10 +48,10 @@ void main() {
         final config = FaProductConfig.fromJson({
           ..._valid(),
           'defaultProviderKey': 'aiin',
-          'localeStorageKey': 'ain_lang',
+          'localeStorageKey': 'aiin_lang',
         });
         expect(config.defaultProviderKey, 'aiin');
-        expect(config.localeStorageKey, 'ain_lang');
+        expect(config.localeStorageKey, 'aiin_lang');
         expect(
           () => FaProductConfig.fromJson({
             ..._valid(),
@@ -619,6 +619,89 @@ void main() {
       }
     });
 
+    test('channels host-only parse (gh-2391 addendum 5)', () {
+      final config = FaProductConfig.fromJson(
+        _valid(
+          featureFlags: <Object?>[],
+          hostConnection: _hostConnection(),
+          channels: 'host-only',
+        ),
+      );
+      expect(config.channels, 'host-only');
+      expect(config.hostOnlyChannels, isTrue);
+    });
+
+    test('channels absent by default — stock byte-identical (REG)', () {
+      expect(FaProductConfig.stock.channels, isNull);
+      expect(FaProductConfig.stock.hostOnlyChannels, isFalse);
+      expect(FaProductConfig.fromJson(_valid()).channels, isNull);
+    });
+
+    test('channels must be host-only and requires hostConnection', () {
+      for (final bad in [
+        (
+          _valid(
+            featureFlags: <Object?>[],
+            hostConnection: _hostConnection(),
+            channels: 'local-only',
+          ),
+          'unknown channels value',
+        ),
+        (
+          _valid(featureFlags: <Object?>[], channels: 'host-only'),
+          'no hostConnection',
+        ),
+        (_valid(featureFlags: <Object?>[], channels: 42), 'non-string'),
+      ]) {
+        expect(
+          () => FaProductConfig.fromJson(bad.$1),
+          throwsFormatException,
+          reason: bad.$2,
+        );
+      }
+    });
+
+    test('theme picker locked parse (gh-2391 addendum 5)', () {
+      final config = FaProductConfig.fromJson(
+        _valid(
+          featureFlags: <Object?>[],
+          hostConnection: _hostConnection(),
+          themePackIdOverride: 'aiin-porcelain',
+          themePicker: 'profile-locked',
+        ),
+      );
+      expect(config.themePicker, 'profile-locked');
+      expect(config.themePickerLocked, isTrue);
+    });
+
+    test('themePicker absent by default — stock byte-identical (REG)', () {
+      expect(FaProductConfig.stock.themePicker, isNull);
+      expect(FaProductConfig.stock.themePickerLocked, isFalse);
+    });
+
+    test('themePicker must be profile-locked and requires themePackId', () {
+      for (final bad in [
+        (
+          _valid(featureFlags: <Object?>[], themePicker: 'free'),
+          'unknown picker value',
+        ),
+        (
+          _valid(
+            featureFlags: <Object?>[],
+            hostConnection: _hostConnection(),
+            themePicker: 'profile-locked',
+          )..remove('themePackId'),
+          'no themePackId',
+        ),
+      ]) {
+        expect(
+          () => FaProductConfig.fromJson(bad.$1),
+          throwsFormatException,
+          reason: bad.$2,
+        );
+      }
+    });
+
     test('signInUrl must be HTTPS and requires hostConnection', () {
       for (final bad in [
         (
@@ -719,6 +802,9 @@ Map<String, Object?> _valid({
   Object? hostConnection,
   Object? providerCatalog,
   Object? signInUrl,
+  Object? channels,
+  Object? themePicker,
+  Object? themePackIdOverride,
 }) {
   final json = <String, Object?>{
     'productId': productId,
@@ -737,6 +823,8 @@ Map<String, Object?> _valid({
   if (hostConnection != null) json['hostConnection'] = hostConnection;
   if (providerCatalog != null) json['providerCatalog'] = providerCatalog;
   if (signInUrl != null) json['signInUrl'] = signInUrl;
+  if (channels != null) json['channels'] = channels;
+  if (themePicker != null) json['themePicker'] = themePicker;
   if (apiKey case final key?) json['apiKey'] = key;
   if (extension case final value?) json['extension'] = value;
   return json;

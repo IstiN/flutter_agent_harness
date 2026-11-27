@@ -59,6 +59,7 @@ class ProvidersSection extends StatelessWidget {
     this.quotas,
     this.showTitle = true,
     this.showAddProvider = true,
+    this.restrictToProviderId,
   });
 
   /// The user-added providers; `null` falls back to a non-persisting
@@ -70,6 +71,11 @@ class ProvidersSection extends StatelessWidget {
   /// third-party catalog — the host cabinet is the only sign-in path.
   /// Default true (stock behavior byte-identical).
   final bool showAddProvider;
+
+  /// The host-only row restriction (gh-2391 addendum 5): set to a
+  /// provider id and the section lists ONLY that row — no hosted preset
+  /// rows, no add-provider entry. Stock passes null (byte-identical).
+  final String? restrictToProviderId;
 
   /// On-device provider routes (WebLLM, transformers.js, …). Shown
   /// after the custom providers when non-empty.
@@ -151,13 +157,15 @@ class ProvidersSection extends StatelessWidget {
     final rows = ListenableBuilder(
       listenable: registry,
       builder: (context, _) {
-        final hasConnectedPreset = hostedProviderPresets.any(
-          (preset) =>
-              hostedProviderConnected(preset) &&
-              !registry.providers.any(
-                (custom) => custom.baseUrl == preset.baseUrl,
-              ),
-        );
+        final hasConnectedPreset = restrictToProviderId == null
+            ? hostedProviderPresets.any(
+                (preset) =>
+                    hostedProviderConnected(preset) &&
+                    !registry.providers.any(
+                      (custom) => custom.baseUrl == preset.baseUrl,
+                    ),
+              )
+            : false;
         final hasVisibleOnDeviceRoute = onDeviceProviders.any(
           (route) => onDeviceRowVisible?.call(route.id) ?? true,
         );
@@ -186,7 +194,8 @@ class ProvidersSection extends StatelessWidget {
             /// chain) list like providers; a custom provider on the same
             // endpoint covers its preset (never both).
             for (final preset in hostedProviderPresets)
-              if (hostedProviderConnected(preset) &&
+              if (restrictToProviderId == null &&
+                  hostedProviderConnected(preset) &&
                   !registry.providers.any(
                     (custom) => custom.baseUrl == preset.baseUrl,
                   ))
@@ -202,7 +211,11 @@ class ProvidersSection extends StatelessWidget {
                   trailing: _quotaGauge(providerMarkKey(preset)),
                   onTap: () => _editPreset(context, registry, preset),
                 ),
-            for (final provider in registry.providers)
+            for (final provider in registry.providers.where(
+              (provider) =>
+                  restrictToProviderId == null ||
+                  provider.id == restrictToProviderId,
+            ))
               _buildRow(
                 context,
                 theme,

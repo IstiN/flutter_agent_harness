@@ -131,33 +131,32 @@ class _GatedEnv implements ExecutionEnv {
     bool force = false,
   }) => _inner.remove(path, recursive: recursive, force: force);
 
-    Future<Result<Uint8List, FileError>> readRange(
+  Future<Result<Uint8List, FileError>> readRange(
     String path,
     int start,
     int end,
   ) => _inner.readRange(path, start, end);
 
-    Future<Result<void, FileError>> renamePath(String from, String to) =>
+  Future<Result<void, FileError>> renamePath(String from, String to) =>
       _inner.renamePath(from, to);
 
   @override
   String get cwd => _inner.cwd;
 
-    Future<Result<void, FileError>> createFileExclusive(String path) async =>
-      Err(
-        FileError(FileErrorCode.notFound, 'unsupported in the gated test env'),
-      );
+  Future<Result<void, FileError>> createFileExclusive(String path) async => Err(
+    FileError(FileErrorCode.notFound, 'unsupported in the gated test env'),
+  );
 
   @override
   Future<Result<ShellExecResult, ExecutionError>> exec(
     String command, {
     ShellExecOptions? options,
   }) async => Err(
-        ExecutionError(
-          ExecutionErrorCode.shellUnavailable,
-          'unsupported in the gated test env',
-        ),
-      );
+    ExecutionError(
+      ExecutionErrorCode.shellUnavailable,
+      'unsupported in the gated test env',
+    ),
+  );
 }
 
 void main() {

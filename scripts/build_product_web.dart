@@ -343,6 +343,8 @@ Map<String, Object?> _publicProfile(FaProductConfig config) => {
     'hostConnection': _publicHostConnection(config.hostConnection!),
   if (config.providerCatalog != null) 'providerCatalog': config.providerCatalog,
   if (config.signInUrl != null) 'signInUrl': config.signInUrl.toString(),
+  if (config.channels != null) 'channels': config.channels,
+  if (config.themePicker != null) 'themePicker': config.themePicker,
 };
 
 /// The verbatim public form of a validated [HostConnectionConfig].

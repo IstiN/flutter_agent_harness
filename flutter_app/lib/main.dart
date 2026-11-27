@@ -312,7 +312,7 @@ class MyApp extends StatelessWidget {
         final uiTheme = packs
             ?.byId(productConfig.themePackId ?? theme.packId)
             ?.spec
-            .toFaUiTheme();
+            .toFaUiTheme(lockAccents: productConfig.themePickerLocked);
         return FaUiThemeProvider(
           data: uiTheme ?? const FaUiTheme(),
           child: _materialApp(theme, uiTheme),

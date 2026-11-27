@@ -550,6 +550,7 @@ class _ChatScreenState extends State<ChatScreen> {
       videoControllerFactory: widget.videoControllerFactory,
     );
   }
+
   /// The host session's auth-expired recovery (gh-2391): one silent
   /// bridge re-read first — the host page may have re-published a fresh
   /// scoped key since the failure. Restored → invite a retry; still gone →
@@ -577,7 +578,6 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
   }
-
 }
 
 /// Maps a [permission] name to the macOS Privacy & Security pane anchor.

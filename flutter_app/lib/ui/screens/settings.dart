@@ -2042,6 +2042,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // The host-only catalog (gh-2391 addendum 4) never advertises the
       // third-party catalog; the host cabinet is the only sign-in path.
       showAddProvider: !ProductConfigScope.of(context).hostOnlyProviderCatalog,
+      // Addendum 5: the section lists ONLY the host row.
+      restrictToProviderId:
+          ProductConfigScope.of(context).hostOnlyProviderCatalog
+          ? 'host'
+          : null,
       modelsFetcher: widget.modelsFetcher,
       // Quota meters + pull-to-refresh (issue #823 AC6).
       quotas: QuotaStore.instance.service,

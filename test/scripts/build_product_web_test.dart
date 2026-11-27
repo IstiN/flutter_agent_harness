@@ -403,6 +403,66 @@ void main() {
       expect(emitted['signInUrl'], 'https://app.example/app/');
     });
 
+    test(
+      'channels + themePicker ride the emitted profile (addendum 5)',
+      () async {
+        final json = _profile(hostConnection: true)
+          ..['channels'] = 'host-only'
+          ..['themePicker'] = 'profile-locked'
+          ..['themePack'] = {
+            'name': 'AIIN Porcelain',
+            'version': '1.0.0',
+            'colors': {
+              'dark': {
+                'background': '#07080D',
+                'surface': '#101218',
+                'text': '#E9EAEE',
+                'accent': '#4ADE80',
+                'accent2': '#A78BFA',
+                'onAccent': '#07080D',
+              },
+              'light': {
+                'background': '#F4F2EE',
+                'surface': '#FAF8F5',
+                'text': '#1C1B18',
+                'accent': '#4ADE80',
+                'accent2': '#A78BFA',
+                'onAccent': '#07080D',
+              },
+            },
+          }
+          ..['themePackId'] = 'aiin-porcelain';
+        profile.writeAsStringSync(jsonEncode(json));
+        final output = '${temp.path}/branded-add5';
+        await buildProductWeb(
+          profilePath: profile.path,
+          assetsPath: assets.path,
+          outputPath: output,
+          builder: (path) async => _fixtureShell(Directory(path)),
+        );
+        final emitted =
+            jsonDecode(File('$output/product_config.json').readAsStringSync())
+                as Map<String, Object?>;
+        expect(emitted['channels'], 'host-only');
+        expect(emitted['themePicker'], 'profile-locked');
+        // Stock: no fields → no keys (REG).
+        final plain = _profile();
+        profile.writeAsStringSync(jsonEncode(plain));
+        final plainOut = '${temp.path}/branded-plain-add5';
+        await buildProductWeb(
+          profilePath: profile.path,
+          assetsPath: assets.path,
+          outputPath: plainOut,
+          builder: (path) async => _fixtureShell(Directory(path)),
+        );
+        final plainEmitted =
+            jsonDecode(File('$plainOut/product_config.json').readAsStringSync())
+                as Map<String, Object?>;
+        expect(plainEmitted.containsKey('channels'), isFalse);
+        expect(plainEmitted.containsKey('themePicker'), isFalse);
+      },
+    );
+
     test('profile without the section emits no hostConnection key', () async {
       final output = '${temp.path}/branded-plain';
       await buildProductWeb(

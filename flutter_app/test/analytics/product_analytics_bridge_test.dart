@@ -36,10 +36,10 @@ void main() {
         'source': 'host',
       });
       ProductAnalyticsBridge.instance.track('agent_chat_message_sent', {
-        'model': 'ain/ain_flash',
+        'model': 'ain/aiin_flash',
       });
       ProductAnalyticsBridge.instance.track('agent_theme_changed', {
-        'packId': 'ain-porcelain',
+        'packId': 'aiin-porcelain',
       });
       expect(recorded, [
         [
@@ -48,11 +48,11 @@ void main() {
         ],
         [
           'agent_chat_message_sent',
-          {'model': 'ain/ain_flash'},
+          {'model': 'ain/aiin_flash'},
         ],
         [
           'agent_theme_changed',
-          {'packId': 'ain-porcelain'},
+          {'packId': 'aiin-porcelain'},
         ],
       ]);
     });

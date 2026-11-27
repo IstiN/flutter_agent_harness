@@ -1003,7 +1003,7 @@ void main() {
             id: 'host',
             name: 'AIN',
             baseUrl: 'https://api.ain.example/v1',
-            modelId: 'ain/ain_flash',
+            modelId: 'ain/aiin_flash',
             provenance: 'host',
             kind: 'host-session',
           ),
@@ -1071,7 +1071,7 @@ void main() {
           id: 'host',
           name: 'AIN',
           baseUrl: 'https://api.ain.example/v1',
-          modelId: 'ain/ain_flash',
+          modelId: 'ain/aiin_flash',
           provenance: 'host',
           kind: 'host-session',
         ),
@@ -1107,7 +1107,7 @@ void main() {
           id: 'host',
           name: 'AIN',
           baseUrl: 'https://api.ain.example/v1',
-          modelId: 'ain/ain_flash',
+          modelId: 'ain/aiin_flash',
           provenance: 'host',
           kind: 'host-session',
         ),
@@ -1120,7 +1120,7 @@ void main() {
       await store.save(
         const LastConnection(
           providerKind: 'openai-completions',
-          modelId: 'ain/ain_pro',
+          modelId: 'aiin/aiin_pro',
           baseUrl: 'https://api.ain.example/v1',
         ),
       );
@@ -1135,7 +1135,7 @@ void main() {
         hostSession: hostSession,
       );
       expect(config, isNotNull);
-      expect(config!.modelId, 'ain/ain_pro');
+      expect(config!.modelId, 'aiin/aiin_pro');
       expect(config.baseUrl, 'https://api.ain.example/v1');
       expect(config.apiKey, 'bridged-key');
     });
@@ -1312,7 +1312,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       // The CTA (headline + button) and NO third-party catalog surface.
-      expect(find.text('Sign in to AIN Agent'), findsWidgets);
+      expect(find.text('Sign in to AIIN Agent'), findsWidgets);
       expect(
         find.textContaining('Third-party providers are not part'),
         findsOneWidget,
@@ -1405,23 +1405,23 @@ void main() {
         registry: ProviderRegistry.inMemory(),
         productConfig: FaProductConfig.fromJson({
           'productId': 'ain',
-          'displayName': 'AIN Agent',
+          'displayName': 'AIIN Agent',
           'apiEndpoint': 'https://api.ain.example/v1',
           'featureFlags': <String>[],
           'hostConnection': {
             'baseUrl': 'https://api.ain.example/v1',
             'sessionBridge': {
               'storage': 'localStorage',
-              'key': 'ain_agent_session',
+              'key': 'aiin_agent_session',
             },
-            'defaultModel': 'ain/ain_flash',
+            'defaultModel': 'ain/aiin_flash',
           },
         }),
       );
       await tester.pumpAndSettle();
       // No catalog policy: the stock provider step (its localized
       // subtitle), not the sign-in CTA.
-      expect(find.text('Sign in to AIN Agent'), findsNothing);
+      expect(find.text('Sign in to AIIN Agent'), findsNothing);
       expect(find.textContaining('Connect a provider'), findsOneWidget);
     });
   });
@@ -1439,7 +1439,7 @@ FaProductConfig _hostOnlyProfile() {
   final section = _hostConnectionConfig();
   return FaProductConfig(
     productId: 'ain',
-    displayName: 'AIN Agent',
+    displayName: 'AIIN Agent',
     apiEndpoint: Uri.parse('https://api.ain.example/v1'),
     featureFlags: const {},
     hostConnection: section,
@@ -1451,8 +1451,8 @@ FaProductConfig _hostOnlyProfile() {
 HostConnectionConfig _hostConnectionConfig() => HostConnectionConfig.fromJson(
   {
     'baseUrl': 'https://api.ain.example/v1',
-    'sessionBridge': {'storage': 'localStorage', 'key': 'ain_agent_session'},
-    'defaultModel': 'ain/ain_flash',
+    'sessionBridge': {'storage': 'localStorage', 'key': 'aiin_agent_session'},
+    'defaultModel': 'ain/aiin_flash',
   },
   apiEndpoint: Uri.parse('https://api.ain.example/v1'),
   displayName: () => 'AIN',

@@ -26,7 +26,7 @@ final class _FakeBridge implements HostSessionBridge {
 FaProductConfig _product({Map<String, Object?>? section}) {
   final json = <String, Object?>{
     'productId': 'ain',
-    'displayName': 'AIN Agent',
+    'displayName': 'AIIN Agent',
     'apiEndpoint': 'https://api.ain.example/v1',
     'featureFlags': <String>[],
     if (section != null) 'hostConnection': section,
@@ -37,11 +37,11 @@ FaProductConfig _product({Map<String, Object?>? section}) {
 Map<String, Object?> _section() => {
   'name': 'AIN',
   'baseUrl': 'https://api.ain.example/v1',
-  'sessionBridge': {'storage': 'localStorage', 'key': 'ain_agent_session'},
-  'defaultModel': 'ain/ain_flash',
-  'modelRoles': {'smol': 'ain/ain_flash', 'subagent': 'ain/ain_flash'},
+  'sessionBridge': {'storage': 'localStorage', 'key': 'aiin_agent_session'},
+  'defaultModel': 'ain/aiin_flash',
+  'modelRoles': {'smol': 'ain/aiin_flash', 'subagent': 'ain/aiin_flash'},
   'mediaSlots': {
-    'imageGeneration': {'model': 'ain/ain_image'},
+    'imageGeneration': {'model': 'aiin/aiin_image'},
   },
 };
 
@@ -59,7 +59,7 @@ void main() {
           registry: registry,
           taskModels: taskModels,
           mediaModels: mediaModels,
-          bridge: _FakeBridge({'ain_agent_session': '  bridged-key  '}),
+          bridge: _FakeBridge({'aiin_agent_session': '  bridged-key  '}),
         );
         expect(state, isNotNull);
         expect(state!.bridgedKey, 'bridged-key');
@@ -67,7 +67,7 @@ void main() {
         expect(entry.id, 'host');
         expect(entry.name, 'AIN');
         expect(entry.baseUrl, 'https://api.ain.example/v1');
-        expect(entry.modelId, 'ain/ain_flash');
+        expect(entry.modelId, 'ain/aiin_flash');
         expect(entry.provenance, 'host');
         expect(entry.kind, 'host-session');
         expect(entry.requiresKey, isFalse);
@@ -82,7 +82,7 @@ void main() {
         expect(state.bootConfig, isNotNull);
         expect(state.bootConfig!.providerKind, 'openai-completions');
         expect(state.bootConfig!.baseUrl, 'https://api.ain.example/v1');
-        expect(state.bootConfig!.modelId, 'ain/ain_flash');
+        expect(state.bootConfig!.modelId, 'ain/aiin_flash');
         expect(state.bootConfig!.apiKey, 'bridged-key');
       },
     );
@@ -94,7 +94,7 @@ void main() {
         final registry = await ProviderRegistry.load(env);
         final taskModels = TaskModelsStore.inMemory();
         final mediaModels = MediaModelsStore.inMemory();
-        final bridge = _FakeBridge({'ain_agent_session': 'k1'});
+        final bridge = _FakeBridge({'aiin_agent_session': 'k1'});
         final config = _product(section: _section());
         await resolveHostSession(
           productConfig: config,
@@ -150,7 +150,7 @@ void main() {
             registry: registry,
             taskModels: taskModels,
             mediaModels: mediaModels,
-            bridge: _FakeBridge({'ain_agent_session': value}),
+            bridge: _FakeBridge({'aiin_agent_session': value}),
           );
           expect(state, isNull);
           expect(registry.providers, isEmpty);
@@ -180,7 +180,7 @@ void main() {
           registry: registry,
           taskModels: TaskModelsStore.inMemory(),
           mediaModels: MediaModelsStore.inMemory(),
-          bridge: _FakeBridge({'ain_agent_session': 'k'}),
+          bridge: _FakeBridge({'aiin_agent_session': 'k'}),
         );
         expect(state, isNull);
         expect(registry.providers, isEmpty);
@@ -207,7 +207,7 @@ void main() {
           registry: registry,
           taskModels: taskModels,
           mediaModels: mediaModels,
-          bridge: _FakeBridge({'ain_agent_session': 'k'}),
+          bridge: _FakeBridge({'aiin_agent_session': 'k'}),
         );
         // The user's saved smol selection is preserved.
         expect(taskModels.overrideFor('smol')!.modelId, 'user/flash');
@@ -216,7 +216,7 @@ void main() {
           'https://user.example/v1',
         );
         // The undeclared subagent role gets the profile default.
-        expect(taskModels.overrideFor('subagent')!.modelId, 'ain/ain_flash');
+        expect(taskModels.overrideFor('subagent')!.modelId, 'ain/aiin_flash');
         expect(
           taskModels.overrideFor('subagent')!.baseUrl,
           'https://api.ain.example/v1',
@@ -245,13 +245,13 @@ void main() {
           registry: registry,
           taskModels: TaskModelsStore.inMemory(),
           mediaModels: mediaModels,
-          bridge: _FakeBridge({'ain_agent_session': 'k'}),
+          bridge: _FakeBridge({'aiin_agent_session': 'k'}),
         );
         // The declared slot is prefilled from the profile...
         final image = mediaModels.overrideFor('imageGeneration');
         expect(image!.providerKind, 'openai-completions');
         expect(image.baseUrl, 'https://api.ain.example/v1');
-        expect(image.modelId, 'ain/ain_image');
+        expect(image.modelId, 'aiin/aiin_image');
         expect(
           image.apiKeyName,
           ProviderRegistry.keyNameFor('https://api.ain.example/v1'),

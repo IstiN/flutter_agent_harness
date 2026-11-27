@@ -25,7 +25,7 @@ HostSessionState _state({required String bridgedKey}) {
     {
       'baseUrl': 'https://api.ain.example/v1',
       'sessionBridge': {'storage': 'localStorage', 'key': 'ain_session'},
-      'defaultModel': 'ain/ain_flash',
+      'defaultModel': 'ain/aiin_flash',
       'quota': _quotaSection,
     },
     apiEndpoint: Uri.parse('https://api.ain.example/v1'),
@@ -36,7 +36,7 @@ HostSessionState _state({required String bridgedKey}) {
       id: 'host',
       name: 'AIN',
       baseUrl: 'https://api.ain.example/v1',
-      modelId: 'ain/ain_flash',
+      modelId: 'ain/aiin_flash',
       provenance: 'host',
       kind: 'host-session',
     ),
@@ -72,7 +72,7 @@ StreamFunction _errorStream(
 }
 
 Model get _model => Model(
-  id: 'ain/ain_flash',
+  id: 'ain/aiin_flash',
   name: 'ain',
   api: 'openai-completions',
   provider: 'openai-completions',
@@ -109,7 +109,7 @@ void main() {
           ),
           AgentConfig(
             providerKind: 'openai-completions',
-            modelId: 'ain/ain_flash',
+            modelId: 'ain/aiin_flash',
             baseUrl: 'https://api.ain.example/v1',
             apiKey: 'k1',
           ),
@@ -135,7 +135,7 @@ void main() {
           _errorStream('429: {"error":{"code":"server_busy"}}'),
           AgentConfig(
             providerKind: 'openai-completions',
-            modelId: 'ain/ain_flash',
+            modelId: 'ain/aiin_flash',
             baseUrl: 'https://api.ain.example/v1',
             apiKey: 'k1',
           ),
@@ -156,7 +156,7 @@ void main() {
           id: 'host',
           name: 'AIN',
           baseUrl: 'https://api.ain.example/v1',
-          modelId: 'ain/ain_flash',
+          modelId: 'ain/aiin_flash',
           provenance: 'host',
           kind: 'host-session',
         ),
@@ -175,7 +175,7 @@ void main() {
           _errorStream('401: unauthorized'),
           AgentConfig(
             providerKind: 'openai-completions',
-            modelId: 'ain/ain_flash',
+            modelId: 'ain/aiin_flash',
             baseUrl: 'https://api.ain.example/v1',
             apiKey: 'k1',
           ),
@@ -229,7 +229,7 @@ void main() {
           _errorStream('401: unauthorized'),
           AgentConfig(
             providerKind: 'openai-completions',
-            modelId: 'ain/ain_flash',
+            modelId: 'ain/aiin_flash',
             baseUrl: 'https://api.ain.example/v1',
             apiKey: 'k1',
           ),
@@ -260,7 +260,7 @@ void main() {
             id: 'host',
             name: 'AIN',
             baseUrl: 'https://api.ain.example/v1',
-            modelId: 'ain/ain_flash',
+            modelId: 'ain/aiin_flash',
             provenance: 'host',
             kind: 'host-session',
           ),
@@ -280,7 +280,7 @@ void main() {
             _errorStream('401: unauthorized'),
             AgentConfig(
               providerKind: 'openai-completions',
-              modelId: 'ain/ain_flash',
+              modelId: 'ain/aiin_flash',
               baseUrl: 'https://api.ain.example/v1',
               apiKey: 'host-key',
             ),
@@ -326,7 +326,7 @@ void main() {
             id: 'host',
             name: 'AIN',
             baseUrl: 'https://api.ain.example/v1',
-            modelId: 'ain/ain_flash',
+            modelId: 'ain/aiin_flash',
             provenance: 'host',
             kind: 'host-session',
           ),
@@ -344,7 +344,7 @@ void main() {
           ),
           AgentConfig(
             providerKind: 'openai-completions',
-            modelId: 'ain/ain_flash',
+            modelId: 'ain/aiin_flash',
             baseUrl: 'https://api.ain.example/v1',
             apiKey: 'host-key',
           ),
@@ -391,7 +391,7 @@ void main() {
             id: 'host',
             name: 'AIN',
             baseUrl: 'https://api.ain.example/v1',
-            modelId: 'ain/ain_flash',
+            modelId: 'ain/aiin_flash',
             provenance: 'host',
             kind: 'host-session',
           ),

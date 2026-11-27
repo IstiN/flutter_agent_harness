@@ -806,4 +806,48 @@ void main() {
       expect(find.text('claude-sonnet'), findsOneWidget);
     });
   });
+
+  group('restrictToProviderId (gh-2391 addendum 5)', () {
+    testWidgets('only the restricted registry row renders — no presets, '
+        'no add-provider row', (tester) async {
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
+      await registry.upsert(
+        const CustomProvider(
+          id: 'host',
+          name: 'AIIN',
+          baseUrl: 'https://api.aiin.example/v1',
+          modelId: 'aiin/aiin_flash',
+          provenance: 'host',
+          kind: 'host-session',
+        ),
+      );
+      await _pumpWithOpener(
+        tester,
+        MediaSlotProviderPickerPage(
+          slot: null,
+          title: 'Default chat model',
+          mainBaseUrl: 'https://api.aiin.example/v1',
+          registry: registry,
+          connectedOnly: true,
+          allowMainConnection: false,
+          restrictToProviderId: 'host',
+        ),
+        (_) {},
+      );
+      await _open(tester);
+      expect(find.text('AIIN'), findsOneWidget);
+      expect(find.text('Acme'), findsNothing);
+      // No third-party preset tiles and no add-provider entry.
+      expect(find.text('OpenRouter'), findsNothing);
+      expect(find.textContaining('Add provider'), findsNothing);
+    });
+  });
 }

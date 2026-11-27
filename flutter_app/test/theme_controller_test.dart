@@ -15,9 +15,9 @@ void main() {
       });
       addTearDown(ProductAnalyticsBridge.instance.restorePlatformSinkResolver);
       final controller = ThemeController.inMemory();
-      await controller.setPack('ain-porcelain');
+      await controller.setPack('aiin-porcelain');
       expect(recorded.single[0], 'agent_theme_changed');
-      expect(recorded.single[1], {'packId': 'ain-porcelain'});
+      expect(recorded.single[1], {'packId': 'aiin-porcelain'});
     });
 
     test('a revert to the stock look forwards an empty packId', () async {
@@ -40,7 +40,7 @@ void main() {
       });
       addTearDown(ProductAnalyticsBridge.instance.restorePlatformSinkResolver);
       final controller = ThemeController.inMemory();
-      await controller.setPack('ain-porcelain', productTracked: false);
+      await controller.setPack('aiin-porcelain', productTracked: false);
       expect(recorded, isEmpty);
     });
 

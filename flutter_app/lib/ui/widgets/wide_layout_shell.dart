@@ -36,6 +36,7 @@ import 'package:fa/services/cli_session_presence.dart';
 import 'package:fa/services/upload.dart';
 
 import 'package:fa/ui/activity/activity_surface.dart';
+import 'package:fa/ui/widgets/product_brand.dart';
 import 'package:fa/ui/apps/app_launcher_controller.dart';
 import 'package:fa/ui/apps/apps_directory_panel.dart';
 import 'package:fa/ui/apps/files_presentation_panel.dart';
@@ -443,6 +444,10 @@ class _WideLayoutShellState extends State<WideLayoutShell>
   /// the Local drill-down uses. The message column keeps the chat.
   /// Section switches close it, like a route pop.
   bool _networksSurfaceOpen = false;
+
+  /// The host-only channels policy (gh-2391 addendum 5): a branded build
+  /// with `channels: "host-only"` has no Networks surface at all.
+  bool get _networksVisible => !ProductConfigScope.of(context).hostOnlyChannels;
 
   /// The app-scope device connector (issue #2062 chunk 16): ONE upstream
   /// socket shared by every device surface (AC1). Created eagerly at boot
@@ -1039,7 +1044,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
     // inset on macOS).
     return switch (_section) {
       _WideShellSection.chats =>
-        _networksSurfaceOpen
+        _networksSurfaceOpen && _networksVisible
             ? _buildNetworksSidebar()
             : _buildChatPanel(compact: true),
       _WideShellSection.devices => _buildDevicesPanel(compact: true),
@@ -1137,7 +1142,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                     child: FaBrandTile(size: 64),
                   ),
                 ),
-                if (widget.networkSessions != null)
+                if (widget.networkSessions != null && _networksVisible)
                   ListTile(
                     key: const ValueKey('narrowProfileNetworks'),
                     leading: const Icon(Icons.hub_outlined),
@@ -1582,7 +1587,7 @@ class _WideLayoutShellState extends State<WideLayoutShell>
                   ? _buildCollapsedSidebarBody()
                   : switch (_section) {
                       _WideShellSection.chats =>
-                        _networksSurfaceOpen
+                        _networksSurfaceOpen && _networksVisible
                             ? _buildNetworksSidebar()
                             : _buildChatPanel(collapsed: collapsed),
                       _WideShellSection.activity || _WideShellSection.apps =>
@@ -1698,18 +1703,20 @@ class _WideLayoutShellState extends State<WideLayoutShell>
         badgeMuted: true,
         onTap: (_) => _selectSection(_WideShellSection.local),
       ),
-      MessengerRailDestination(
-        rowKey: const ValueKey('messengerPrimaryNav-network'),
-        icon: Icons.public_outlined,
-        label: context.l10n.networkNetworksTitle,
-        selected: chatsSelected && _networksSurfaceOpen,
-        onTap: (_) {
-          // The networks surface lives IN the chats sidebar (the same slot
-          // the Local drill-down uses); the message column keeps the chat.
-          _selectSection(_WideShellSection.chats);
-          setState(() => _networksSurfaceOpen = true);
-        },
-      ),
+      if (_networksVisible)
+        MessengerRailDestination(
+          rowKey: const ValueKey('messengerPrimaryNav-network'),
+          icon: Icons.public_outlined,
+          label: context.l10n.networkNetworksTitle,
+          selected: chatsSelected && _networksSurfaceOpen,
+          onTap: (_) {
+            // The networks surface lives IN the chats sidebar (the same
+            // slot the Local drill-down uses); the message column keeps
+            // the chat.
+            _selectSection(_WideShellSection.chats);
+            setState(() => _networksSurfaceOpen = true);
+          },
+        ),
       // The DEVICES section (issue #2062 chunk 16): signed-in accounts
       // only — guests have no machines to show. Same rail semantics as
       // Local/Activity (a root section destination).
