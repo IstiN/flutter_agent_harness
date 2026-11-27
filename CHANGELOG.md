@@ -87,6 +87,38 @@ block a release again.
   wrappers of the roles that inherit it, so the switch takes effect on
   the next run for compaction summaries and smol takeovers too
   (gh-2433 review).
+- fix(2356): tag-run CANCELLED legs now reach ci-red-report (gh-2436 /
+  v1.0.782 run 45830131519 class) — the hung binaries-macos-x64 leg
+  concluded CANCELLED at timeout-minutes:45 and the failure-only arming
+  arms never saw it; the report fired only through the downstream
+  fail-closed install-pin-bump symptom, and a mid-flight run cancel with
+  zero failed legs would have vanished silently. Every covered leg now
+  arms on `result == 'failure' || result == 'cancelled'` (13 legs × 2),
+  and the filed tracker item lists every red leg with its conclusion
+  (`name [failure|cancelled]`) instead of failure-only names, so the
+  ROOT leg is named. Guard AC3 extended to pin both arms + the script's
+  conclusion query (failing-first: 2 red → 7 green); tag runs are never
+  concurrency-cancelled (cancel-in-progress is PR-only), so a cancelled
+  tag leg is always an incident, never queue churn.
+- fix(gh-2426): every CodeMie request now carries the `x-codemie-client`
+  budget-attribution header. The CodeMie gateway picks the BILLING BUDGET
+  by that header; a request without it lands in the user's PERSONAL budget
+  and dies with `429 ExceededBudget` even though the org/client budget has
+  headroom (server quirk — no retry/cooldown/429-classifier change). One
+  source of truth (`codeMieRequestHeaders` next to `codeMieProjectHeader`
+  in `codemie_sso.dart`), wired into the openai-completions defaults slot
+  URL-gated by `isCodeMieBaseUrl` (chat on every host — CLI, app,
+  extension bridge, serve; SSO cookie + JWT legs, retries and failover
+  re-sends included), the catalog + boot-restore model builds
+  (`buildCatalogModel`/`buildCliDefaultModel`), the SSO-cookie switch and
+  live re-apply headers, the `/llm_models` + `/v1/user` fetch twins (cookie
+  + JWT), the quota adapter, and the app's `AgentConfig.toModel()`
+  (reconfigure + compaction summarizer). Merge order (defaults →
+  model.headers → options) keeps an explicit user `x-codemie-client` entry
+  winning and a null option suppressing; non-CodeMie providers stay
+  byte-identical on the wire. Per-org adaptation needs no code change:
+  the `CODEMIE_CLIENT_ID` env var (CLI process env / app `.env`) overrides
+  the client value at startup (issue #2426 review).
 - feat(2416): GOAL #28 slim tool manifest — the default load mode is the
   owner's partition: twelve always-visible tools (keep-12, name-level:
   `memory_add`/`memory_search` stay while `memory_list`/`memory_delete`
