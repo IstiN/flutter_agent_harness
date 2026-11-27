@@ -1,0 +1,167 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-27T12:24:51.019Z",
+  "ticketKey": "gh-2425",
+  "headSha": "182b8bb9d4f147e3c6e6fcabb6a1ea62b256944f",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:6068db1d7b36e024",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:0984f67a495001a1",
+      "size": 15613
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:ce13a22bbe69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:1f3338ca031bfcc1",
+      "size": 498
+    },
+    "request.md": {
+      "hash": "fnv1a64:068a2df227420c0c",
+      "size": 1058
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:9b0907e1c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:7719cf055be372a9",
+      "size": 1117
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:068a2df227420c0c",
+      "size": 1058
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:5494f22b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: the panel can never delete a stored custom header — deletions are silently discarded (and diverge from the Dart merge contract this PR claims parity with)**\n\n`mergeProviderSave` unions the stored header map with the incoming one:\n\n```js\nconst headers = { ...sanitizeHeaders(stored?.headers), ...sanitizeHeaders(msg?.headers) };\n```\n\nKeys the incoming set does not mention are always re-added from storage, so a header the user deletes in the new \"Custom headers\" textarea survives every save. I verified this against the real `sw/main.js` (same vm harness as `provider_save_test.mjs`):\n\n```\nstored: {\"authorization\":\"Bearer secret-token\",\"x-old\":\"1\"}\nsave with headers: 'x-new: yes'          (user deleted the auth + x-old lines)\n→ stored after save: {\"authorization\":\"Bearer secret-token\",\"x-old\":\"1\",\"x-new\":\"yes\"}\nsave with headers: ''                     (user cleared the textarea)\n→ stored after save: {\"authorization\":\"Bearer secret-token\",\"x-old\":\"1\",\"x-new\":\"yes\"}\n```\n\nTwo consequences:\n\n1. **Broken edit operation in the new UI field** — the textarea prefills the full header set, so the natural expectation is \"what I save is what's stored\". Removing a line (or clearing the field) is silently ignored; there is no path at all from the panel to remove a header.\n2. **Security-adjacent stale credentials** — the SDK explicitly blesses an `authorization` override through `Model.headers` (see the `content-type`/`authorization` comment in `lib/src/providers/openai_completions.dart` `_buildHeaders`, and this PR's own test stores `authorization: Bearer abc`). A user who moves to a different endpoint and deletes the old gateway's auth header keeps sending that credential to the **new** endpoint on every request, with no error and no feedback. Same for the \"same contract as the Dart settings_put merge\" claim in the comment above and the CHANGELOG: the Dart merge (`browser_ext/dart/src/settings_merge.dart:51-54`) is **replace-by-presence** — a non-empty incoming map wins wholesale — while this JS path is per-key union. The two writers of the same `faProvider.headers` key have different merge semantics.\n\nFix is small and keeps the documented blank-keeps-stored behavior for the blank/absent case:\n\n```js\nconst incomingHeaders = sanitizeHeaders(msg?.headers);\nconst headers = Object.keys(incomingHeaders).length\n  ? incomingHeaders // non-empty incoming set REPLACES, like the Dart merge\n  : sanitizeHeaders(stored?.headers);\n```\n\nplus a test asserting a save with a reduced header set actually drops the removed keys."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:3e477936",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: `storedInt` accepts non-integral/negative numbers the Dart side silently drops**\n\n`storedInt` (this PR) parses with `Number.isFinite(Number(t))`, so `'264000.5'` stores `264000.5` and `'-5'` stores `-5` as the `contextWindow`. The Dart reader is stricter on both axes:\n\n- `storedIntSetting` (`browser_ext/dart/src/providers.dart:557`) accepts only `int` or an int-parsable `String` — a dartified `double` is dropped, and\n- `windowSettingsFromStored` (`browser_ext/dart/src/providers.dart:571`) rejects values `<= 0`.\n\nNet effect: typing `264000.5` (or `-5`) into the new \"Context window\" field saves successfully, prefill keeps showing it, and the override never applies — no error, no feedback. The `<input type=\"number\" step=\"1\">` hints integers but does not enforce them for typed values (only on form submit, which this panel never does).\n\nSuggest tightening the parse to a positive integer for parity with the Dart contract:\n\n```js\nconst n = Number(t);\nif (Number.isInteger(n) && n > 0) return n;\n```\n\n(or rejecting/rounding at parse time and logging), plus a `'264000.5'` test case next to the existing string-tolerant ones."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:8422172b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: the comment cites the wrong file for the sqlite3 pin**\n\nThe rationale here (and the mirrored one in `test/ci_sqlite3_prewarm_guard_test.dart:110`) says the fa_ui graph carries sqlite3 \"directly (packages/fa_ui/pubspec.yaml `sqlite3: ^3.5.1`)\" — but `packages/fa_ui/pubspec.yaml` contains **no** sqlite3 mention at all. The pin lives in the **repo-root** `pubspec.yaml:76` (`sqlite3: ^3.5.1`), and fa_ui picks it up **transitively** via its `flutter_agent_harness` path dependency.\n\nThe prewarm step itself is correct (the fa_ui pub get resolves the harness package, whose graph carries sqlite3, and the guard test pins the `packages/fa_ui` root), but this comment is load-bearing evidence: the next auditor who greps `packages/fa_ui/pubspec.yaml` for `sqlite3`, finds nothing, and concludes the prewarm is unnecessary may remove it. Worth correcting the citation to `pubspec.yaml` (root) / \"transitively via flutter_agent_harness\"."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:d8d34479",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# 🚨 PRRT_kwDOTXdlLc68lzcU — headers merge: deletions now stick (replace-by-presence)\n\nFixed in `73f784c496` (`browser_ext/sw/main.js`, `mergeProviderSave`) — exactly the shape you proposed:\n\n```js\n// Headers merge by presence over a sanitized map — the SAME contract as\n// the Dart settings_put hook: a non-empty incoming set REPLACES the\n// stored one (deletions stick), a blank/absent field keeps the stored\n// set. An empty merged result omits the key entirely.\nconst incomingHeaders = sanitizeHeaders(msg?.headers);\nconst headers = Object.keys(incomingHeaders).length\n  ? incomingHeaders\n  : sanitizeHeaders(stored?.headers);\n```\n\n- Your repro now behaves as specified: stored `{authorization, x-old}` + save with `headers: 'x-new: yes'` → stored is exactly `{x-new: yes}`; `headers: ''` still keeps the stored set (the documented blank-keeps-stored behavior, unchanged).\n- The JS writer now has the same merge semantics as `browser_ext/dart/src/settings_merge.dart` (replace-by-presence), so both writers of `faProvider.headers` agree; a deleted `authorization` header no longer rides requests to a new endpoint.\n- TDD: added `gh-2425 rework: a save with a reduced header set REPLACES the stored set — deletions stick` to `browser_ext/test/provider_save_test.mjs` — RED against the union (asserted the stored set after the reduced save), GREEN after the fix; the pre-existing `blank header text = keep` test still passes, so the documented keep-behavior is pinned on both sides of the change.\n- The stale-parity claims are corrected in place: the block comment above `mergeProviderSave` and the file-top comment now state replace-by-presence, and the CHANGELOG bullet spells it out (\"custom headers replace-by-presence so a header line the user deleted actually deletes — a dropped authorization header stops riding requests\").\n- Suite: `node --test browser_ext/test/*.test.mjs browser_ext/test/*_test.mjs` → 95/95; Dart parity suites (`settings_merge_test`, `providers_sync_test`) → 33/33."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:4afad41e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# 💡 PRRT_kwDOTXdlLc68lzfa — storedInt tightened to positive ints (Dart reader parity)\n\nFixed in `73f784c496` (`browser_ext/sw/main.js`) — picked up with the blocking fix (same file):\n\n```js\n/** Positive int | positive-int numeric string → number; non-integral,\n * non-positive, blank/garbled/other → null. Dart reader parity ... */\nfunction storedInt(value) {\n  const t = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';\n  if (!/^[+-]?\\d+$/.test(t)) return null;\n  const n = Number(t);\n  return n > 0 ? n : null;\n}\n```\n\nTwo deliberate hardenings beyond the suggested snippet, both for exact Dart parity:\n\n1. The **number branch** is held to the same contract (`typeof value === 'number'` paths flow through the same regex + `> 0` check) — the suggested `Number.isInteger(n) && n > 0` guard on the string path alone would still store a number-typed `-5`/`264000.5` payload (v2 protocol shape).\n2. The regex (`^[+-]?\\d+$`) mirrors `int.tryParse` decimal-digit semantics, so `'1e3'`/`'0x10'`/`'Infinity'` can't slip through `Number()` either.\n\n- Save path: `'264000.5'`, `'-5'`, `'0'`, `264000.5`, `-5`, `0` all fall back to the stored window (Dart `storedIntSetting` int-parses / `windowSettingsFromStored` drops `<= 0` — the override either applies as a positive int or never silently saves).\n- Read path: `provider.get` now drops a stored double (`264000.5` in storage → answers `0`, the existing no-override encoding) instead of echoing it into the panel — matching the Dart reader that ignores it.\n- TDD: two new tests in `browser_ext/test/provider_save_test.mjs` — `non-integral / non-positive contextWindow input falls back to stored` (6 cases × storage + boot-config assertions) and `provider.get drops a non-integral stored window (read-back parity)`; both RED before the fix (e.g. stored `264000.5` echoed back verbatim), GREEN after.\n- The existing string-tolerant positive cases (`'264000'`, `' 1000000 '`, garbled→keep, blank→keep) all still pass — 95/95 across `browser_ext/test/`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:23edd005",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# 🪶 PRRT_kwDOTXdlLc68lzix — sqlite3 pin citation corrected\n\nFixed in `73f784c496`, both places you flagged:\n\n- `.github/workflows/ci.yml` (test-faui prewarm step comment) now reads: *\"the fa_ui dependency graph carries sqlite3 **transitively** (repo-root `pubspec.yaml:76` `sqlite3: ^3.5.1`, inherited through the `flutter_agent_harness` path dependency; `packages/fa_ui/pubspec.yaml` itself never names it)\"*.\n- `test/ci_sqlite3_prewarm_guard_test.dart` (mirrored comment) corrected the same way.\n\nVerified your facts before editing: `grep sqlite3 packages/fa_ui/pubspec.yaml` → no match; root `pubspec.yaml:76` → `sqlite3: ^3.5.1`; `packages/fa_ui/pubspec.yaml:21` → `flutter_agent_harness` path dep. The wrong \"directly (packages/fa_ui/pubspec.yaml)\" citation was introduced by this PR's own rework commit — good catch on the load-bearing evidence.\n\nComment-only change (no behavioral lines touched); `test/ci_sqlite3_prewarm_guard_test.dart` re-run: 133/133; `ci.yml` still parses (`yaml.safe_load`)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-26:a70f7bb4",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer 4ca1ecaac3072c1ddc1d400d0f525ad6bd58a946 — run 45904218215 still queued at 2026-11-26T23:07:11.896Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:6d0b9f09",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-2425 merge contract is real and well-tested (contextWindow/headers now survive saves, the key stays write-only), but the JS-side headers merge is per-key union while the Dart settings_put merge it claims parity with is replace-by-presence — so the new panel field can never delete a stored header, and a removed auth-style header silently keeps riding requests (reproduced against the real `sw/main.js`). One 🚨 blocking, one 💡, one 🪶; scope note: the PR also bundles a CI fa_ui sqlite3 prewarm plus test diagnostics for the run 45904218215 incident — rationale documented in-code, acceptable.\n\n**Key Issues**:\n- 🚨 `browser_ext/sw/main.js:154` — headers merge unions stored+incoming; header deletions are silently discarded (BLOCKING, repro in thread).\n- 💡 `browser_ext/sw/main.js:103` — `storedInt` stores floats/negatives the Dart reader (`storedIntSetting` + `windowSettingsFromStored`) silently drops.\n- 🪶 `.github/workflows/ci.yml:2849` — comment cites `packages/fa_ui/pubspec.yaml` for the sqlite3 pin; it is in the root `pubspec.yaml:76` (fa_ui carries it transitively).\n\n**Digest** (below thread threshold, no action required):\n- `browser_ext/sw/main.js:279` — `provider.get` echoes stored custom-header values (e.g. an `authorization` entry) back into the panel textarea; symmetric with user input, but the write-only-key principle does not extend to header values.\n- `browser_ext/sw/main.js:221` — the op table (incl. the new `provider.get`) accepts messages from any content-script sender; pre-existing design (`provider.save` was already reachable), the new read exposes config-minus-key only.\n\n**Next Steps**:\n1. Switch the headers merge to replace-by-presence (non-empty incoming set wins wholesale) and add a deletion test — matches the Dart `mergeProvider` contract the CHANGELOG documents.\n2. Tighten `storedInt` to positive integers.\n3. Correct the sqlite3 citation in the ci.yml/guard-test comments."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:25113075",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: The rework commit (`73f784c496`) verifiably fixes all three previously raised findings. Headers now merge by presence (a deleted header actually deletes — the stale-credential path is closed), `storedInt` accepts positive ints only (no more save-succeeded-does-nothing overrides), and the sqlite3 pin citation is corrected in both places. Verified against the code, not the replies: `browser_ext/sw/main.js:163-170` matches the Dart `settings_merge.dart:51-57` replace-by-presence contract, `storedInt` (main.js:103-115) matches `storedIntSetting`/`windowSettingsFromStored`, and `packages/fa_ui/pubspec.yaml` indeed carries no sqlite3 (root `pubspec.yaml:76` does). Suites green: `node --test browser_ext/test/*.mjs` 95/95 (3 new rework tests included), `dart test test/ci_sqlite3_prewarm_guard_test.dart` 133/133, `ci.yml` YAML-valid. Ticket defects all addressed: the panel save no longer drops `contextWindow`, custom headers ride `Model.headers`, and the window/headers UI fields are wired with Dart-parity merge semantics.\n\n**Key Issues**: none — no 🚨/⚠️ findings this round; the three prior threads are answered `fixed` in the finding registry.\n\n**Digest** (below thread threshold, no action required):\n- `CHANGELOG.md:21` — the merge-contract bullet still says \"ints by presence string-tolerant\"; this PR's own rework tightened that to positive-ints-only (sw/main.js:103-115). One-word fix keeps the release note honest: \"positive ints by presence, string-tolerant\".\n\n**Next Steps**:\n1. Merge — no blocking or important findings remain.\n2. Optionally fold the CHANGELOG wording tweak into a follow-up polish."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-27:b8889566",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer e2e82806452568d1eff9a84e8c131957fef0271d — run 45910176092 still queued at 2026-11-27T01:21:52.050Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-27:08684ac0",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 73f784c496f3218085d8e01b6050f20f95784a71 — stale base at 2026-11-27T01:21:53.469Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    }
+  ]
+}
