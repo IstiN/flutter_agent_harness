@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-27T12:06:14.719Z",
+  "ticketKey": "pr-2451",
+  "headSha": "8738b005728a6560bb4b13818fe3e6f9d8d77cb7",
+  "baseBranch": "main",
+  "reviewDecision": "CHANGES_REQUESTED",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:1b0b37a39f5f3a28",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:6edff00cfcdb9dcb",
+      "size": 13454
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:77e54e74a69dce5a",
+      "size": 5664
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:d5bcf45720678115",
+      "size": 3941
+    },
+    "request.md": {
+      "hash": "fnv1a64:b5f2053752a9a6e9",
+      "size": 3587
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:01866ebea8349b27",
+      "size": 1234
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:0c2d9c96c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:714aaa4cfdbd8edf",
+      "size": 3671
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:b5f2053752a9a6e9",
+      "size": 3587
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc68rp-H",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/cli/provider_commands.dart:1910",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: PR description's \"Prod-code changes\" section describes the fix the strip commit removed**\n\nThe PR body (section *\"Prod-code changes (exactly two, review-verified)\"*, item 2) still states that `_dialAskDeployment` uses `client: modelFetchClient('dial')` — \"no-op for unbound providers, **fail-closed proxy routing for bound ones** (closes a wizard-path bypass of the #1921 gate)\". The merged HEAD does not do that. Commit `26eb7aecd7` (\"scope: strip the wizard proxy-gate fix from the test-perf branch\") reverted this call site to a pure test seam:\n\n```dart\ndeployments = await fetchDialModels(\n  baseUrl,\n  key,\n  client: config.modelsHttpClient,\n);\n```\n\nIn production `AgentCliConfig.modelsHttpClient` is `null` (agent_cli_config.dart:46), so `fetchDialModelsInfo` keeps its own direct `http.Client()` (dial.dart:332, `client ?? http.Client()`) — the wizard-path proxy-gate bypass of #1921 **remains open**, deferred to #249 (as this hunk's own comment says). The code and the strip commit are consistent; only the description is wrong.\n\nWhy this matters before merge:\n\n1. The description's reviewer-facing contract claims a prod security-relevant behavior (fail-closed gate) that the diff does not deliver — the ticket body carries the same claim, so future readers of this PR will believe the bypass was closed here.\n2. The same section cites \"an independent DMTools-method review of the full diff returned APPROVE\" — that review covered the pre-strip diff, not this one.\n3. The strip is attributed to **#2452** in paragraph 1 but to **#249** in the refs, the commit message, and the code comment — one of the two is wrong.\n\nSuggested fix (no code change needed): update the PR description so \"Prod-code changes\" item 2 reads `client: config.modelsHttpClient` — pure test seam, production byte-identical, proxy-gate routing for this path tracked in #249 — and reconcile the #2452/#249 references. Everything else in this PR (the seam itself, `fetchDialModels`'s nullable `client`, the MockClient 404 path landing in the same swallowed empty-list branch) was verified correct."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc68rqA6",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/cli/agent_cli_provider_test.dart:1319",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: the `OpenRouter auth method picker` group was dissolved — its tests now report under `DIAL setup`**\n\nCommit `26eb7aecd7` deleted the wizard-candidates test and, to keep braces balanced, also removed the two lines that closed `group('DIAL setup', …)` and opened `group('OpenRouter auth method picker', …)`:\n\n```diff\n-  });\n-  group('OpenRouter auth method picker', () {\n+\n```\n\nOn `main` the picker group exists (origin/main line 1304). After this PR, the OpenRouter picker tests (from this line down: `shows auth-method picker`, `api-key connect saves a named entry`, …) are nested inside `DIAL setup` — failure output, `dart test --plain-name \"OpenRouter auth method picker\"` filtering, and test-report grouping all change, without the PR mentioning it.\n\nRestore the boundary by re-closing the DIAL group before this test and reopening the picker group:\n\n```dart\n  }); // closes DIAL setup\n\n  group('OpenRouter auth method picker', () {\n    test('/provider openrouter shows auth-method picker', () async {\n```"
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc68rqDN",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/cli/agent_cli_provider_test.dart:38",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: dead test plumbing — `providerNetworks` param + `proxy_connector` import have no remaining consumer**\n\nThis PR adds to `cliFor`:\n\n```dart\nMap<String, ProviderNetworkConfig>? providerNetworks,\n...\nproviderNetworks: providerNetworks ?? const {},\n```\n\nplus `import 'package:flutter_agent_harness/src/providers/proxy_connector.dart';` (line 3) for the `ProviderNetworkConfig` type. These were added for the wizard proxy-binding test (`wizard fetch client: re-run entry name → host → catalog; injection wins`) that the strip commit `26eb7aecd7` then deleted — no call site in this file passes `providerNetworks` anymore (verified by grep: the only occurrences are lines 3, 38, 84).\n\nRemove the parameter, the `providerNetworks: providerNetworks ?? const {}` argument, and the `proxy_connector` import — `dart analyze` stays clean either way, but the leftover implies a provider-network injection seam this file no longer exercises."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc68rqF_",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/cli/agent_cli_viewer_test.dart:921",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: the same future is awaited twice**\n\n```dart\nio.sendLine('/exit');\nawait run;\nawait run;   // ← duplicate\n```\n\n`run` is one `Future` from `cli.run()`; awaiting it a second time completes immediately with the same result, so this is harmless — but it is a reflow artifact (the pre-reflow test ended with a single `await run;`). Drop the second `await run;`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:bdf24466",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: PR description's \"Prod-code changes\" section describes the fix the strip commit removed**\n\nThe PR body (section *\"Prod-code changes (exactly two, review-verified)\"*, item 2) still states that `_dialAskDeployment` uses `client: modelFetchClient('dial')` — \"no-op for unbound providers, **fail-closed proxy routing for bound ones** (closes a wizard-path bypass of the #1921 gate)\". The merged HEAD does not do that. Commit `26eb7aecd7` (\"scope: strip the wizard proxy-gate fix from the test-perf branch\") reverted this call site to a pure test seam:\n\n```dart\ndeployments = await fetchDialModels(\n  baseUrl,\n  key,\n  client: config.modelsHttpClient,\n);\n```\n\nIn production `AgentCliConfig.modelsHttpClient` is `null` (agent_cli_config.dart:46), so `fetchDialModelsInfo` keeps its own direct `http.Client()` (dial.dart:332, `client ?? http.Client()`) — the wizard-path proxy-gate bypass of #1921 **remains open**, deferred to #249 (as this hunk's own comment says). The code and the strip commit are consistent; only the description is wrong.\n\nWhy this matters before merge:\n\n1. The description's reviewer-facing contract claims a prod security-relevant behavior (fail-closed gate) that the diff does not deliver — the ticket body carries the same claim, so future readers of this PR will believe the bypass was closed here.\n2. The same section cites \"an independent DMTools-method review of the full diff returned APPROVE\" — that review covered the pre-strip diff, not this one.\n3. The strip is attributed to **#2452** in paragraph 1 but to **#249** in the refs, the commit message, and the code comment — one of the two is wrong.\n\nSuggested fix (no code change needed): update the PR description so \"Prod-code changes\" item 2 reads `client: config.modelsHttpClient` — pure test seam, production byte-identical, proxy-gate routing for this path tracked in #249 — and reconcile the #2452/#249 references. Everything else in this PR (the seam itself, `fetchDialModels`'s nullable `client`, the MockClient 404 path landing in the same swallowed empty-list branch) was verified correct."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:732986a6",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: the `OpenRouter auth method picker` group was dissolved — its tests now report under `DIAL setup`**\n\nCommit `26eb7aecd7` deleted the wizard-candidates test and, to keep braces balanced, also removed the two lines that closed `group('DIAL setup', …)` and opened `group('OpenRouter auth method picker', …)`:\n\n```diff\n-  });\n-  group('OpenRouter auth method picker', () {\n+\n```\n\nOn `main` the picker group exists (origin/main line 1304). After this PR, the OpenRouter picker tests (from this line down: `shows auth-method picker`, `api-key connect saves a named entry`, …) are nested inside `DIAL setup` — failure output, `dart test --plain-name \"OpenRouter auth method picker\"` filtering, and test-report grouping all change, without the PR mentioning it.\n\nRestore the boundary by re-closing the DIAL group before this test and reopening the picker group:\n\n```dart\n  }); // closes DIAL setup\n\n  group('OpenRouter auth method picker', () {\n    test('/provider openrouter shows auth-method picker', () async {\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:928837b4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: dead test plumbing — `providerNetworks` param + `proxy_connector` import have no remaining consumer**\n\nThis PR adds to `cliFor`:\n\n```dart\nMap<String, ProviderNetworkConfig>? providerNetworks,\n...\nproviderNetworks: providerNetworks ?? const {},\n```\n\nplus `import 'package:flutter_agent_harness/src/providers/proxy_connector.dart';` (line 3) for the `ProviderNetworkConfig` type. These were added for the wizard proxy-binding test (`wizard fetch client: re-run entry name → host → catalog; injection wins`) that the strip commit `26eb7aecd7` then deleted — no call site in this file passes `providerNetworks` anymore (verified by grep: the only occurrences are lines 3, 38, 84).\n\nRemove the parameter, the `providerNetworks: providerNetworks ?? const {}` argument, and the `proxy_connector` import — `dart analyze` stays clean either way, but the leftover implies a provider-network injection seam this file no longer exercises."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:03cb62ab",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: the same future is awaited twice**\n\n```dart\nio.sendLine('/exit');\nawait run;\nawait run;   // ← duplicate\n```\n\n`run` is one `Future` from `cli.run()`; awaiting it a second time completes immediately with the same result, so this is harmless — but it is a reflow artifact (the pre-reflow test ended with a single `await run;`). Drop the second `await run;`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:6d9b1261",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The test-speed work itself is sound and verified — all six touched suites pass (191 tests, run locally against this HEAD), production behavior is byte-identical (`inboxTickInterval` has exactly one consumer and keeps the 2s default, now pinned by a new test; `modelsHttpClient` is null in prod), and no assertion was weakened — every compressed wait either keeps the same probing power or increases it in tick counts. One important issue: the PR description's \"Prod-code changes\" section still describes the proxy-gate fix (`modelFetchClient('dial')`, \"closes a wizard-path bypass\") that commit `26eb7aecd7` stripped — the merged diff ships only the pure test seam and the bypass stays open, deferred to #249.\n\n**Key Issues**:\n1. ⚠️ `provider_commands.dart:1910` — stale PR description vs stripped proxy-gate fix (also #2452-vs-#249 inconsistency; the cited APPROVE review covered the pre-strip diff).\n2. 🪶 `agent_cli_provider_test.dart:1319` — `OpenRouter auth method picker` group dissolved, its tests now report under `DIAL setup`.\n3. 🪶 `agent_cli_provider_test.dart:38` — dead `providerNetworks` param + `proxy_connector` import (only consumer was stripped).\n4. 🪶 `agent_cli_viewer_test.dart:921` — duplicate `await run;`.\n\n**Next Steps**:\n1. Update the PR description (Prod-code changes item 2) to match HEAD: pure test seam, production null → legacy live client, gate routing tracked in #249; reconcile #2452/#249.\n2. Restore the `OpenRouter auth method picker` group boundary; drop the dead `providerNetworks` plumbing and the duplicate `await run;`.\n\nVerified during this review: 191/191 tests green across viewer, provider, inbox_wake, bash_self_defense, release_hygiene, mint; `dart format` clean on all 10 touched files; fixture `--allow-empty` claim holds (no fixture consumer reads the working tree); mint env overrides placed before `...extraEnv` (caller wins); `stillAlive` probe swap keeps identical `ps` semantics with all callers inside POSIX-skip guards."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-27:c9eafe7e",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer 26eb7aecd715e85baa2eb4b84014287629601f0e — run 45944472181 still queued at 2026-11-27T09:41:00.538Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-27:d29237dc",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🔁 Ghost-cancelled validation re-dispatched: the newest dispatched validation run (45976244317) concluded CANCELLED before its check runs materialized — no required check will ever re-report on its own (gh-1000 ghost-cancel class, live gh-757). CANCELLED is never a verdict: fresh CI re-dispatched on the same head, merging resumes automatically. (head `4be3dc3d1969f6a879c1c190ab84285f760c6d70`)"
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-27:7d1391e7",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer 4be3dc3d1969f6a879c1c190ab84285f760c6d70 — run 45982663270 still queued at 2026-11-27T11:12:22.654Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    }
+  ]
+}
