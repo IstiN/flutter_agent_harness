@@ -1495,6 +1495,17 @@
       "requests": 31,
       "source": "reported",
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-27T03:51:34Z",
+      "prompt": 241401,
+      "completion": 42413,
+      "total": 283814,
+      "cacheRead": 6508544,
+      "requests": 110,
+      "source": "reported",
+      "model": "glm-5.3-flash"
     }
   ],
   "issue-2424": [
