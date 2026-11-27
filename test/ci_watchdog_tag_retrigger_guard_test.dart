@@ -342,6 +342,85 @@ void main() {
       final out = _runScript('{"jobs": []}');
       expect(out.trip, isFalse);
     });
+
+    test('trips on a continue-on-error PRODUCER timeout kill '
+        '(web-spa / build-extension ride in needs)', () {
+      final out = _runScript(
+        _jobsJson([
+          _job('Build Chrome extension (release)', 'cancelled', [
+            _step('Run actions/checkout', 'cancelled'),
+            _step('Build extension zip', 'skipped'),
+            _step('Upload extension to the release', 'skipped'),
+          ]),
+        ]),
+      );
+      expect(
+        out.trip,
+        isTrue,
+        reason:
+            'gh-2455 review (thread on ci.yml:4287): build-extension '
+            '(ci.yml:5018) and web-spa (ci.yml:4893) carry job-level '
+            'continue-on-error: true and now ride in the watchdog '
+            '`needs`. A `timeout-minutes` kill is a CANCELLATION, not a '
+            'failure — the runner masks only Failed→Succeeded '
+            '(ApplyContinueOnError, ExecutionContext.cs:1424: `if '
+            '(Result != TaskResult.Failed) return;`) — so the kill lands '
+            '`cancelled` like every other gh-2290 kill and MUST trip; '
+            'fa-extension.zip is a gh-1832 REQUIRED asset',
+      );
+    });
+
+    test('does NOT trip on the REAL continue-on-error producer red '
+        '(v1.0.754 run 461282156 shape)', () {
+      final out = _runScript(
+        _jobsJson([
+          _job('Build web SPA bundle', 'failure', [
+            _step('Build web (release, Pages base)', 'success'),
+            _step('Upload bundle to GitHub Release', 'failure'),
+            _step('Flag missing bundle in step summary', 'success'),
+          ]),
+        ]),
+      );
+      expect(
+        out.trip,
+        isFalse,
+        reason:
+            'job-level continue-on-error does NOT mask the jobs-API '
+            'conclusion: tag run 461282156 landed BOTH producers (jobs '
+            '135885361844/135885361973) as raw `failure` on real upload '
+            'failures. A genuine red never trips — and the raw '
+            'conclusion is the empirical counterproof to the '
+            'masked-kill worry: a masked-to-success landing does not '
+            'exist in the jobs document the watchdog scans',
+      );
+    });
+
+    test('does NOT trip on a success conclusion with an anomalous '
+        'cancelled step (masked-kill hypothetical)', () {
+      final out = _runScript(
+        _jobsJson([
+          _job('Build web SPA bundle', 'success', [
+            _step('Run actions/checkout', 'success'),
+            _step('Build web (release, Pages base)', 'cancelled'),
+            _step(
+              'Package fa-web-spa.zip (relative base + AC3 guard)',
+              'skipped',
+            ),
+          ]),
+        ]),
+      );
+      expect(
+        out.trip,
+        isFalse,
+        reason:
+            'a success conclusion is never a degraded-runner kill: the '
+            'one-shot retrigger is for dead runners, not healthy legs, '
+            'and widening the signature to success+cut-step would burn '
+            'the one retrigger per tag on a false alarm. A success leg '
+            'that silently dropped its asset strands loudly at the '
+            'gh-1832 required-assets gate by design',
+      );
+    });
   });
 
   group('AC3 — the trip step runs the repo script (file present first)', () {

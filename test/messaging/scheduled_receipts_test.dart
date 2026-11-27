@@ -62,11 +62,10 @@ void main() {
         path: () => '/x/receipts.jsonl',
         onError: errors.add,
       );
-      addTearDown(log.dispose);
       // Must complete normally — the trail is best-effort (AC4 contract).
       await log.append('wake_attempted', {'lane': 'chatter'});
       expect(errors, hasLength(1));
-      expect(errors.single, contains('receipt write failed'));
+      expect(errors.single, contains('receipt write deferred'));
     },
   );
 
@@ -79,11 +78,143 @@ void main() {
         path: () => '/x/receipts.jsonl',
         onError: errors.add,
       );
-      addTearDown(log.dispose);
       await log.append('wake_refused', {'reason': 'cap'});
-      expect(errors.single, contains('receipt write failed'));
+      expect(errors.single, contains('receipt write deferred'));
     },
   );
+
+  group('fd pressure (issue #2415 — defer, warn once, flush on recover)', () {
+    test('a failing table defers with ONE warning and flushes the whole '
+        'backlog in ONE append on the first successful write', () async {
+      final env = _FlakyEnv();
+      final errors = <String>[];
+      final log = ScheduledReceiptLog(
+        env: env,
+        path: () => '/x/receipts.jsonl',
+        onError: errors.add,
+        retryBaseDelay: const Duration(milliseconds: 5),
+        retryMaxDelay: const Duration(milliseconds: 20),
+      );
+      env.failing = true;
+      await log.append('wake_attempted', {'lane': 'a'});
+      await log.append('wake_attempted', {'lane': 'b'});
+      await log.append('wake_attempted', {'lane': 'c'});
+      // One warning for the whole pressure window — no per-tick spam.
+      expect(errors, hasLength(1));
+      expect(errors.single, contains('receipt write deferred'));
+      // Nothing lost, nothing yet on disk.
+      expect(await env.text(), isNull);
+
+      // Recover: the next append flushes the backlog plus itself — the
+      // backlog rides ONE append call (fewer descriptors under pressure),
+      // lines in order.
+      env.appendCalls = 0;
+      env.failing = false;
+      await log.append('delivered', {'id': 'a'});
+      final events = [
+        for (final line in (await env.text())!.trim().split('\n'))
+          (jsonDecode(line) as Map<String, dynamic>)['event'],
+      ];
+      expect(events, [
+        'wake_attempted',
+        'wake_attempted',
+        'wake_attempted',
+        'delivered',
+      ]);
+      // The recovery drain answered with a single backend append.
+      expect(env.appendCalls, 1);
+      // Warning (window opens) + recovery notice (window closes).
+      expect(errors, hasLength(2));
+      expect(errors.last, contains('receipt write recovered'));
+    });
+
+    test('an IDLE queue still flushes: the retry timer probes without '
+        'any further append (the scheduler may be quiet while the table '
+        'frees)', () async {
+      final env = _FlakyEnv();
+      final errors = <String>[];
+      final log = ScheduledReceiptLog(
+        env: env,
+        path: () => '/x/receipts.jsonl',
+        onError: errors.add,
+        retryBaseDelay: const Duration(milliseconds: 5),
+        retryMaxDelay: const Duration(milliseconds: 40),
+      );
+      env.failing = true;
+      await log.append('delivered', {'id': 'quiet-1'});
+      expect(await env.text(), isNull);
+      env.failing = false;
+      // No further append — the timer must land the backlog on its own.
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (await env.text() == null && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(await env.text(), isNotNull);
+      expect((await env.text())!.contains('quiet-1'), isTrue);
+      expect(errors, hasLength(2)); // deferral + recovery
+      // The idle probe keeps running the other way too: a SECOND quiet
+      // window flushes on its own (backoff re-armed, cap respected).
+      env.failing = true;
+      await log.append('delivered', {'id': 'quiet-2'});
+      env.failing = false;
+      final deadline2 = DateTime.now().add(const Duration(seconds: 5));
+      while (!(await env.text())!.contains('quiet-2') &&
+          DateTime.now().isBefore(deadline2)) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect((await env.text())!.contains('quiet-2'), isTrue);
+    });
+
+    test('dispose() cancels the idle probe — a disposed trail neither '
+        'flushes nor holds the event loop; idempotent', () async {
+      final env = _FlakyEnv();
+      final log = ScheduledReceiptLog(
+        env: env,
+        path: () => '/x/receipts.jsonl',
+        retryBaseDelay: const Duration(milliseconds: 5),
+        retryMaxDelay: const Duration(milliseconds: 20),
+      );
+      env.failing = true;
+      await log.append('delivered', {'id': 'never-lands'});
+      log.dispose();
+      log.dispose(); // idempotent
+      env.failing = false;
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      // The deferred line stays in memory — the documented process-exit
+      // loss window — and no timer fired after dispose.
+      expect(await env.text(), isNull);
+      expect(log.pendingCount, 1);
+    });
+
+    test('a new pressure window after recovery warns again', () async {
+      final env = _FlakyEnv();
+      final errors = <String>[];
+      final log = ScheduledReceiptLog(
+        env: env,
+        path: () => '/x/receipts.jsonl',
+        onError: errors.add,
+        retryBaseDelay: const Duration(milliseconds: 5),
+        retryMaxDelay: const Duration(milliseconds: 20),
+      );
+      env.failing = true;
+      await log.append('wake_attempted', {'lane': 'a'});
+      expect(errors, hasLength(1));
+      env.failing = false;
+      await log.append('delivered', {'id': 'a'});
+      // Window closed: deferral warning + recovery notice.
+      expect(errors, hasLength(2));
+      env.failing = true;
+      await log.append('wake_refused', {'lane': 'b'});
+      expect(errors, hasLength(3));
+      expect(
+        errors.where((e) => e.contains('receipt write deferred')),
+        hasLength(2),
+      );
+      // The refused line stays pending; the delivered ones landed.
+      expect((await env.text())!.contains('delivered'), isTrue);
+      expect((await env.text())!.contains('wake_refused'), isFalse);
+    });
+  });
 
   group('deliveredIds (issue #2384 AC1 — fired-timer evidence)', () {
     test(
@@ -112,113 +243,23 @@ void main() {
       );
       expect(await log.deliveredIds(), isEmpty);
     });
-  });
 
-  group('gh-2415: fd pressure never loses a receipt', () {
-    Future<void> drainWithin(ScheduledReceiptLog log) async {
-      for (var i = 0; i < 300 && log.pendingCount > 0; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-      }
-      expect(log.pendingCount, 0, reason: 'the backoff retries flush it');
-    }
-
-    test('N failing ticks → ONE deferral warning, every receipt kept in '
-        'memory, then flushed in order with one recovery line', () async {
-      const path = '/sessions/--work--/messages/_scheduled/receipts.jsonl';
-      final env = _FlakyEnv(failures: 5);
-      final errors = <String>[];
+    test('pending delivered receipts count too — a deferred persistence '
+        'never hides a fired timer (issue #2384 AC1)', () async {
+      final env = _FlakyEnv();
       final log = ScheduledReceiptLog(
         env: env,
-        path: () => path,
-        onError: errors.add,
+        path: () => '/x/receipts.jsonl',
         retryBaseDelay: const Duration(milliseconds: 5),
-        retryMaxDelay: const Duration(milliseconds: 40),
+        retryMaxDelay: const Duration(milliseconds: 20),
       );
-      addTearDown(log.dispose);
-      for (var i = 0; i < 5; i++) {
-        await log.append('delivered', {'id': 'a$i'});
-        expect(log.pendingCount, i + 1);
-      }
-      // The backoff gate held the tick storm off the backend: ONE
-      // attempt so far, ONE warning — not one per tick.
-      expect(env.attempts, 1);
-      expect(errors, hasLength(1));
-      expect(errors.single, contains('receipt write deferred: fd pressure'));
-      // The count named at the (single) warning is what was pending
-      // THEN — the four later ticks were gated off the backend.
-      expect(errors.single, contains('1 receipt(s) kept in memory'));
-      // Pending receipts are still delivered evidence (the event
-      // happened; only its persistence is deferred).
-      expect(await log.deliveredIds(), {'a0', 'a1', 'a2', 'a3', 'a4'});
-      await drainWithin(log);
-      expect(errors, hasLength(2), reason: 'no repeated warnings');
-      expect(
-        errors.last,
-        contains('receipt write recovered: 5 receipt(s) flushed'),
-      );
-      // Five failed retries + one success = six attempts, all under
-      // the cap.
-      expect(env.attempts, 6);
-      final text = (await env.readTextFile(path)).valueOrNull!;
-      final events = [
-        for (final line in text.trim().split('\n'))
-          (jsonDecode(line) as Map<String, dynamic>)['id'],
-      ];
-      expect(events, ['a0', 'a1', 'a2', 'a3', 'a4'], reason: 'order kept');
-      // Healthy again: the next append lands at once, no warning.
-      await log.append('wake_attempted', {'lane': 'x'});
-      expect(env.attempts, 7);
-      expect(log.pendingCount, 0);
-      expect(errors, hasLength(2));
+      env.failing = true;
+      await log.append('scheduled', {'id': 'p1'});
+      await log.append('delivered', {'id': 'p1'});
+      // Nothing landed on disk, but the delivery DID happen — the
+      // obligations-ledger reconcile must see it, not age it out.
+      expect(await log.deliveredIds(), {'p1'});
     });
-
-    test('a non-fd failure keeps the "receipt write failed" wording and still '
-        'never loses the line', () async {
-      const path = '/sessions/--work--/messages/_scheduled/receipts.jsonl';
-      final env = _FlakyEnv(failures: 1, fdPressure: false);
-      final errors = <String>[];
-      final log = ScheduledReceiptLog(
-        env: env,
-        path: () => path,
-        onError: errors.add,
-        retryBaseDelay: const Duration(milliseconds: 5),
-      );
-      addTearDown(log.dispose);
-      await log.append('scheduled', {'id': 's1'});
-      expect(errors.single, contains('receipt write failed'));
-      expect(errors.single, isNot(contains('fd pressure')));
-      expect(log.pendingCount, 1);
-      await drainWithin(log);
-      expect(
-        (await env.readTextFile(path)).valueOrNull,
-        contains('"scheduled"'),
-      );
-      expect(
-        errors.last,
-        contains('receipt write recovered: 1 receipt(s) flushed'),
-      );
-    });
-
-    test(
-      'dispose cancels the retry timer and drops the pending queue',
-      () async {
-        final env = _FlakyEnv(failures: 100);
-        final errors = <String>[];
-        final log = ScheduledReceiptLog(
-          env: env,
-          path: () => '/x/receipts.jsonl',
-          onError: errors.add,
-          retryBaseDelay: const Duration(milliseconds: 5),
-        );
-        await log.append('delivered', {'id': 'a1'});
-        expect(log.pendingCount, 1);
-        log.dispose();
-        expect(log.pendingCount, 0);
-        final attempts = env.attempts;
-        await Future<void>.delayed(const Duration(milliseconds: 40));
-        expect(env.attempts, attempts, reason: 'no retry after dispose');
-      },
-    );
   });
 }
 
@@ -252,28 +293,32 @@ final class _ThrowingEnv implements ExecutionEnv {
       throw UnimplementedError('${invocation.memberName}');
 }
 
-/// An env whose `appendFile` fails [failures] times (errno 24 — the fd
-/// pressure shape — or a generic error) and then delegates to memory.
+/// An env whose `appendFile` fails while [failing] (the fd-pressure
+/// simulation: an errno-24-shaped backend error), and delegates to an
+/// in-memory store otherwise.
 final class _FlakyEnv implements ExecutionEnv {
-  _FlakyEnv({required this.failures, this.fdPressure = true});
+  final _delegate = MemoryExecutionEnv(cwd: '/work');
 
-  final MemoryExecutionEnv _delegate = MemoryExecutionEnv(cwd: '/work');
-  int failures;
-  final bool fdPressure;
-  int attempts = 0;
+  bool failing = false;
+
+  /// appendFile calls that reached the backend (the single-append flush
+  /// assertion).
+  int appendCalls = 0;
+
+  /// The trail text as the backend holds it, or null when nothing was
+  /// ever written.
+  Future<String?> text() =>
+      _delegate.readTextFile('/x/receipts.jsonl').then((r) => r.valueOrNull);
 
   @override
   Future<Result<void, FileError>> appendFile(String path, String content) {
-    attempts++;
-    if (failures > 0) {
-      failures--;
+    appendCalls++;
+    if (failing) {
       return Future.value(
         Err(
           FileError(
             FileErrorCode.unknown,
-            fdPressure
-                ? 'Cannot open file (errno 24: Too many open files)'
-                : 'injected append failure',
+            'Cannot open file (errno 24: Too many open files)',
             path: path,
           ),
         ),
