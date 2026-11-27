@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-27T10:56:18.752Z",
+  "ticketKey": "gh-2453",
+  "headSha": "156f924b784030363e788a88ff5637453b539ebd",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_classification.json": {
+      "hash": "fnv1a64:c7fa1bf01d5ee188",
+      "size": 187
+    },
+    "ci_failures.md": {
+      "hash": "fnv1a64:1836f98b2c754518",
+      "size": 18208
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:2618c73d04594c0d",
+      "size": 17561
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:95460a4555de42cd",
+      "size": 504
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:21948debf5ba7461",
+      "size": 12301
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:7f68ef97e7fac3ff",
+      "size": 6708
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:28b8c0e0ec9679db",
+      "size": 2879
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:e90588a372ecad52",
+      "size": 3258
+    },
+    "request.md": {
+      "hash": "fnv1a64:6c2d4981cb19512f",
+      "size": 985
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:9c2cd3887f009e89",
+      "size": 827
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:1596cbc4c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:708f480ce59cd0bc",
+      "size": 1051
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:6c2d4981cb19512f",
+      "size": 985
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc68vgVB",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": ".github/workflows/build-macos.yml:1443",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the copied checkout reintroduces the pre-rework gh-160 stub-collision bug**\n\nThe new `Checkout repository from local mirrors` step's move-back loop is the\n**old** (pre-rework) gh-160 branch: on a name collision with a leftover stub it\nonly warns and leaves the **fresh** entry in `$CLONE_TARGET`, and the trailing\n`rm -rf \"$CLONE_TARGET\"` then deletes it — the **stale leftover silently wins**\nat that repo path.\n\nThe desktop-matrix checkout in this same file (lines ~284–303) was explicitly\nreworked for exactly this in the gh-160 review thread (\"fresh content must\nwin — park the stale stub in the same `$STALE` sidecar and move the fresh\nentry in. The old path skipped the fresh entry (warning-only) and the trailing\n`rm -rf` then DELETED it, silently keeping the stale leftover\"). The new step\neven computes `$STALE` but never uses it in the collision branch, and its own\ncomment claims \"gh-160 workspace-tolerant\".\n\nFailure mode on the persistent fa-m5 pool: when the shared workspace holds a\nmount-held leftover whose name matches a repo-root entry (`pubspec.lock`,\n`build/`, `.dart_tool/`, …), the CLI build silently consumes the **stale**\nfile — a nondeterministic, hard-to-debug leg failure.\n\nFix: carry the desktop's reworked branch over (park stub into `$STALE_DIR` →\n`mv` fresh entry in; warn-only as last resort). Optionally pin it with an AC\nin the new guard test."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc68vgYl",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/ci_2453_macos_cli_mirror_checkout_guard_test.dart:126",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: new guard test is not `dart format` clean**\n\n`dart format --output=none --set-exit-if-changed test/ci_2453_macos_cli_mirror_checkout_guard_test.dart`\nreports `Changed` — e.g. the `test('AC2: …')` header (line 126), the\n`steps.indexWhere` helper blocks (lines 79, 92, 102) and the AC7\n`expect(..., reason:)` calls are in the old trailing-comma style.\n\nThe repo gate requires analyze + format clean (AGENTS.md quality gates); the\npre-commit hook would have self-healed this on commit, so it landed with the\nhook bypassed. CI's `static` leg doesn't re-check format, so nothing goes red\n— it just leaves the tree non-canonical for the next formatter run.\n\nFix: `dart format test/ci_2453_macos_cli_mirror_checkout_guard_test.dart`\n(analyzer is clean; tests stay 7/7 green)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:dd793c8d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the copied checkout reintroduces the pre-rework gh-160 stub-collision bug**\n\nThe new `Checkout repository from local mirrors` step's move-back loop is the\n**old** (pre-rework) gh-160 branch: on a name collision with a leftover stub it\nonly warns and leaves the **fresh** entry in `$CLONE_TARGET`, and the trailing\n`rm -rf \"$CLONE_TARGET\"` then deletes it — the **stale leftover silently wins**\nat that repo path.\n\nThe desktop-matrix checkout in this same file (lines ~284–303) was explicitly\nreworked for exactly this in the gh-160 review thread (\"fresh content must\nwin — park the stale stub in the same `$STALE` sidecar and move the fresh\nentry in. The old path skipped the fresh entry (warning-only) and the trailing\n`rm -rf` then DELETED it, silently keeping the stale leftover\"). The new step\neven computes `$STALE` but never uses it in the collision branch, and its own\ncomment claims \"gh-160 workspace-tolerant\".\n\nFailure mode on the persistent fa-m5 pool: when the shared workspace holds a\nmount-held leftover whose name matches a repo-root entry (`pubspec.lock`,\n`build/`, `.dart_tool/`, …), the CLI build silently consumes the **stale**\nfile — a nondeterministic, hard-to-debug leg failure.\n\nFix: carry the desktop's reworked branch over (park stub into `$STALE_DIR` →\n`mv` fresh entry in; warn-only as last resort). Optionally pin it with an AC\nin the new guard test."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:d61f42d0",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: new guard test is not `dart format` clean**\n\n`dart format --output=none --set-exit-if-changed test/ci_2453_macos_cli_mirror_checkout_guard_test.dart`\nreports `Changed` — e.g. the `test('AC2: …')` header (line 126), the\n`steps.indexWhere` helper blocks (lines 79, 92, 102) and the AC7\n`expect(..., reason:)` calls are in the old trailing-comma style.\n\nThe repo gate requires analyze + format clean (AGENTS.md quality gates); the\npre-commit hook would have self-healed this on commit, so it landed with the\nhook bypassed. CI's `static` leg doesn't re-check format, so nothing goes red\n— it just leaves the tree non-canonical for the next formatter run.\n\nFix: `dart format test/ci_2453_macos_cli_mirror_checkout_guard_test.dart`\n(analyzer is clean; tests stay 7/7 green)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:6e6f77f0",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The mirror-seeded, stall-guarded checkout for `build-macos-cli` is the right fix for the gh-2453 44m45s stall (new guard test 7/7 and `update_git_mirror_selftest.sh` 13/13 green locally, T10 drift guard updated to 4 bootstrap sites correctly), but the PR's required CI checks are red and the copied checkout reintroduces the pre-rework gh-160 stub-collision bug.\n\n**Key Issues**:\n- 🚨 BLOCKING (CI) — `Quality gate` failed on `156f924b` (run 45981569442): `Quality gate FAILED: a leg is cancelled (static)` — every package/platform leg reports `cancelled`, no failing assertion anywhere in the log (`ci_failures_full.log`); run-level cancellation, must go green before merge.\n- 🚨 BLOCKING (CI) — `Binaries smoke gate` failed on the same run: `binaries-pr result: cancelled` — same cancellation class; re-run required.\n- ⚠️ The new CLI checkout's stub-collision branch is the pre-rework gh-160 semantics: fresh clone content is deleted on collision and a stale workspace leftover silently wins at that repo path (`comment1.md`). The desktop-matrix checkout in the same file carries the reworked, fixed semantics.\n- 🪶 The new guard test is not `dart format` clean (`comment2.md`); pre-commit self-heal was bypassed.\n\n**Digest** (unchanged code, FYI only):\n- `.github/workflows/build-macos.yml:1457` — pre-existing empty `- run: |` no-op step right before `- run: dart pub get` (landed with #2405, untouched by this PR).\n\n**Next Steps**:\n1. Re-run the red CI run until `Quality gate` + `Binaries smoke gate` are green.\n2. Carry the desktop checkout's reworked collision handling (park stub → fresh wins) into the new CLI checkout.\n3. `dart format` the new test file."
+    }
+  ]
+}
