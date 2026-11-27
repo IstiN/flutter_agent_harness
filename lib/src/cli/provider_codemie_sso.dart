@@ -210,8 +210,13 @@ extension ProviderCodeMieSso on AgentCli {
       maxTokens: builtModel.maxTokens,
       // Cookie-header auth: the adapter sees an empty apiKey (no Bearer) and
       // merges model.headers, adding `cookie: <full cookie jar>` — plus the
-      // picked project (issue #1809 AC4).
-      headers: {'cookie': cookie, codeMieProjectHeader: ?project},
+      // picked project (issue #1809 AC4) and the always-on client header
+      // (issue #2426 budget attribution).
+      headers: {
+        ...codeMieRequestHeaders,
+        'cookie': cookie,
+        codeMieProjectHeader: ?project,
+      },
       compat: builtModel.compat,
       maxImages: builtModel.maxImages,
     );
