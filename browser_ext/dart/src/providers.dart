@@ -326,16 +326,26 @@ bool isCookieAuthUrl(String url) =>
 /// (`contextWindowCap`) applies DOWNSTREAM — in the shared compaction
 /// resolution and the loop's over-window guard — never here, so the raw
 /// per-model value stays the single input.
-Model modelForConfig(ProviderConfig config, {int? contextWindowOverride}) =>
-    Model(
-      id: config.model,
-      name: config.model,
-      api: 'openai-completions',
-      provider: isFakeModel(config.model) ? 'fake' : 'openai-like',
-      baseUrl: config.baseUrl,
-      contextWindow: contextWindowOverride ?? fallbackContextWindow,
-      maxTokens: 8192,
-    );
+///
+/// [headers] (gh-2425) carries the custom `faProvider.headers` map when the
+/// legacy form is the ACTIVE source; the core `_buildHeaders` merge sends
+/// them with every direct request (over the defaults, under the per-call
+/// options). Empty/absent keeps `Model.headers` null — header-less configs
+/// produce byte-identical requests to before.
+Model modelForConfig(
+  ProviderConfig config, {
+  int? contextWindowOverride,
+  Map<String, String>? headers,
+}) => Model(
+  id: config.model,
+  name: config.model,
+  api: 'openai-completions',
+  provider: isFakeModel(config.model) ? 'fake' : 'openai-like',
+  baseUrl: config.baseUrl,
+  contextWindow: contextWindowOverride ?? fallbackContextWindow,
+  maxTokens: 8192,
+  headers: (headers == null || headers.isEmpty) ? null : headers,
+);
 
 /// Streams via the core openai-completions adapter using the platform
 /// `fetch` (MV3 service workers have no XHR for package:http's default
