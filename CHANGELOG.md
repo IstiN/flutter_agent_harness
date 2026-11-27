@@ -13,6 +13,14 @@ block a release again.
 
 ## Unreleased
 
+- fix(2433): runtime `/provider` / `/model` switches are no longer
+  silently ignored when a `modelOverrides` path entry matches the cwd —
+  `ModelRolesConfig` gains `runtimePinned` (runtime-only, never parsed
+  from or serialized to yaml) and a pinned role skips the path-override
+  step; a switch of the `default` chain also rebuilds the cached
+  wrappers of the roles that inherit it, so the switch takes effect on
+  the next run for compaction summaries and smol takeovers too
+  (gh-2433 review).
 - feat(2416): GOAL #28 slim tool manifest — the default load mode is the
   owner's partition: twelve always-visible tools (keep-12, name-level:
   `memory_add`/`memory_search` stay while `memory_list`/`memory_delete`

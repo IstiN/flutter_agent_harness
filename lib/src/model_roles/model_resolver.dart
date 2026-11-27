@@ -597,10 +597,15 @@ final class ModelRolesResolver {
   }
 
   /// Replaces [role]'s chain (the settings-hub agent-models flow); the new
-  /// chain takes effect on the next run. The role is [ModelRolesConfig
-  /// .runtimePinned] so its chain beats every path override — a runtime
-  /// switch must never be silently out-voted by the longest-match entry
-  /// (gh-2433: the Copilot switch that kept running on Bedrock).
+  /// chain takes effect on the next run. The role is pinned via
+  /// [ModelRolesConfig.runtimePinned] so its chain beats every path
+  /// override — a runtime switch must never be silently out-voted by the
+  /// longest-match entry (gh-2433: the Copilot switch that kept running
+  /// on Bedrock). A switch of [defaultModelRole] also drops the cached
+  /// wrappers of the roles that INHERIT the default chain: their wrapper
+  /// captured the pre-switch chain and would keep streaming it forever
+  /// (gh-2433 review). Roles with a chain of their own keep their
+  /// wrapper — cooldown state survives an unrelated switch.
   void setRoleChain(String role, List<ModelRef> chain) {
     if (chain.isEmpty) {
       throw ArgumentError.value(
@@ -616,6 +621,14 @@ final class ModelRolesResolver {
       runtimePinned: {...config.runtimePinned, role},
     );
     _wrappers.remove(role);
+    if (role == defaultModelRole) {
+      // Inherit-default siblings captured the OLD default chain — the
+      // same invariant setRetryPolicy establishes: wrappers capture
+      // resolution at construction, so they must be rebuilt when the
+      // thing they inherited changes. Roles with their own chain keep
+      // their wrapper (and its cooldown state).
+      _wrappers.removeWhere((r, _) => !config.roles.containsKey(r));
+    }
   }
 
   /// Replaces the retry policy (the settings-hub resilience flow, issue
