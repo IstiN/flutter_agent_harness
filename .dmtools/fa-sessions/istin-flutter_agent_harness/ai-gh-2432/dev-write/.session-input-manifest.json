@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-26T17:19:05.999Z",
+  "ticketKey": "pr-2434",
+  "headSha": "49acadf2b2284847211346dde0daa558f4e52cc5",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_classification.json": {
+      "hash": "fnv1a64:9e5ccc42461ccc68",
+      "size": 471
+    },
+    "ci_failures.md": {
+      "hash": "fnv1a64:eb4fdcb782203aab",
+      "size": 66478
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:f28240a5269a4dd0",
+      "size": 93144
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:d731a17e32371f98",
+      "size": 799
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:5dc813a8add383ed",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:76f1c1c5636263ad",
+      "size": 9866
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:ff3a07e1e171923c",
+      "size": 3161
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:2d53180e6643b0fb",
+      "size": 2856
+    },
+    "request.md": {
+      "hash": "fnv1a64:e2fbae573d419355",
+      "size": 2519
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:b324b300d8a3a32f",
+      "size": 710
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:26c0ca01c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:f9416abcd97586fa",
+      "size": 2600
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:e2fbae573d419355",
+      "size": 2519
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc68fAii",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "scripts/release_lazy_draft.sh:163",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the 5xx retry can mint a same-marker twin draft that `release_draft_twin_dedupe.sh` cannot resolve — reproducing the exact sweep recurrence this PR closes**\n\nThe retry heals a landed-500 only when the draft becomes visible **at the retry boundary** — but the PR's own root cause says the v1.0.778 draft \"resolved **minutes later**\". In that exact shape the sequence is:\n\n1. Attempt 1 gets `HTTP 500` but **lands server-side** (draft D1 created, not yet visible).\n2. The failure-boundary re-view (`gh release view`) still sees nothing, the classifier matches `HTTP 5xx`, and the loop retries here (`scripts/release_lazy_draft.sh:163`).\n3. GitHub does not enforce one-release-per-tag for **drafts** (gh-2372/gh-1899), so attempt 2's create **succeeds** and mints D2. Both D1 and D2 carry the **same** `release-draft-owner: run/<id>/job/<name>` marker (same leg, same `RELEASE_DRAFT_IDENTITY`).\n4. The success path runs `release_draft_twin_dedupe.sh` — but its winner election (`scripts/release_draft_twin_dedupe.sh`, the `winner` jq predicate) only elects an **older** same-tag release (`.id < mine_min`, published or pipeline-created). Between two same-marker twins there is no such object: `mine_min` is our own older draft and nothing precedes it → \"our draft for $tag is the oldest same-tag release — it stays\" and **both drafts survive**.\n\nConsequence: the tag now resolves ambiguously for the attach gates and for release-provenance (assets land in one draft, the publish can flip the other — the gh-2372 twin-rot class); the surviving twin rots 24h+ until the daily sweeper deletes it and **re-files \"[daily-publish] stale release drafts swept\"** — the exact recurrence gh-2432 is about, now reachable through the fix itself. The pinned landed-500 test (`viewFoundAfterFirst: true`) only covers the fast-resolution shape where the re-view sees the draft immediately.\n\n**Suggested fix**: extend `release_draft_twin_dedupe.sh` — when ≥2 own-marker drafts exist, elect the **oldest own draft** as the winner and delete our own **newer** twins by id (both carry this job's exact marker, so this stays inside the existing \"a job only ever deletes drafts it just created\" invariant; mirrors the existing external-winner delete loop). Then pin it with a fixture case where the 500's view stays not-found past the boundary (`GH_STUB_CREATE_FAILS_5XX_N: '1'` **without** `viewFoundAfterFirst`), asserting exactly one same-marker draft survives the create+dedupe.\n\nEvidence that would raise this to 🚨: a fixture reproduction showing two same-marker drafts surviving a 500-then-success create (I could not run that against the real API from review, but every step above is grounded in the PR's own root-cause narrative and the dedupe's election code)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:3bffabfe",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the 5xx retry can mint a same-marker twin draft that `release_draft_twin_dedupe.sh` cannot resolve — reproducing the exact sweep recurrence this PR closes**\n\nThe retry heals a landed-500 only when the draft becomes visible **at the retry boundary** — but the PR's own root cause says the v1.0.778 draft \"resolved **minutes later**\". In that exact shape the sequence is:\n\n1. Attempt 1 gets `HTTP 500` but **lands server-side** (draft D1 created, not yet visible).\n2. The failure-boundary re-view (`gh release view`) still sees nothing, the classifier matches `HTTP 5xx`, and the loop retries here (`scripts/release_lazy_draft.sh:163`).\n3. GitHub does not enforce one-release-per-tag for **drafts** (gh-2372/gh-1899), so attempt 2's create **succeeds** and mints D2. Both D1 and D2 carry the **same** `release-draft-owner: run/<id>/job/<name>` marker (same leg, same `RELEASE_DRAFT_IDENTITY`).\n4. The success path runs `release_draft_twin_dedupe.sh` — but its winner election (`scripts/release_draft_twin_dedupe.sh`, the `winner` jq predicate) only elects an **older** same-tag release (`.id < mine_min`, published or pipeline-created). Between two same-marker twins there is no such object: `mine_min` is our own older draft and nothing precedes it → \"our draft for $tag is the oldest same-tag release — it stays\" and **both drafts survive**.\n\nConsequence: the tag now resolves ambiguously for the attach gates and for release-provenance (assets land in one draft, the publish can flip the other — the gh-2372 twin-rot class); the surviving twin rots 24h+ until the daily sweeper deletes it and **re-files \"[daily-publish] stale release drafts swept\"** — the exact recurrence gh-2432 is about, now reachable through the fix itself. The pinned landed-500 test (`viewFoundAfterFirst: true`) only covers the fast-resolution shape where the re-view sees the draft immediately.\n\n**Suggested fix**: extend `release_draft_twin_dedupe.sh` — when ≥2 own-marker drafts exist, elect the **oldest own draft** as the winner and delete our own **newer** twins by id (both carry this job's exact marker, so this stays inside the existing \"a job only ever deletes drafts it just created\" invariant; mirrors the existing external-winner delete loop). Then pin it with a fixture case where the 500's view stays not-found past the boundary (`GH_STUB_CREATE_FAILS_5XX_N: '1'` **without** `viewFoundAfterFirst`), asserting exactly one same-marker draft survives the create+dedupe.\n\nEvidence that would raise this to 🚨: a fixture reproduction showing two same-marker drafts surviving a 500-then-success create (I could not run that against the real API from review, but every step above is grounded in the PR's own root-cause narrative and the dedupe's election code)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-26:98ac1764",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel 035c140be0a46ca0de517e15deab755b10bb5922 — stale base at 2026-11-26T14:09:37.048Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-26:7d7c371b",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer 81f7b5da17b752ecd89fdf32a211dfd8ef24d743 — run 45836553298 still queued at 2026-11-26T15:22:32.936Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-26:e604695e",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer 4aefc7f2e6e3acce34af3b8f42c32f53d96b4f6e — run 45848844247 still queued at 2026-11-26T16:17:26.775Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-26:dc50f1dc",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-26",
+      "updatedAt": "2026-11-26",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-2432 fix is well-grounded — the bounded 5xx retry, the boundary re-view heal, and the repo-wide `shell: bash` static guard all check out (new tests + the touched contract suites re-run green locally: 5 + 9 + 17 passed). One important gap: in the incident's exact shape (a 500 that lands server-side but resolves *minutes* later) the boundary re-view misses the draft, the retry mints a **same-marker twin**, and `release_draft_twin_dedupe.sh`'s election cannot resolve twins that share our identity — both drafts survive, the tag resolves ambiguously, and the twin rots until the daily sweeper re-files the very sweep issue this PR closes.\n\n**Key Issues**:\n- ⚠️ `scripts/release_lazy_draft.sh:163` — landed-500 that resolves late defeats the heal re-view; retry + dedupe leaves an unresolvable same-marker twin pair (details in the inline thread).\n\n**Ranked digest** (suggestion-level, no threads):\n1. `scripts/release_lazy_draft.sh:158` — the retry keys on `HTTP 5xx` text in gh's stderr only; transient network-layer create failures (EOF/reset/timeout — no `HTTP nnn` line) still fail single-shot. Documented scope; consider a header note so a future near-miss isn't misread as a retry bug.\n2. `test/ci_2432_draft_lifecycle_guard_shell_test.dart:92` — the guard matches the literal `bash scripts/` and scans `*.yml` only (`:104`): `bash ./scripts/…`-style invocations, `.yaml`-suffixed workflows, and `fromJSON`-driven matrices are invisible to it. Zero live instances today (audited all 35 workflows; nightly's windows row is covered via `matrix.include`), and the guard header itself treats missed violations as the expensive side — noting for future refactors.\n3. `scripts/release_attach_or_create.sh:150` (unchanged, outside the diff) — the attach legs' `gh release create` has the same 500 shape with no bounded retry; the same knobs could follow there in a follow-up.\n\n**Next Steps**:\n1. Extend `release_draft_twin_dedupe.sh` to keep the oldest **own-marker** draft and delete our own newer twins, plus the late-resolution fixture case (see inline thread).\n2. Optional follow-ups from the digest: 5xx-scope header note, guard-matcher widening, attach-path retry parity."
+    }
+  ]
+}
