@@ -84,6 +84,11 @@ typedef HostConfig = ({
   /// clamps the effective window in the shared compaction resolution AND
   /// the loop's over-window guard (one clamp point downstream).
   int? contextWindowCap,
+
+  /// Custom request headers (gh-2425): the `faProvider.headers` map when
+  /// the legacy form is the ACTIVE source (the same ACTIVE-source rule as
+  /// [contextWindow] — machine review I2). Empty = byte-identical requests.
+  Map<String, String> providerHeaders,
 });
 
 const _sessionPath = '/session.jsonl';
@@ -134,6 +139,9 @@ final class AgentHost implements UiHostBackend {
 
   /// Per-model window override (gh-2059 AC7) — read by [_currentModel].
   int? _contextWindowOverride;
+
+  /// Custom request headers (gh-2425) — read by [_currentModel].
+  Map<String, String> _providerHeaders = const {};
 
   /// The compaction paths over the shared wiring (gh-2059): relief,
   /// settle gate, manual /compact, visible hooks. Built in [_init].
@@ -314,6 +322,7 @@ final class AgentHost implements UiHostBackend {
     _session = Session(storage);
     _provider = config.provider;
     _contextWindowOverride = config.contextWindow;
+    _providerHeaders = config.providerHeaders;
     _agent = Agent(
       model: _currentModel(),
       systemPrompt: _systemPrompt,
@@ -425,6 +434,7 @@ final class AgentHost implements UiHostBackend {
     // the rest of the provider swap (the runner re-reads its wiring, the
     // agent's cap reaches the loop guard on the next request).
     _contextWindowOverride = config.contextWindow;
+    _providerHeaders = config.providerHeaders;
     _compaction.contextWindowCap = config.contextWindowCap;
     _applyDapConfig(config.dap);
     applyToolVisibility(config.browserTools);
@@ -539,18 +549,20 @@ final class AgentHost implements UiHostBackend {
 
   Model _currentModel() {
     final provider = _provider;
+    final headers = _providerHeaders.isEmpty ? null : _providerHeaders;
     if (provider == null || provider.model.isEmpty) {
       // No provider configured yet: a fake model keeps the host inspectable;
       // sends run against the scripted provider and fail soft.
-      return modelForConfig((
-        baseUrl: '',
-        apiKey: '',
-        model: 'fake:not-configured',
-      ), contextWindowOverride: _contextWindowOverride);
+      return modelForConfig(
+        (baseUrl: '', apiKey: '', model: 'fake:not-configured'),
+        contextWindowOverride: _contextWindowOverride,
+        headers: headers,
+      );
     }
     return modelForConfig(
       provider,
       contextWindowOverride: _contextWindowOverride,
+      headers: headers,
     );
   }
 

@@ -88,6 +88,96 @@ async function waitForHubJoin(channel) {
   return { ok: false, error: 'hub channel join timed out' };
 }
 
+// -- Provider form merge (gh-2425) --------------------------------------------
+// `provider.save` used to overwrite `faProvider` with baseUrl/apiKey/model
+// only: every panel save silently dropped the stored `contextWindow` (gh-2059)
+// — the window reset to the shared fallback and 264k-token models hit
+// "Context window exhausted". The merge below is the SAME contract as the
+// Dart settings_put hook (browser_ext/dart/src/settings_merge.dart): a
+// non-empty incoming string wins, a blank/absent one keeps the stored value;
+// the int fields merge by presence, tolerate the string-encoded form (the
+// panel sends input values as strings) and accept positive ints only, like
+// the Dart reader; `headers` merges by presence over a sanitized map — a
+// non-empty incoming set replaces the stored one, a blank/absent one keeps
+// it (so a deleted header actually deletes).
+
+/** Positive int | positive-int numeric string → number; non-integral,
+ * non-positive, blank/garbled/other → null. Dart reader parity
+ * (browser_ext/dart/src/providers.dart): `storedIntSetting` int-parses
+ * decimal digits only and `windowSettingsFromStored` drops values <= 0 —
+ * storing a float/negative would silently save an override that never
+ * applies. */
+function storedInt(value) {
+  const t = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
+  if (!/^[+-]?\d+$/.test(t)) return null;
+  const n = Number(t);
+  return n > 0 ? n : null;
+}
+
+/** Custom-header map from `Name: value` lines (or an object). Names are
+ * lowercased (the wire layer is case-insensitive; one canonical case keeps
+ * the merge duplicate-free); colon-less lines, empty names and empty values
+ * are dropped — never thrown. */
+function sanitizeHeaders(raw) {
+  const headers = {};
+  if (typeof raw === 'string') {
+    for (const line of raw.split('\n')) {
+      const at = line.indexOf(':');
+      if (at <= 0) continue;
+      const name = line.slice(0, at).trim().toLowerCase();
+      const value = line.slice(at + 1).trim();
+      if (!name || !value) continue;
+      headers[name] = value;
+    }
+  } else if (raw && typeof raw === 'object') {
+    for (const [name, value] of Object.entries(raw)) {
+      const n = String(name).trim().toLowerCase();
+      const v = typeof value === 'string' ? value.trim() : '';
+      if (!n || !v) continue;
+      headers[n] = v;
+    }
+  }
+  return headers;
+}
+
+/** Merged `faProvider` map for a panel save: incoming fields that carry a
+ * value win, everything else keeps the stored one (a key the user did not
+ * retype, a window override, custom headers when the save omits the field
+ * or sends a blank one — none are wiped). A non-empty incoming header set
+ * REPLACES the stored one (merge-by-presence, same as the Dart hook): a
+ * header the user deleted stops riding requests, and a dropped
+ * `authorization` header does not leak to a new endpoint. baseUrl and
+ * model are trimmed (legacy panel behavior); the key keeps the legacy
+ * untrimmed storage (a stray space is data, and the Dart merge hook stores
+ * it untrimmed too). */
+function mergeProviderSave(stored, msg) {
+  const field = (name, keepRaw) => {
+    const incoming = String(msg?.[name] ?? '');
+    if (incoming.trim() !== '') return keepRaw ? incoming : incoming.trim();
+    const prev = String(stored?.[name] ?? '');
+    return keepRaw ? prev : prev.trim();
+  };
+  const intField = (name) => storedInt(msg?.[name]) ?? (stored ? storedInt(stored[name]) : null);
+  const contextWindow = intField('contextWindow');
+  const contextWindowCap = intField('contextWindowCap');
+  // Headers merge by presence over a sanitized map — the SAME contract as
+  // the Dart settings_put hook: a non-empty incoming set REPLACES the
+  // stored one (deletions stick), a blank/absent field keeps the stored
+  // set. An empty merged result omits the key entirely.
+  const incomingHeaders = sanitizeHeaders(msg?.headers);
+  const headers = Object.keys(incomingHeaders).length
+    ? incomingHeaders
+    : sanitizeHeaders(stored?.headers);
+  return {
+    baseUrl: field('baseUrl'),
+    apiKey: field('apiKey', true),
+    model: field('model'),
+    ...(contextWindow != null ? { contextWindow } : {}),
+    ...(contextWindowCap != null ? { contextWindowCap } : {}),
+    ...(Object.keys(headers).length ? { headers } : {}),
+  };
+}
+
 // Browser op table for the embedded agent (same ops as the wire protocol).
 globalThis.__faOps = (op, args) => dispatch(op, args || {});
 
@@ -175,17 +265,39 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         agent.decide(String(msg.id ?? ''), !!msg.allow);
         return { ok: true };
       case 'provider.save': {
-        const provider = {
-          baseUrl: String(msg.baseUrl ?? '').trim(),
-          apiKey: String(msg.apiKey ?? ''),
-          model: String(msg.model ?? '').trim(),
-        };
+        // Field-level merge against the stored map (gh-2425): the old
+        // 3-field overwrite dropped the stored `contextWindow` (gh-2059) and
+        // custom headers on every save — a 264k-token model reset to the
+        // shared fallback window and hit "Context window exhausted".
+        // mergeProviderSave keeps every field the save omits and carries the
+        // new `contextWindow` / `headers` inputs; same contract as the Dart
+        // settings_put merge (settings_merge.dart).
+        const storedProvider = (await store.get(['faProvider'])).faProvider;
+        const provider = mergeProviderSave(storedProvider && typeof storedProvider === 'object' ? storedProvider : null, msg);
         await store.set({ faProvider: provider, ...(msg.approvalMode ? { faApproval: msg.approvalMode } : {}) });
         // boot() rebuilds the whole config — pass the stored hub + approval
         // back so saving the provider never drops the hub connection.
         const cur = await store.get(['faApproval', 'faDap']);
         agent?.boot({ provider, approvalMode: cur.faApproval, dap: cur.faDap });
         return { ok: true };
+      }
+      case 'provider.get': {
+        // Panel prefill (gh-2425): every stored field EXCEPT the key — the
+        // key stays write-only in the UI ('UI holds no keys', the same
+        // principle as hub.bind.get). The key the user does not retype
+        // survives saves via mergeProviderSave.
+        const storedProvider = (await store.get(['faProvider'])).faProvider;
+        const p = storedProvider && typeof storedProvider === 'object' ? storedProvider : {};
+        return {
+          ok: true,
+          provider: {
+            baseUrl: String(p.baseUrl ?? ''),
+            model: String(p.model ?? ''),
+            contextWindow: storedInt(p.contextWindow) ?? 0,
+            contextWindowCap: storedInt(p.contextWindowCap) ?? 0,
+            headers: sanitizeHeaders(p.headers),
+          },
+        };
       }
       case 'hub.join': {
         // Composer DAP enrollment rides the worker's existing DapClient —
