@@ -79,6 +79,14 @@ block a release again.
   all-quarantined selection runs nothing. Guard:
   `test/ci_integration_mock_quarantine_guard_test.dart`.
 
+- fix(2433): runtime `/provider` / `/model` switches are no longer
+  silently ignored when a `modelOverrides` path entry matches the cwd —
+  `ModelRolesConfig` gains `runtimePinned` (runtime-only, never parsed
+  from or serialized to yaml) and a pinned role skips the path-override
+  step; a switch of the `default` chain also rebuilds the cached
+  wrappers of the roles that inherit it, so the switch takes effect on
+  the next run for compaction summaries and smol takeovers too
+  (gh-2433 review).
 - fix(2356): tag-run CANCELLED legs now reach ci-red-report (gh-2436 /
   v1.0.782 run 45830131519 class) — the hung binaries-macos-x64 leg
   concluded CANCELLED at timeout-minutes:45 and the failure-only arming
