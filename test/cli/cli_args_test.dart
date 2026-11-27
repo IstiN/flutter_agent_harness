@@ -767,6 +767,24 @@ void main() {
     });
   });
 
+  group('parseCliArgs --global (gh-2422)', () {
+    test('parses as a boolean boot flag', () {
+      final args = parseCliArgs(const ['--global']) as CliArgs;
+      expect(args.forceGlobalConfig, isTrue);
+    });
+
+    test('defaults to false', () {
+      final args = parseCliArgs(const []) as CliArgs;
+      expect(args.forceGlobalConfig, isFalse);
+    });
+
+    test('combines with a headless prompt', () {
+      final args = parseCliArgs(const ['--global', '-p', 'hi']) as CliArgs;
+      expect(args.forceGlobalConfig, isTrue);
+      expect(args.prompt, 'hi');
+    });
+  });
+
   group('parseCliArgs --no-format (issue #774)', () {
     test('parses as the raw-markdown switch', () {
       final args = parseCliArgs(const ['--no-format', '-p', 'hi']) as CliArgs;
