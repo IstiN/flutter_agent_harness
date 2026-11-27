@@ -85,13 +85,15 @@ void main() {
 
   group('fd pressure (issue #2415 — defer, warn once, flush on recover)', () {
     test('a failing table defers with ONE warning and flushes the whole '
-        'backlog in order on the first successful write', () async {
+        'backlog in ONE append on the first successful write', () async {
       final env = _FlakyEnv();
       final errors = <String>[];
       final log = ScheduledReceiptLog(
         env: env,
         path: () => '/x/receipts.jsonl',
         onError: errors.add,
+        retryBaseDelay: const Duration(milliseconds: 5),
+        retryMaxDelay: const Duration(milliseconds: 20),
       );
       env.failing = true;
       await log.append('wake_attempted', {'lane': 'a'});
@@ -103,7 +105,10 @@ void main() {
       // Nothing lost, nothing yet on disk.
       expect(await env.text(), isNull);
 
-      // Recover: the next append flushes the backlog plus itself.
+      // Recover: the next append flushes the backlog plus itself — the
+      // backlog rides ONE append call (fewer descriptors under pressure),
+      // lines in order.
+      env.appendCalls = 0;
       env.failing = false;
       await log.append('delivered', {'id': 'a'});
       final events = [
@@ -116,8 +121,69 @@ void main() {
         'wake_attempted',
         'delivered',
       ]);
-      // Still exactly one warning for the whole window.
-      expect(errors, hasLength(1));
+      // The recovery drain answered with a single backend append.
+      expect(env.appendCalls, 1);
+      // Warning (window opens) + recovery notice (window closes).
+      expect(errors, hasLength(2));
+      expect(errors.last, contains('receipt write recovered'));
+    });
+
+    test('an IDLE queue still flushes: the retry timer probes without '
+        'any further append (the scheduler may be quiet while the table '
+        'frees)', () async {
+      final env = _FlakyEnv();
+      final errors = <String>[];
+      final log = ScheduledReceiptLog(
+        env: env,
+        path: () => '/x/receipts.jsonl',
+        onError: errors.add,
+        retryBaseDelay: const Duration(milliseconds: 5),
+        retryMaxDelay: const Duration(milliseconds: 40),
+      );
+      env.failing = true;
+      await log.append('delivered', {'id': 'quiet-1'});
+      expect(await env.text(), isNull);
+      env.failing = false;
+      // No further append — the timer must land the backlog on its own.
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (await env.text() == null && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(await env.text(), isNotNull);
+      expect((await env.text())!.contains('quiet-1'), isTrue);
+      expect(errors, hasLength(2)); // deferral + recovery
+      // The idle probe keeps running the other way too: a SECOND quiet
+      // window flushes on its own (backoff re-armed, cap respected).
+      env.failing = true;
+      await log.append('delivered', {'id': 'quiet-2'});
+      env.failing = false;
+      final deadline2 = DateTime.now().add(const Duration(seconds: 5));
+      while (!(await env.text())!.contains('quiet-2') &&
+          DateTime.now().isBefore(deadline2)) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect((await env.text())!.contains('quiet-2'), isTrue);
+    });
+
+    test('dispose() cancels the idle probe — a disposed trail neither '
+        'flushes nor holds the event loop; idempotent', () async {
+      final env = _FlakyEnv();
+      final log = ScheduledReceiptLog(
+        env: env,
+        path: () => '/x/receipts.jsonl',
+        retryBaseDelay: const Duration(milliseconds: 5),
+        retryMaxDelay: const Duration(milliseconds: 20),
+      );
+      env.failing = true;
+      await log.append('delivered', {'id': 'never-lands'});
+      log.dispose();
+      log.dispose(); // idempotent
+      env.failing = false;
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      // The deferred line stays in memory — the documented process-exit
+      // loss window — and no timer fired after dispose.
+      expect(await env.text(), isNull);
+      expect(log.pendingCount, 1);
     });
 
     test('a new pressure window after recovery warns again', () async {
@@ -127,18 +193,24 @@ void main() {
         env: env,
         path: () => '/x/receipts.jsonl',
         onError: errors.add,
+        retryBaseDelay: const Duration(milliseconds: 5),
+        retryMaxDelay: const Duration(milliseconds: 20),
       );
       env.failing = true;
       await log.append('wake_attempted', {'lane': 'a'});
       expect(errors, hasLength(1));
       env.failing = false;
       await log.append('delivered', {'id': 'a'});
-      expect(errors, hasLength(1));
+      // Window closed: deferral warning + recovery notice.
+      expect(errors, hasLength(2));
       env.failing = true;
       await log.append('wake_refused', {'lane': 'b'});
-      expect(errors, hasLength(2));
-      expect(errors.last, contains('receipt write deferred'));
-      // The refused line stays pending; the delivered one landed.
+      expect(errors, hasLength(3));
+      expect(
+        errors.where((e) => e.contains('receipt write deferred')),
+        hasLength(2),
+      );
+      // The refused line stays pending; the delivered ones landed.
       expect((await env.text())!.contains('delivered'), isTrue);
       expect((await env.text())!.contains('wake_refused'), isFalse);
     });
@@ -170,6 +242,23 @@ void main() {
         path: () => '/sessions/--work--/messages/_scheduled/receipts.jsonl',
       );
       expect(await log.deliveredIds(), isEmpty);
+    });
+
+    test('pending delivered receipts count too — a deferred persistence '
+        'never hides a fired timer (issue #2384 AC1)', () async {
+      final env = _FlakyEnv();
+      final log = ScheduledReceiptLog(
+        env: env,
+        path: () => '/x/receipts.jsonl',
+        retryBaseDelay: const Duration(milliseconds: 5),
+        retryMaxDelay: const Duration(milliseconds: 20),
+      );
+      env.failing = true;
+      await log.append('scheduled', {'id': 'p1'});
+      await log.append('delivered', {'id': 'p1'});
+      // Nothing landed on disk, but the delivery DID happen — the
+      // obligations-ledger reconcile must see it, not age it out.
+      expect(await log.deliveredIds(), {'p1'});
     });
   });
 }
@@ -212,6 +301,10 @@ final class _FlakyEnv implements ExecutionEnv {
 
   bool failing = false;
 
+  /// appendFile calls that reached the backend (the single-append flush
+  /// assertion).
+  int appendCalls = 0;
+
   /// The trail text as the backend holds it, or null when nothing was
   /// ever written.
   Future<String?> text() =>
@@ -219,6 +312,7 @@ final class _FlakyEnv implements ExecutionEnv {
 
   @override
   Future<Result<void, FileError>> appendFile(String path, String content) {
+    appendCalls++;
     if (failing) {
       return Future.value(
         Err(

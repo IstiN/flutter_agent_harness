@@ -51,7 +51,7 @@ int? _lowerSoftLimit(int soft) {
 void main() {
   group('fdLimits', () {
     test('reports consistent soft/hard limits on POSIX', () {
-      if (Platform.isWindows) {
+      if (!Platform.isMacOS && !Platform.isLinux) {
         expect(fdLimits(), isNull);
         return;
       }
@@ -66,7 +66,7 @@ void main() {
 
   group('raiseFdLimitOnce', () {
     test('is a sane no-op when the soft limit already covers the target', () {
-      if (Platform.isWindows) {
+      if (!Platform.isMacOS && !Platform.isLinux) {
         expect(raiseFdLimitOnce(), isNull);
         return;
       }
@@ -81,7 +81,7 @@ void main() {
 
     test('raises a launchd-default 256 soft limit to the target '
         '(the issue #2415 scenario, real syscall)', () {
-      if (Platform.isWindows) return;
+      if (!Platform.isMacOS && !Platform.isLinux) return;
       final original = fdLimits()!.soft;
       if (_lowerSoftLimit(256) == null) {
         return; // host refuses limit changes — the raise stays untestable

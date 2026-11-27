@@ -47,6 +47,5 @@ final class ProductStorageCoordinator {
     _active = null;
   }
 
-  bool permits(CloudIdentity identity) =>
-      _active?.canWriteFor(identity) ?? false;
+  bool permits(CloudIdentity identity) => _active?.canWriteFor(identity) ?? false;
 }

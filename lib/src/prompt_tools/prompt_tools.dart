@@ -312,9 +312,7 @@ Message _transformAssistantMessage(AssistantMessage message) {
         }
       case ToolCall():
         content.add(TextContent(text: _serializeToolCall(block)));
-      case ThinkingContent() ||
-          ImageContent() ||
-          AudioContent() ||
+      case ThinkingContent() || ImageContent() || AudioContent() ||
           VideoContent():
         // Reasoning is streaming scratch; images/audio/video are invalid
         // in assistant messages. Drop them all.

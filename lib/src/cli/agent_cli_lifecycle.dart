@@ -85,6 +85,14 @@ extension AgentCliLifecycle on AgentCli {
     unawaited(_subagentBoardSub?.cancel());
     _subagentBoardSub = null;
     _subagentBoard.dispose();
+    // issue #2415: the deferred-receipt retry timer must never hold the
+    // event loop past exit. Untouched when no boot reached the trail.
+    try {
+      _scheduledReceipts.dispose();
+    } on Error {
+      // The `late final` trail was never initialized (no boot reached the
+      // wake path) — nothing to release.
+    }
     await releasePowerAssertions();
     final exitSpec = _cubeEnv.activeSpec;
     if (exitSpec != null) {

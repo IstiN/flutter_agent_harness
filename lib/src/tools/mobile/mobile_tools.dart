@@ -349,7 +349,8 @@ AgentTool _swipeTool(MobileAutomationBackend automation) => AgentTool(
       fromY: arguments['from_y'] as int,
       toX: arguments['to_x'] as int,
       toY: arguments['to_y'] as int,
-      durationMs: (arguments['duration_ms'] as int?) ?? 300,
+      durationMs:
+          (arguments['duration_ms'] as int?) ?? 300,
     );
     return ToolExecutionResult.text(
       'swiped (${arguments['from_x']},${arguments['from_y']}) → '

@@ -38,9 +38,11 @@ typedef _RLimitOpC = ffi.Int32 Function(ffi.Int32, ffi.Pointer<_RLimit>);
 typedef _RLimitOpDart = int Function(int, ffi.Pointer<_RLimit>);
 
 /// The current (soft, hard) fd limits; null when unsupported or the libc
-/// lookup fails (never throws — callers are best-effort boot paths).
+/// lookup fails (never throws — callers are best-effort boot paths). The
+/// gate is (macOS || Linux) — an exotic POSIX would answer the WRONG
+/// RLIMIT_NOFILE constant (review round 1).
 ({int soft, int hard})? fdLimits() {
-  if (Platform.isWindows) return null;
+  if (!Platform.isMacOS && !Platform.isLinux) return null;
   try {
     final libc = ffi.DynamicLibrary.process();
     final getrlimit = libc.lookupFunction<_RLimitOpC, _RLimitOpDart>(
@@ -72,6 +74,9 @@ bool _raisedOnce = false;
       : limits.hard;
   final wanted = hard < target ? hard : target;
   if (_raisedOnce || limits.soft >= wanted) return limits;
+  // Armed BEFORE the attempt, by design: a setrlimit refusal is a host
+  // property (sandbox/hardened profile), not a transient condition —
+  // retrying on every later call would burn a syscall per bash spawn.
   _raisedOnce = true;
   try {
     final libc = ffi.DynamicLibrary.process();

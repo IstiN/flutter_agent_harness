@@ -335,7 +335,10 @@ final class MemoryController {
       );
       final plain = scope == 'user'
           ? (_userPlainStore ??= KBMemoryStore(
-              _userStorage ??= ExecutionEnvKbStorage(_env, _resolvedUserPath()),
+              _userStorage ??= ExecutionEnvKbStorage(
+                _env,
+                _resolvedUserPath(),
+              ),
             ))
           : (_projectPlainStore ??= KBMemoryStore(
               _projectStorage ??= ExecutionEnvKbStorage(
@@ -446,9 +449,7 @@ final class MemoryController {
       return;
     } on Object catch (error) {
       // LLM-backed search unusable — fall through to keyword-only search.
-      onDegrade?.call(
-        'memory_search: $scope scope degraded to keywords: $error',
-      );
+      onDegrade?.call('memory_search: $scope scope degraded to keywords: $error');
     }
     try {
       final found = await engine.searchByKeywords(query);

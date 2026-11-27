@@ -134,9 +134,7 @@ ContextPressureDecision assessContextPressure({
     pressureTokens: pressure,
     estimateTriggered: shouldCompact(pressure, contextWindow, settings),
     observedTriggered:
-        observed != null &&
-        observed > 0 &&
-        headroom >= 0 &&
+        observed != null && observed > 0 && headroom >= 0 &&
         observed > headroom,
   );
 }

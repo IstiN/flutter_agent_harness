@@ -76,11 +76,7 @@ final class CubeFsGuard implements FileSystem {
   /// delegate cwd first.
   ({CubePathAccess access, String? resolved}) _accessFor(String path) {
     final resolved = path.startsWith('/') ? path : '${_delegate.cwd}/$path';
-    return _policy.accessForResolved(
-      resolved,
-      homeDir: _homeDir,
-      probe: _pathProbe,
-    );
+    return _policy.accessForResolved(resolved, homeDir: _homeDir, probe: _pathProbe);
   }
 
   /// The guard-prefixed denial message for [path] at [access].
@@ -198,10 +194,7 @@ final class CubeFsGuard implements FileSystem {
   (FileError?, String) _writeCheck(String path) {
     final (:access, :resolved) = _accessFor(path);
     if (access != CubePathAccess.readWrite) {
-      return (
-        FileError(FileErrorCode.permissionDenied, _message(path, access)),
-        path,
-      );
+      return (FileError(FileErrorCode.permissionDenied, _message(path, access)), path);
     }
     return (null, resolved ?? path);
   }
@@ -213,10 +206,7 @@ final class CubeFsGuard implements FileSystem {
   (FileError?, String) _readCheck(String path) {
     final (:access, :resolved) = _accessFor(path);
     if (access == CubePathAccess.deny) {
-      return (
-        FileError(FileErrorCode.notFound, _deniedReadMessage(path)),
-        path,
-      );
+      return (FileError(FileErrorCode.notFound, _deniedReadMessage(path)), path);
     }
     return (null, resolved ?? path);
   }

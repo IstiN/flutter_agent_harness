@@ -172,7 +172,9 @@ EditModePlan resolveEditMode({
     final mixed = oldText != null || newText != null;
     return EditRunPatch(
       parsed: parse.patch!,
-      notice: mixed ? bothModesNotice(winner: 'the hashline patch') : null,
+      notice: mixed
+          ? bothModesNotice(winner: 'the hashline patch')
+          : null,
     );
   }
   if (exactComplete) {
@@ -216,5 +218,8 @@ String? readWindowCoercionNotice({
   if (!hasSelector || (offset == null && limit == null)) return null;
   return 'Note: offset/limit cannot be combined with a path selector; '
       'the harness honored the selector and IGNORED '
-      '${[if (offset != null) 'offset', if (limit != null) 'limit'].join(' and ')}. $readRemedyExample';
+      '${[
+        if (offset != null) 'offset',
+        if (limit != null) 'limit',
+      ].join(' and ')}. $readRemedyExample';
 }
