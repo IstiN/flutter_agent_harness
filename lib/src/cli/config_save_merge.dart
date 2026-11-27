@@ -13,15 +13,22 @@ part of 'cli_config.dart';
 
 /// The project-capable sections a save may target into
 /// `<projectDir>/.fah/config.yaml`: every section the boot actually reads
-/// from there (the `loadProject*` loaders in this library — each wins over
-/// the user file). `agent` is NOT in the set: the project file participates
-/// in only its `contextWindowCap` key, and a whole-section write would drag
-/// user-file-only members into the repo-traveling file (nothing in
-/// `persistConfig` mutates `agent:` either).
+/// from there WHOLESALE (the `loadProject*` loaders in this library —
+/// each wins over the user file). `agent` is NOT in the set: the project
+/// file participates in only its `contextWindowCap` key, and a
+/// whole-section write would drag user-file-only members into the
+/// repo-traveling file (nothing in `persistConfig` mutates `agent:`).
+/// `tools` is NOT in the set either (gh-2422 review): its project scope
+/// is consumed live and stacked PER KEY (deepest-wins, `loadProjectToolsConfig`),
+/// so a global-scope toggle takes effect from the global file for every
+/// key the project file does not name — persisting the whole live global
+/// view there would shadow the global block forever and make a
+/// machine-local toggle travel via git. The sanctioned project-scope
+/// writer is the explicit `/tools <id> project` flow
+/// (`_mergeToolsIntoFile`, per-key surgical), not `persistConfig`.
 const _projectSaveSections = <String>{
   'memory',
   'cube',
-  'tools',
   'spills',
   'compaction',
   'trajectory',
@@ -171,6 +178,17 @@ String _replaceTopLevelBlock(String text, String key, String block) {
 /// global write IS the write there, and nesting it in the same serialized
 /// chain would deadlock. Returns an empty set without a [base]: the
 /// legacy call shape has no notion of "this process changed it".
+///
+/// The targets re-derive from the text read INSIDE the serialized chain
+/// (the global path re-reads and merges inside its chain too): a write
+/// another process landed while this op queued decides, not a pre-chain
+/// snapshot. A content-identical target set skips the write (the gh-1572
+/// no-op rule: no rename, no mtime churn on a git-tracked file) but still
+/// reports the sections as taken over — the shadowing is already on disk.
+/// An unwritable/unreadable destination degrades to the global file with
+/// a stderr warning (the `_mergeToolsIntoFile` print-and-continue
+/// contract) instead of throwing out of `persistConfig` — one hostile
+/// workspace must not brick session config persistence.
 Future<Set<String>> _saveChangedProjectSections({
   required String projectDir,
   required CliConfig config,
@@ -181,29 +199,42 @@ Future<Set<String>> _saveChangedProjectSections({
   final file = File('$projectDir/.fah/config.yaml');
   if (!file.existsSync()) return const {};
   if (_samePath(file.path, globalConfigPath)) return const {};
-  final doc = _parseYamlMapOrNull(file.readAsStringSync());
-  if (doc == null) return const {};
   final newBlocks = _topLevelYamlBlocks(config.toYaml());
   final baseBlocks = _topLevelYamlBlocks(base.toYaml());
-  final targets = _projectTargets(doc, baseBlocks, newBlocks);
-  if (targets.isEmpty) return const {};
-  await _serializedConfigWrite(file.path, () async {
-    var text = file.existsSync() ? file.readAsStringSync() : '';
-    for (final key in targets) {
-      text = _replaceTopLevelBlock(text, key, newBlocks[key]!);
-    }
-    if (!text.endsWith('\n')) text = '$text\n';
-    // Never persist a project file the next boot would reject: the edited
-    // document must parse and every carried section must pass the real
-    // strict parsers (same refusal rule as the global merge step).
-    final edited = _parseYamlMapOrNull(text);
-    if (edited == null) {
-      throw ConfigException('refusing to write unparseable ${file.path}');
-    }
-    CliConfig.fromYaml(edited);
-    await _atomicConfigWrite(file, text);
-  });
-  return targets;
+  try {
+    return await _serializedConfigWrite<Set<String>>(file.path, () async {
+      var text = file.existsSync() ? file.readAsStringSync() : '';
+      // Targets from the FRESH text — the parse that guards the
+      // destination runs here too, on what the chain actually sees.
+      final doc = _parseYamlMapOrNull(text);
+      if (doc == null) return const {};
+      final targets = _projectTargets(doc, baseBlocks, newBlocks);
+      if (targets.isEmpty) return const {};
+      final original = text.endsWith('\n') ? text : '$text\n';
+      for (final key in targets) {
+        text = _replaceTopLevelBlock(text, key, newBlocks[key]!);
+      }
+      if (!text.endsWith('\n')) text = '$text\n';
+      if (text == original) return targets;
+      // Never persist a project file the next boot would reject: the
+      // edited document must parse and every carried section must pass
+      // the real strict parsers (same refusal rule as the global merge
+      // step).
+      final edited = _parseYamlMapOrNull(text);
+      if (edited == null) {
+        throw ConfigException('refusing to write unparseable ${file.path}');
+      }
+      CliConfig.fromYaml(edited);
+      await _atomicConfigWrite(file, text);
+      return targets;
+    });
+  } on FileSystemException catch (error) {
+    stderr.writeln(
+      'warning: cannot write project config ${file.path} — saving to the '
+      'global file instead ($error)',
+    );
+    return const {};
+  }
 }
 
 /// The project-capable keys that live in [doc], changed between the

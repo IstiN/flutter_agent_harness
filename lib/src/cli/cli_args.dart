@@ -308,9 +308,12 @@ final class CliArgs extends CliArgsResult {
 
   /// `--global` (gh-2422): force every session config save onto the
   /// global `~/.fah/config.yaml` — even the project-capable sections
-  /// (memory/cube/tools/…) the workspace's `.fah/config.yaml` carries,
-  /// which by default are written THERE (the scope that wins at boot).
-  /// For workspaces whose project file is not this machine's to edit.
+  /// (memory/cube/spills/compaction/trajectory/logging) the workspace's
+  /// `.fah/config.yaml` carries, which by default are written THERE (the
+  /// scope that wins at boot). For workspaces whose project file is not
+  /// this machine's to edit. (`tools:` is never project-targeted — its
+  /// project scope stacks per key live, so global toggles always land in
+  /// the global file.)
   final bool forceGlobalConfig;
 
   /// `--stream-thinking` (gh-1198): the opt-in live thinking stream for

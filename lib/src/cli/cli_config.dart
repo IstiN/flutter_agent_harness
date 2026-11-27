@@ -2282,10 +2282,14 @@ int _configTmpCounter = 0;
 ///
 /// Project targeting on [projectDir]: a changed project-capable section
 /// ([_projectSaveSections]) that LIVES in `<projectDir>/.fah/config.yaml`
-/// is written THERE — the project scope wins at boot, so that is where an
-/// edit must land — and the global file keeps its bytes. [forceGlobal]
-/// (the `--global` boot flag) skips the targeting and forces the global
-/// file for every section.
+/// is written THERE — the project scope wins at boot wholesale, so that
+/// is where an edit must land — and the global file keeps its bytes.
+/// `tools:` is never targeted (its project scope is per-key stacked live;
+/// the global view takes effect from the global file for every key the
+/// project does not name). [forceGlobal] (the `--global` boot flag) skips
+/// the targeting and forces the global file for every section. An
+/// unwritable/unreadable project destination degrades to the global file
+/// with a warning — the save never fails on workspace permissions.
 ///
 /// An unparseable on-disk file makes the save REFUSE with a loud
 /// [ConfigException] instead of clobbering the file with defaults (E3).
