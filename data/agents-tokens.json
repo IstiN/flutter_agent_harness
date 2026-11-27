@@ -1996,6 +1996,17 @@
       "requests": 133,
       "source": "",
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-11-27T15:27:44Z",
+      "prompt": 201009,
+      "completion": 7219,
+      "total": 208228,
+      "cacheRead": 2481152,
+      "requests": 30,
+      "source": "",
+      "model": "glm-5.3-flash"
     }
   ],
   "pr-2445": [
