@@ -91,6 +91,11 @@ enum FileErrorCode {
   /// The addressed path does not exist.
   notFound,
 
+  /// The target path already exists (EEXIST / ERROR_ALREADY_EXISTS) —
+  /// occupancy, not failure: exclusive-create locks read this as "the
+  /// rival holds it" (issue #2266, #2355).
+  exists,
+
   /// The operation was denied by the platform.
   permissionDenied,
 
