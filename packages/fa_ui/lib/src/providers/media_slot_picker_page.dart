@@ -43,6 +43,32 @@ final class MediaSlotEditorResult {
 /// new one. Endpoint providers continue to [MediaSlotModelPage]; a non-null
 /// result from it pops the picker with the same result, so the settings
 /// section's one push handles the whole flow.
+/// The AIN-only catalog restriction scope (gh-2391 review r3): a
+/// host-only branded build wraps its shell ONCE and every
+/// [MediaSlotProviderPickerPage] resolves the restriction itself — no
+/// construction site can forget it. The page's explicit
+/// `restrictToProviderId` argument still wins (tests, previews).
+class MediaSlotPickerCatalogScope extends InheritedWidget {
+  const MediaSlotPickerCatalogScope({
+    super.key,
+    required this.restrictToProviderId,
+    required super.child,
+  });
+
+  /// The only registry row id pickers may list, or null for the full
+  /// stock catalog.
+  final String? restrictToProviderId;
+
+  /// The effective restriction at [context]; null when unrestricted.
+  static String? maybeOf(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<MediaSlotPickerCatalogScope>()
+      ?.restrictToProviderId;
+
+  @override
+  bool updateShouldNotify(MediaSlotPickerCatalogScope oldWidget) =>
+      oldWidget.restrictToProviderId != restrictToProviderId;
+}
+
 class MediaSlotProviderPickerPage extends StatelessWidget {
   const MediaSlotProviderPickerPage({
     super.key,
@@ -56,6 +82,7 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
     this.allowMainConnection = true,
     this.onDeviceRoutes = const [],
     this.addProviderPage,
+    this.restrictToProviderId,
   });
 
   /// The media slot being configured ([MediaSlot] name); null for the
@@ -103,11 +130,23 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
   /// (issue #975: every add-provider entry opens the ONE settings flow).
   final WidgetBuilder? addProviderPage;
 
+  /// The host-only catalog restriction (gh-2391 addendum 5): set to a
+  /// provider id and the picker shows ONLY that registry row — no hosted
+  /// presets, no on-device routes, no Add-provider row. The branded
+  /// build's model/role/slot flows never advertise third parties.
+  final String? restrictToProviderId;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final strings = FaUiStrings.of(context);
     final registry = this.registry ?? ProviderRegistry.inMemory();
+    // gh-2391 review r3: the scope is the authoritative source — an
+    // unargumented page under a host-only shell restricts itself, so the
+    // five forgotten construction sites cannot leak the third-party zoo.
+    final restrictToProviderId =
+        this.restrictToProviderId ??
+        MediaSlotPickerCatalogScope.maybeOf(context);
     debugPrint(
       '[fah][picker] $title: '
       'registry=${registry.providers.length} providers='
@@ -191,13 +230,17 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
                 // Dedupe: a saved custom provider on a hosted preset's
                 // endpoint covers it (the CodeMie/ChatGPT/OpenRouter flows
                 // register their instance there) — never show both.
-                for (final preset in hostedProviderPresets.where(
-                  (preset) =>
-                      !registry.providers.any(
-                        (custom) => custom.baseUrl == preset.baseUrl,
-                      ) &&
-                      (!connectedOnly || hostedProviderConnected(preset)),
-                ))
+                for (final preset
+                    in (restrictToProviderId == null
+                        ? hostedProviderPresets.where(
+                            (preset) =>
+                                !registry.providers.any(
+                                  (custom) => custom.baseUrl == preset.baseUrl,
+                                ) &&
+                                (!connectedOnly ||
+                                    hostedProviderConnected(preset)),
+                          )
+                        : const <ProviderPreset>[]))
                   _providerTile(
                     context,
                     theme,
@@ -206,7 +249,11 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
                     checked: selected == preset,
                     onTap: () => _openModelPage(context, registry, preset),
                   ),
-                for (final provider in registry.providers)
+                for (final provider in registry.providers.where(
+                  (provider) =>
+                      restrictToProviderId == null ||
+                      provider.id == restrictToProviderId,
+                ))
                   _providerTile(
                     context,
                     theme,
@@ -215,22 +262,25 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
                     checked: selected == provider,
                     onTap: () => _openModelPage(context, registry, provider),
                   ),
-                for (final route in onDeviceRoutes)
+                if (restrictToProviderId == null)
+                  for (final route in onDeviceRoutes)
+                    _providerTile(
+                      context,
+                      theme,
+                      label: route.label,
+                      leading: Icons.memory_outlined,
+                      onTap: () => _openOnDevice(context, route),
+                    ),
+                if (restrictToProviderId == null) ...[
+                  const Divider(),
                   _providerTile(
                     context,
                     theme,
-                    label: route.label,
-                    leading: Icons.memory_outlined,
-                    onTap: () => _openOnDevice(context, route),
+                    label: strings.settingsAddProvider,
+                    leading: Icons.add,
+                    onTap: () => _addProvider(context, registry),
                   ),
-                const Divider(),
-                _providerTile(
-                  context,
-                  theme,
-                  label: strings.settingsAddProvider,
-                  leading: Icons.add,
-                  onTap: () => _addProvider(context, registry),
-                ),
+                ],
               ],
             );
           },

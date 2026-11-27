@@ -2,6 +2,10 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'package:fa/analytics/product_analytics_bridge.dart';
+import 'package:fa/boot/host_session_bridge.dart';
+import 'package:fa/boot/boot_config_codec.dart';
+import 'package:fa/boot/host_connection_resolver.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/main.dart';
 import 'package:fa/network/network_mode.dart';
@@ -13,6 +17,8 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa/services/media_models_store.dart';
+import 'package:fa/services/task_models_store.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa_ui/fa_ui.dart' show FaDesignTokens, ProviderEditorPage;
@@ -38,6 +44,7 @@ Future<void> _pumpOnboarding(
   NetworkModeController? networkMode,
   Locale? locale,
   FaProductConfig? productConfig,
+  HostSessionBridge? hostBridge,
 }) {
   return tester.pumpWidget(
     MaterialApp(
@@ -55,6 +62,7 @@ Future<void> _pumpOnboarding(
           lastConnectionStore: lastConnectionStore,
           networkMode: networkMode,
           productConfig: productConfig ?? FaProductConfig.stock,
+          hostBridge: hostBridge,
         ),
       ),
     ),
@@ -981,6 +989,158 @@ void main() {
     });
 
     testWidgets(
+      'boot tracks agent_session_started {source: host} (gh-2391 addendum)',
+      (tester) async {
+        final recorded = <List<Object?>>[];
+        ProductAnalyticsBridge.instance.useSinkForTest((event, params) {
+          recorded.add([event, params]);
+        });
+        addTearDown(
+          ProductAnalyticsBridge.instance.restorePlatformSinkResolver,
+        );
+        final hostSession = HostSessionState(
+          provider: const CustomProvider(
+            id: 'host',
+            name: 'AIN',
+            baseUrl: 'https://api.ain.example/v1',
+            modelId: 'ain/aiin_flash',
+            provenance: 'host',
+            kind: 'host-session',
+          ),
+          bridgedKey: 'bridged-key',
+          connection: _hostConnectionConfig(),
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildFahTheme(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: BootstrapScreen(
+              env: MemoryExecutionEnv(),
+              lastConnectionStore: LastConnectionStore.inMemory(),
+              onboardingStore: OnboardingStore.inMemory(),
+              sessionKeysStore: SessionKeysStore.inMemory(),
+              hostSession: hostSession,
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(recorded, [
+          [
+            'agent_session_started',
+            {'source': 'host'},
+          ],
+        ]);
+      },
+    );
+
+    testWidgets('stock first-launch onboarding tracks agent_session_started '
+        '{source: stock}', (tester) async {
+      final recorded = <List<Object?>>[];
+      ProductAnalyticsBridge.instance.useSinkForTest((event, params) {
+        recorded.add([event, params]);
+      });
+      addTearDown(ProductAnalyticsBridge.instance.restorePlatformSinkResolver);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: BootstrapScreen(
+            env: MemoryExecutionEnv(),
+            lastConnectionStore: LastConnectionStore.inMemory(),
+            onboardingStore: OnboardingStore.inMemory(),
+            sessionKeysStore: SessionKeysStore.inMemory(),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byType(OnboardingScreen), findsOneWidget);
+      expect(recorded, [
+        [
+          'agent_session_started',
+          {'source': 'stock'},
+        ],
+      ]);
+    });
+
+    testWidgets('a resolved host session boots straight to the workspace — '
+        'no provider gate, no onboarding (issue #2391)', (tester) async {
+      final hostSession = HostSessionState(
+        provider: const CustomProvider(
+          id: 'host',
+          name: 'AIN',
+          baseUrl: 'https://api.ain.example/v1',
+          modelId: 'ain/aiin_flash',
+          provenance: 'host',
+          kind: 'host-session',
+        ),
+        bridgedKey: 'bridged-key',
+        connection: _hostConnectionConfig(),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: BootstrapScreen(
+            env: MemoryExecutionEnv(),
+            lastConnectionStore: LastConnectionStore.inMemory(),
+            onboardingStore: OnboardingStore.inMemory(),
+            sessionKeysStore: SessionKeysStore.inMemory(),
+            hostSession: hostSession,
+          ),
+        ),
+      );
+      await tester.pump();
+      // The provider gate never appears: no onboarding, no setup form —
+      // the boot goes straight to the restore spinner and the home.
+      expect(find.byType(OnboardingScreen), findsNothing);
+      expect(find.byType(SetupScreen), findsNothing);
+      expect(find.byType(FaBrandTile), findsOneWidget);
+    });
+
+    testWidgets('a persisted host last-connection restores with the freshly '
+        'bridged key (issue #2391)', (tester) async {
+      final hostSession = HostSessionState(
+        provider: const CustomProvider(
+          id: 'host',
+          name: 'AIN',
+          baseUrl: 'https://api.ain.example/v1',
+          modelId: 'ain/aiin_flash',
+          provenance: 'host',
+          kind: 'host-session',
+        ),
+        bridgedKey: 'bridged-key',
+        connection: _hostConnectionConfig(),
+      );
+      // The persisted connection names the user's chosen host model;
+      // the key never persists, so this boot re-attaches the bridged one.
+      final store = LastConnectionStore.inMemory();
+      await store.save(
+        const LastConnection(
+          providerKind: 'openai-completions',
+          modelId: 'aiin/aiin_pro',
+          baseUrl: 'https://api.ain.example/v1',
+        ),
+      );
+      final registry = ProviderRegistry.inMemory();
+      await registry.upsert(hostSession.provider);
+      final config = bootConfigWithHostSession(
+        restorable: restorableBootConfig(
+          connection: store.connection,
+          registry: registry,
+          sessionKeysStore: null,
+        ),
+        hostSession: hostSession,
+      );
+      expect(config, isNotNull);
+      expect(config!.modelId, 'aiin/aiin_pro');
+      expect(config.baseUrl, 'https://api.ain.example/v1');
+      expect(config.apiKey, 'bridged-key');
+    });
+
+    testWidgets(
       'seen onboarding + ask-mode skills consent shows the one-time dialog',
       (tester) async {
         await _onDesktop(() async {
@@ -1141,4 +1301,159 @@ void main() {
       },
     );
   });
+  group('host-only provider catalog (gh-2391 addendum 4)', () {
+    testWidgets('the provider step shows the single host sign-in CTA and '
+        'no third-party catalog', (tester) async {
+      await _pumpOnboarding(
+        tester,
+        initialPage: 1,
+        registry: ProviderRegistry.inMemory(),
+        productConfig: _hostOnlyProfile(),
+      );
+      await tester.pumpAndSettle();
+      // The CTA (headline + button) and NO third-party catalog surface.
+      expect(find.text('Sign in to AIIN Agent'), findsWidgets);
+      expect(
+        find.textContaining('Third-party providers are not part'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('returning from the cabinet publishes the bridge key and '
+        'completes onboarding into the boot (tester drives lifecycle)', (
+      tester,
+    ) async {
+      final bridge = _MutableHostBridge();
+      final onboardingStore = OnboardingStore.inMemory();
+      var finished = false;
+      final registry = ProviderRegistry.inMemory();
+      await _pumpOnboarding(
+        tester,
+        registry: registry,
+        onboardingStore: onboardingStore,
+        onFinished: ({required skipped}) => finished = true,
+        productConfig: _hostOnlyProfile(),
+        hostBridge: bridge,
+      );
+      await tester.pumpAndSettle();
+      expect(onboardingStore.seen, isFalse);
+
+      // The host page publishes the scoped key while the user is away.
+      bridge.value = 'fresh-bridged-key';
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+
+      expect(finished, isTrue, reason: 'the provider step completed');
+      expect(onboardingStore.seen, isTrue);
+    });
+
+    testWidgets('the return path: a bridge key mid-onboarding boots the '
+        'host workspace without any gate', (tester) async {
+      final bridge = _MutableHostBridge();
+      final onboardingStore = OnboardingStore.inMemory();
+      final registry = ProviderRegistry.inMemory();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: BootstrapScreen(
+            env: MemoryExecutionEnv(),
+            registry: registry,
+            onboardingStore: onboardingStore,
+            sessionKeysStore: SessionKeysStore.inMemory(),
+            productConfig: _hostOnlyProfile(),
+            hostBridge: bridge,
+            taskModelsStore: TaskModelsStore.inMemory(),
+            mediaModelsStore: MediaModelsStore.inMemory(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(OnboardingScreen), findsOneWidget);
+
+      // The visitor signs in at the host cabinet; the host page publishes
+      // the scoped key; the shell's resume re-check completes onboarding.
+      bridge.value = 'returned-bridged-key';
+      // The screen state is private; the hook dispatches dynamically.
+      (tester.state(find.byType(OnboardingScreen)) as dynamic)
+          .recheckHostBridgeForTest();
+      // The resolution + boot re-entry are async — pump until they land,
+      // then past the home pushReplacement's page transition (the outgoing
+      // bootstrap route stays in the tree while it animates).
+      for (var i = 0; i < 10 && registry.providers.isEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
+
+      // No provider form, no setup screen: onboarding completed and the
+      // host entry + defaults provisioned (the workspace boots next).
+      expect(find.byType(OnboardingScreen), findsNothing);
+      expect(find.byType(SetupScreen), findsNothing);
+      expect(onboardingStore.seen, isTrue, reason: 'onboarding completed');
+      expect(registry.keyFor('host'), 'returned-bridged-key');
+    });
+
+    testWidgets('stock onboarding keeps the provider catalog (REG)', (
+      tester,
+    ) async {
+      await _pumpOnboarding(
+        tester,
+        initialPage: 1,
+        registry: ProviderRegistry.inMemory(),
+        productConfig: FaProductConfig.fromJson({
+          'productId': 'ain',
+          'displayName': 'AIIN Agent',
+          'apiEndpoint': 'https://api.ain.example/v1',
+          'featureFlags': <String>[],
+          'hostConnection': {
+            'baseUrl': 'https://api.ain.example/v1',
+            'sessionBridge': {
+              'storage': 'localStorage',
+              'key': 'aiin_agent_session',
+            },
+            'defaultModel': 'ain/aiin_flash',
+          },
+        }),
+      );
+      await tester.pumpAndSettle();
+      // No catalog policy: the stock provider step (its localized
+      // subtitle), not the sign-in CTA.
+      expect(find.text('Sign in to AIIN Agent'), findsNothing);
+      expect(find.textContaining('Connect a provider'), findsOneWidget);
+    });
+  });
 }
+
+/// A mutable host bridge: starts empty, tests flip it when the (simulated)
+/// cabinet sign-in publishes the scoped key.
+class _MutableHostBridge implements HostSessionBridge {
+  String? value;
+  @override
+  String? read(String key) => value;
+}
+
+FaProductConfig _hostOnlyProfile() {
+  final section = _hostConnectionConfig();
+  return FaProductConfig(
+    productId: 'ain',
+    displayName: 'AIIN Agent',
+    apiEndpoint: Uri.parse('https://api.ain.example/v1'),
+    featureFlags: const {},
+    hostConnection: section,
+    providerCatalog: 'host-only',
+    signInUrl: Uri.parse('https://www.ain.by/app/'),
+  );
+}
+
+HostConnectionConfig _hostConnectionConfig() => HostConnectionConfig.fromJson(
+  {
+    'baseUrl': 'https://api.ain.example/v1',
+    'sessionBridge': {'storage': 'localStorage', 'key': 'aiin_agent_session'},
+    'defaultModel': 'ain/aiin_flash',
+  },
+  apiEndpoint: Uri.parse('https://api.ain.example/v1'),
+  displayName: () => 'AIN',
+);

@@ -192,6 +192,38 @@ void main() {
       expect(connected?.modelId, 'local-model');
     });
 
+    testWidgets('the host-session row is read-only with its [host] badge '
+        'and no editor (gh-2391 AC11)', (tester) async {
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Self-hosted',
+        baseUrl: 'https://self.example/v1',
+        modelId: 'm1',
+      );
+      await registry.upsert(
+        const CustomProvider(
+          id: 'host',
+          name: 'AIN',
+          baseUrl: 'https://api.ain.example/v1',
+          modelId: 'ain/ain_flash',
+          provenance: 'host',
+          kind: 'host-session',
+        ),
+      );
+      await _pump(tester, ProvidersSection(registry: registry));
+      expect(find.text('[host]'), findsOneWidget);
+      expect(find.text('provided by AIN'), findsOneWidget);
+      expect(find.text('AIN'), findsOneWidget);
+      // The host row is not tappable: no editor route, no key field, no
+      // delete action.
+      // The host row is not tappable: the tap lands nowhere and no editor
+      // route opens (no key field, no reconnect, no delete anywhere).
+      await tester.tap(find.text('AIN'));
+      await tester.pumpAndSettle();
+      await tester.pumpAndSettle();
+      expect(find.text('provided by AIN'), findsOneWidget);
+    });
+
     testWidgets('two custom providers on one host both get the URL-matched '
         'brand mark (no current check)', (tester) async {
       final registry = ProviderRegistry.inMemory();

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:fa/ui/widgets/product_brand.dart';
 import 'package:fa/services/settings_env.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
@@ -2038,6 +2039,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   ) {
     return ProvidersSection(
       registry: widget.registry,
+      // The host-only catalog (gh-2391 addendum 4) never advertises the
+      // third-party catalog; the host cabinet is the only sign-in path.
+      showAddProvider: !ProductConfigScope.of(context).hostOnlyProviderCatalog,
+      // Addendum 5: the section lists ONLY the host row.
+      restrictToProviderId:
+          ProductConfigScope.of(context).hostOnlyProviderCatalog
+          ? 'host'
+          : null,
       modelsFetcher: widget.modelsFetcher,
       // Quota meters + pull-to-refresh (issue #823 AC6).
       quotas: QuotaStore.instance.service,

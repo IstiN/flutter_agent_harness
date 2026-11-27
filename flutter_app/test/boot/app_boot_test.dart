@@ -13,6 +13,7 @@ import 'dart:io';
 
 import 'package:fa/boot/app_boot.dart';
 import 'package:fa/boot/boot_config_codec.dart';
+import 'package:fa/boot/host_session_bridge.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -30,6 +31,10 @@ import 'package:flutter/widgets.dart';
 import 'package:fa/sandbox/env_factory_io.dart';
 import 'package:fa/sandbox/persistent_web_env.dart';
 import 'package:fa/services/app_log.dart';
+import 'package:flutter/material.dart' show Color;
+import 'package:fa/services/theme_controller.dart';
+import 'package:fa/services/theme_pack_store.dart';
+import 'package:fa/services/theme_packs.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -217,6 +222,112 @@ void main() {
     );
 
     test(
+      'the profile theme pack is a DEFAULT: a saved user pack wins (gh-2391)',
+      () async {
+        final env = MemoryExecutionEnv();
+        // The user already picked a pack on a previous boot: persist it the
+        // way ThemeController does, then boot over the same env.
+        final packStore = await ThemePackStore.load(env);
+        packStore.registerHostPack(
+          const InstalledThemePack(
+            spec: ThemePackSpec(
+              id: 'user-pack',
+              name: 'User Pack',
+              version: '1.0.0',
+              dark: ThemePackColors(accent: Color(0xFF2E7D32)),
+            ),
+            wallpaperBytes: null,
+          ),
+        );
+        final prior = await ThemeController.load(env);
+        await prior.setPack('user-pack');
+        final stores = await loadBootStores(
+          env,
+          productConfig: _ainPorcelainProfile(),
+        );
+        // The user's saved selection survived the branded profile default.
+        expect(stores.themeController.packId, 'user-pack');
+        // The profile pack is still registered and available in pickers.
+        expect(stores.themePacks.byId('aiin-porcelain'), isNotNull);
+      },
+    );
+
+    test(
+      'the AIN porcelain pack applies on a fresh boot and validates',
+      () async {
+        final stores = await loadBootStores(
+          MemoryExecutionEnv(),
+          productConfig: _ainPorcelainProfile(),
+        );
+        expect(stores.themeController.packId, 'aiin-porcelain');
+        final spec = stores.themePacks.byId('aiin-porcelain')!.spec;
+        // The AIN palette rides the standard slots: green accent, muted
+        // porcelain-violet second accent, ink background, porcelain
+        // light surfaces.
+        expect(spec.dark!.accent, isNotNull);
+        expect(spec.dark!.accent2, isNotNull);
+        expect(spec.light, isNotNull);
+      },
+    );
+
+    test('the porcelain palette is WCAG AA on every readable pair (gh-2391 '
+        'addendum 5: ≥4.5:1, both variants)', () {
+      final spec = validateThemePack(
+        _ainPorcelainProfile().themePack!,
+        const {},
+      ).spec!;
+      for (final variant in [spec.dark!, spec.light!]) {
+        final colors = variant.toFahColors(
+          variant == spec.dark! ? FahColors.dark : FahColors.light,
+        );
+        for (final (label, fg, bg) in [
+          ('text on background', colors.text, colors.bg),
+          ('text on surface', colors.text, colors.panel),
+          ('onAccent on accent (send button)', colors.onAccent, colors.indigo),
+          ('muted on background', colors.dim, colors.bg),
+        ]) {
+          expect(
+            contrastRatio(fg, bg),
+            greaterThanOrEqualTo(4.5),
+            reason:
+                '$variant-$label: '
+                '${contrastRatio(fg, bg).toStringAsFixed(2)}:1',
+          );
+        }
+      }
+    });
+
+    test('lockAccents co-derives a missing accent2 from the pack accent — '
+        'no stock indigo bleed (gh-2391 addendum 5)', () {
+      final spec = validateThemePack(
+        _ainPorcelainProfile().themePack!,
+        const {},
+      ).spec!;
+      // A stripped pack (accent only, no accent2) with the lock on:
+      // the send button (indigo slot) follows the muted pack accent.
+      final stripped = ThemePackColors(
+        background: spec.dark!.background,
+        surface: spec.dark!.surface,
+        text: spec.dark!.text,
+        accent: spec.dark!.accent,
+      );
+      final locked = stripped.toFahColors(
+        FahColors.dark,
+        deriveAccent2FromAccent: true,
+      );
+      expect(locked.indigo, spec.dark!.accent);
+      final unlocked = stripped.toFahColors(FahColors.dark);
+      expect(
+        unlocked.indigo,
+        FahColors.dark.indigo,
+        reason: 'unlocked packs keep the stock fallback (REG)',
+      );
+      // Packs that DO define accent2 are byte-identical either way.
+      final defined = spec.dark!.toFahColors(FahColors.dark);
+      expect(defined.indigo, spec.dark!.accent2);
+    });
+
+    test(
       'faNetwork feature refuses to inherit stock endpoints implicitly',
       () async {
         final config = FaProductConfig.fromJson({
@@ -230,6 +341,68 @@ void main() {
         );
       },
     );
+
+    test('stock boot provisions no host session (AC3)', () async {
+      final stores = await loadBootStores(MemoryExecutionEnv());
+      addTearDown(() => FaUiHost.keyResolver = null);
+      expect(stores.hostSession, isNull);
+      expect(stores.registry.providers, isEmpty);
+    });
+
+    group('host-session boot (issue #2391)', () {
+      final config = FaProductConfig.fromJson({
+        'productId': 'ain',
+        'displayName': 'AIIN Agent',
+        'apiEndpoint': 'https://api.ain.example/v1',
+        'featureFlags': <String>[],
+        'hostConnection': {
+          'baseUrl': 'https://api.ain.example/v1',
+          'sessionBridge': {
+            'storage': 'localStorage',
+            'key': 'aiin_agent_session',
+          },
+          'defaultModel': 'ain/aiin_flash',
+          'modelRoles': {'smol': 'ain/aiin_flash'},
+          'mediaSlots': {
+            'imageGeneration': {'model': 'aiin/aiin_image'},
+          },
+        },
+      });
+
+      test('a populated bridge resolves the session at boot', () async {
+        final stores = await loadBootStores(
+          MemoryExecutionEnv(),
+          productConfig: config,
+          hostSessionBridge: _FakeHostBridge({'aiin_agent_session': 'bk'}),
+        );
+        addTearDown(() => FaUiHost.keyResolver = null);
+        expect(stores.hostSession, isNotNull);
+        expect(stores.hostSession!.bridgedKey, 'bk');
+        expect(stores.registry.providers.single.id, 'host');
+        // Role and slot defaults are provisioned on the same boot.
+        expect(
+          stores.taskModels.overrideFor('smol')!.modelId,
+          'ain/aiin_flash',
+        );
+        expect(
+          stores.mediaModels.overrideFor('imageGeneration')!.modelId,
+          'aiin/aiin_image',
+        );
+      });
+
+      test('an empty bridge leaves the stock boot untouched', () async {
+        final stores = await loadBootStores(
+          MemoryExecutionEnv(),
+          productConfig: config,
+          hostSessionBridge: _FakeHostBridge({'aiin_agent_session': ''}),
+        );
+        addTearDown(() => FaUiHost.keyResolver = null);
+        expect(stores.hostSession, isNull);
+        expect(stores.registry.providers, isEmpty);
+        expect(stores.taskModels.overrideFor('smol'), isNull);
+        expect(stores.mediaModels.overrideFor('imageGeneration'), isNull);
+      });
+    });
   });
 
   group('bootTelemetry (telemetry stage)', () {
@@ -536,3 +709,61 @@ final class _FakeDocumentsPathProvider extends PathProviderPlatform {
   @override
   Future<String?> getApplicationDocumentsPath() async => _documents.path;
 }
+
+/// A fake [HostSessionBridge]: the host page's same-origin storage, as a
+/// test-controlled map (issue #2391).
+final class _FakeHostBridge implements HostSessionBridge {
+  _FakeHostBridge(this.values);
+  final Map<String, String> values;
+
+  @override
+  String? read(String key) => values[key];
+}
+
+/// The AIN product profile carrying the Porcelain theme pack (gh-2391
+/// addendum #2): porcelain soft-neutral light surfaces, the AIN ink dark
+/// background, the green primary accent, the violet/cyan secondaries.
+FaProductConfig _ainPorcelainProfile() => FaProductConfig.fromJson({
+  'productId': 'ain',
+  'displayName': 'AIIN Agent',
+  'themePackId': 'aiin-porcelain',
+  'themePack': {
+    'name': 'AIIN Porcelain',
+    'version': '1.0.0',
+    'colors': {
+      'light': {
+        'background': '#F4F2EE',
+        'surface': '#FAF8F5',
+        'surfaceAlt': '#ECE9E3',
+        'border': '#DDD9D1',
+        'borderBright': '#C9C4BA',
+        'text': '#1C1B18',
+        'muted': '#6E6A62',
+        'accent': '#4ADE80',
+        'accent2': '#A78BFA',
+        'onAccent': '#07080D',
+        'error': '#B3261E',
+        'userBubble': '#E7F9EE',
+        'userBubbleBorder': '#0891B2',
+        'codeBg': '#EFEDE8',
+      },
+      'dark': {
+        'background': '#07080D',
+        'surface': '#101218',
+        'surfaceAlt': '#161923',
+        'border': '#232733',
+        'borderBright': '#333849',
+        'text': '#E9EAEE',
+        'muted': '#8B8F9B',
+        'accent': '#4ADE80',
+        'accent2': '#A78BFA',
+        'onAccent': '#07080D',
+        'error': '#F2B8B5',
+        'userBubble': '#12251C',
+        'userBubbleBorder': '#0891B2',
+        'codeBg': '#0D0F15',
+      },
+    },
+  },
+  'featureFlags': <String>[],
+});

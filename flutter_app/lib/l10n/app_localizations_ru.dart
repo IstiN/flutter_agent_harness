@@ -3565,4 +3565,23 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get onboardingProviderDescCustom =>
       'Любой эндпоинт, совместимый с OpenAI';
+
+  @override
+  String onboardingHostSignInTitle(Object displayName) {
+    return 'Вход в $displayName';
+  }
+
+  @override
+  String onboardingHostSignInBody(Object displayName) {
+    return '$displayName работает под вашим аккаунтом $displayName — войдите один раз в приложении $displayName и вернитесь. Сторонние провайдеры в это рабочее пространство не входят.';
+  }
+
+  @override
+  String onboardingHostSignInCta(Object displayName) {
+    return 'Войти в $displayName';
+  }
+
+  @override
+  String get hostSessionRestored =>
+      'Сессия хоста восстановлена — попробуйте отправить сообщение ещё раз.';
 }

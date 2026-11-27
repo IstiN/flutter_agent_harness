@@ -1,9 +1,18 @@
 import 'dart:async';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
+
+/// The DIAL setup flows fetch `<baseUrl>/models` with a 15s network
+/// timeout (provider_models.dart). Tests must never touch the network:
+/// this client answers 404 so the fetch lands in the same swallowed
+/// `return const []` path — instantly, with identical semantics.
+final _kNoModelsFetch = MockClient(
+  (request) async => http.Response('not found', 404),
+);
 
 void main() {
   late MemoryExecutionEnv env;
@@ -1179,6 +1188,7 @@ void main() {
           envVarValue: (_) => null,
           secureKeys: cache,
           customProviders: registry,
+          modelsHttpClient: _kNoModelsFetch,
           onProviderChanged: (kind, key) async {
             changes.add((kind, key));
           },
@@ -1231,6 +1241,7 @@ void main() {
           fake.call,
           envVarValue: (_) => null,
           customProviders: registry,
+          modelsHttpClient: _kNoModelsFetch,
         );
         final run = cli.run();
 
@@ -1266,6 +1277,7 @@ void main() {
         envVarValue: (_) => null,
         secureKeys: cache,
         customProviders: registry,
+        modelsHttpClient: _kNoModelsFetch,
       );
       final run = cli.run();
 

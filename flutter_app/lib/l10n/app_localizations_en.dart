@@ -3525,4 +3525,23 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get onboardingProviderDescCustom => 'Any OpenAI-compatible endpoint';
+
+  @override
+  String onboardingHostSignInTitle(Object displayName) {
+    return 'Sign in to $displayName';
+  }
+
+  @override
+  String onboardingHostSignInBody(Object displayName) {
+    return '$displayName runs on your $displayName account — sign in once in the $displayName app and come right back. Third-party providers are not part of this workspace.';
+  }
+
+  @override
+  String onboardingHostSignInCta(Object displayName) {
+    return 'Sign in to $displayName';
+  }
+
+  @override
+  String get hostSessionRestored =>
+      'Host session restored — try sending your message again.';
 }

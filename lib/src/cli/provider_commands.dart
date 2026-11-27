@@ -1902,7 +1902,15 @@ extension on AgentCli {
   Future<String?> _dialAskDeployment(String baseUrl, String key) async {
     List<String> deployments = const [];
     try {
-      deployments = await fetchDialModels(baseUrl, key);
+      // Pure test seam: production passes null → fetchDialModels creates
+      // its own live client (byte-identical legacy behavior); tests inject
+      // modelsHttpClient so the DIAL setup stays off the network. The
+      // proxy-gate routing for this path is tracked in #2452.
+      deployments = await fetchDialModels(
+        baseUrl,
+        key,
+        client: config.modelsHttpClient,
+      );
     } on Object {
       // Dead endpoint / bad key — the user can still type a deployment.
     }

@@ -6,6 +6,7 @@ import 'package:flutter/services.dart' show MethodChannel;
 import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/prompts.g.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
+import 'package:fa/analytics/product_analytics_bridge.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/project_mount_env.dart' show SessionCwd;
@@ -422,6 +423,37 @@ void main() {
         expect(agent.state.systemPrompt, 'custom prompt without a date');
       },
     );
+
+    test('the first turn of a session tracks agent_chat_message_sent '
+        '{model} once (gh-2391 addendum)', () async {
+      final recorded = <List<Object?>>[];
+      ProductAnalyticsBridge.instance.useSinkForTest((event, params) {
+        recorded.add([event, params]);
+      });
+      addTearDown(ProductAnalyticsBridge.instance.restorePlatformSinkResolver);
+      final env = MemoryExecutionEnv();
+      final agent = _createAgent(_singleTextResponse('ok'));
+      final service = AgentService(
+        agent: agent,
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      await service.sendText('first');
+      await service.waitForIdle();
+      expect(recorded, [
+        [
+          'agent_chat_message_sent',
+          {'model': 'test-model'},
+        ],
+      ]);
+
+      await service.sendText('second');
+      await service.waitForIdle();
+      // Still exactly one: the event marks the FIRST turn of the session.
+      expect(recorded.length, 1);
+    });
 
     test('sendText starts the run synchronously while the compacting gate is '
         'idle (gh-2394: waitForIdle must see the run)', () async {

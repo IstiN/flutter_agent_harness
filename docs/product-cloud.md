@@ -36,6 +36,10 @@ A profile is external JSON, not a source-tree edit:
   "oauthCallback": "https://app.host.example/oauth/callback",
   "defaultProviderKey": "openrouter",
   "localeStorageKey": "host_lang",
+  "providerCatalog": "host-only",
+  "signInUrl": "https://app.host.example/app/?return=%2Fagent%2F",
+  "channels": "host-only",
+  "themePicker": "profile-locked",
   "legalLinks": {"privacy": "https://legal.host.example/privacy"},
   "featureFlags": ["cloudSync"],
   "brandAssets": {
@@ -77,6 +81,31 @@ choice, then the device locale; stock behavior is unchanged.
 
 OAuth accepts only the exact configured callback and expected non-empty state.
 Storage keys use `fa-product:<id>:schema:<n>`, with a SHA-256 tenant+subject
+`providerCatalog: "host-only"` (gh-2391 addendum 4) restricts a branded
+build with `hostConnection` to the host connection alone: the onboarding
+provider step renders a single **Sign in to <displayName>** CTA
+(`signInUrl`, opened verbatim — the host page encodes its own return
+parameter), the third-party provider catalog is never shown, and none of
+Fa's own OAuth/connect flows launch. When the visitor returns from the
+host cabinet, the published bridge key completes onboarding on app resume
+and the workspace boots without any gate. Absent (stock and every
+existing profile) the full catalog applies byte-identically; the field
+requires `hostConnection`, and `signInUrl` must be HTTPS.
+
+`channels: "host-only"` (gh-2391 addendum 5) hides the Networks surface in
+a branded build — the navigation rail keeps Local, Apps (and Devices where
+an account exists) and Settings; every Networks entry point (rail row,
+narrow profile row, sidebar surface) disappears. Requires `hostConnection`;
+absent (stock) all sections render byte-identically.
+
+`themePicker: "profile-locked"` (gh-2391 addendum 5) locks the Theme page
+to the profile's own pack: the stock pack list, the default row, the
+import entry and per-pack delete are hidden — one visual language. It also
+co-derives an undefined `accent2` from the pack's own `accent` (a locked
+pack never falls back to the stock vivid indigo). Requires `themePackId`;
+the pack's readable pairs must hold WCAG AA (≥4.5:1 — the loader warns,
+ship compliant values).
+
 account partition. Upgrading `storageSchemaVersion` creates a new cache; the
 service worker deletes only caches under the same product root, never stock or
 another product. No profile becomes executable trusted markup.
@@ -139,6 +168,58 @@ account/root. It checks conditional create, same-operation replay,
 key/payload-substitution rejection, stale-base conflict, download hashes and
 conditional delete. The function requires `allowMutations: true` to prevent
 accidental production traffic.
+
+## Host session lifecycle (issue #2391)
+
+The `hostConnection` bridge resolves at boot; the runtime contract:
+
+- **Model choice** — the product's `defaultModel` applies directly on
+  session bootstrap and the visitor lands in the workspace (v4 decision:
+  no onboarding model step; `GET {baseUrl}/models` is not consumed by the
+  shell in this card). Model choice remains available later through the
+  Providers screen.
+- **Quota** — a response matching the profile's `quota` shape (status +
+  error code) ends the run with one terminal notice; when `quota.url` is
+  declared (HTTPS), the notice carries the link. No retry, no fallback,
+  and no URL is ever taken from a response body.
+- **Session loss** — a 401/403 from the host entry triggers exactly one
+  silent bridge re-resolution (the host page may have rotated the scoped
+  key); a fresh key retries the request transparently. A persistent
+  failure renders the sign-in card (`[[auth-expired:host]]`) whose action
+  re-reads the bridge once and otherwise opens the Providers screen —
+  never a manual key dialog, and local session data is never touched.
+
+## Host product analytics bridge
+
+A branded web shell can receive Fa's product events through one
+window-global hook (gh-2391 addendum). The bridge is host-agnostic: Fa
+never talks to GA4, consent or any vendor — it forwards a fixed event
+vocabulary to `window.ainTrack(name, params)` when that function exists.
+
+Host contract:
+
+- The host page (its site-wide wrapper script) defines
+  `window.ainTrack(name: string, params: object)` before or during the
+  shell's lifetime. The hook self-gates on the host's consent flow: before
+  consent it is a no-op. Fa never gates, buffers, queues or retries — a
+  call is fire-and-forget, once, at the documented moment.
+- A missing or non-function hook disables the bridge entirely: every call
+  is a no-op. Stock Fa (no host wrapper) and native hosts have no hook, so
+  their behavior is byte-identical to before. The hook name is declared
+  once in `flutter_app/lib/analytics/product_analytics_sink_web.dart`
+  (`productAnalyticsHookName`).
+- Fa never reads anything back from the hook, and a throwing hook is
+  swallowed — the host's analytics can never break the app.
+- Events carry no PII: only the fields listed below, all non-personal.
+
+| Event | Params | Fired when |
+|---|---|---|
+| `agent_session_started` | `source`: `"host"` (the hostConnection bridge resolved at boot) or `"stock"` (the stock first-launch onboarding is about to render) | once per process boot |
+| `agent_chat_message_sent` | `model`: the model id of the connection | the FIRST turn of a session that actually starts (steering into a streaming turn never counts) |
+| `agent_theme_changed` | `packId`: the theme pack id, `""` for the stock look | a visitor (or an in-app js-app theme switch) applies a different pack; the boot-time profile-default apply is NOT tracked |
+
+Extension of the event vocabulary follows the same rules: flat string
+params, no PII, documented here first.
 
 ## Focused verification
 

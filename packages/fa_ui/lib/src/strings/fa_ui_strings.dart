@@ -266,6 +266,10 @@ abstract class FaUiStrings {
   /// (`{modelId} · {host}`).
   String mediaModelsOverrideSummary(String host, String modelId);
 
+  /// The host-session row's caption (issue #2391): the connection is
+  /// provided by the host product — read-only, no key of its own.
+  String providersHostProvidedBy(String name);
+
   /// App bar title of the media slot editor (`Edit {slot}`).
   String mediaModelsEditTitle(String slot);
 
@@ -531,6 +535,9 @@ class FaUiStringsEn extends FaUiStrings {
   @override
   String mediaModelsOverrideSummary(String host, String modelId) =>
       '$modelId · $host';
+
+  @override
+  String providersHostProvidedBy(String name) => 'provided by $name';
   @override
   String mediaModelsEditTitle(String slot) => 'Edit $slot';
 
@@ -780,6 +787,9 @@ class FaUiStringsRu extends FaUiStrings {
   @override
   String mediaModelsOverrideSummary(String host, String modelId) =>
       '$modelId · $host';
+
+  @override
+  String providersHostProvidedBy(String name) => 'предоставлено: $name';
   @override
   String mediaModelsEditTitle(String slot) => 'Изменить: $slot';
 

@@ -491,18 +491,19 @@ String fixtureRepo(
   if (changelog != null) {
     File('${dir.path}/CHANGELOG.md').writeAsStringSync(changelog);
   }
-  var i = 0;
   for (final group in [commitSubjects, postTagSubjects]) {
     for (final subject in group) {
-      File('${dir.path}/f$i.txt').writeAsStringSync('$i');
-      Process.runSync(git, ['add', '.'], workingDirectory: dir.path);
+      // Empty commits: every consumer here reads ONLY `git log` subjects
+      // and tags — never the working tree. A file write + `git add .` per
+      // commit tripled the spawn count for nothing (the E4 cap fixture
+      // alone paid ~600 spawns for 200 commits). History shape identical.
       Process.runSync(git, [
         'commit',
+        '--allow-empty',
         '-q',
         '-m',
         subject,
       ], workingDirectory: dir.path);
-      i++;
     }
     for (final tag in tags) {
       Process.runSync(git, ['tag', tag], workingDirectory: dir.path);

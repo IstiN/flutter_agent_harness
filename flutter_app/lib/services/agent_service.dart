@@ -5,6 +5,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/widgets.dart' show WidgetsBinding;
+import 'package:fa/analytics/product_analytics_bridge.dart';
+import 'package:fa/boot/host_connection_resolver.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
         FaApprovalModeController,
@@ -1988,6 +1990,11 @@ class AgentService extends ChangeNotifier
   /// for the current user text (reset on every real [sendText] entry).
   var _overWindowAutoResumed = false;
 
+  /// The gh-2391-addendum first-turn latch: `agent_chat_message_sent
+  /// {model}` fires ONCE per session (this service instance), on the run
+  /// that actually starts — steering into a streaming turn never counts.
+  bool _productFirstTurnTracked = false;
+
   /// Delivered to the model when the over-window guard stopped a run and
   /// the post-run compaction freed the window: names what happened and
   /// how to avoid re-filling the context.
@@ -2022,6 +2029,17 @@ class AgentService extends ChangeNotifier
   /// [imageDropReportNotice] seam — dispose disarms the global ONLY when
   /// it still points at ours (a newer service's arming wins).
   void Function(ImageDropReport report)? _armedImageDropReporter;
+
+  /// Fires the product analytics bridge's first-turn event once (gh-2391
+  /// addendum): the model id only — no text, no PII. No-op when the host
+  /// hook is absent (stock, VM).
+  void _trackProductFirstTurn() {
+    if (_productFirstTurnTracked) return;
+    _productFirstTurnTracked = true;
+    ProductAnalyticsBridge.instance.track('agent_chat_message_sent', {
+      'model': _agent.state.model.id,
+    });
+  }
 
   /// Sends a plain-text user message. While the agent is already running the
   /// message is queued as a steering message and the UI shows it as pending
@@ -2078,6 +2096,7 @@ class AgentService extends ChangeNotifier
         // A sweep failure must never block the user's turn.
       }
     }
+    _trackProductFirstTurn();
     _runWithTimeout(() => _agent.prompt(trimmed));
   }
 
@@ -2179,6 +2198,7 @@ class AgentService extends ChangeNotifier
       notifyListeners();
       return;
     }
+    _trackProductFirstTurn();
     _runWithTimeout(() => _agent.promptMessage(message));
   }
 
@@ -2206,6 +2226,7 @@ class AgentService extends ChangeNotifier
       notifyListeners();
       return;
     }
+    _trackProductFirstTurn();
     _runWithTimeout(() => _agent.promptMessage(message));
   }
 

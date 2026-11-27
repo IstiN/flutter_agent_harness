@@ -55,10 +55,19 @@ final class ThemePackSpec {
   /// (shown before applying, never silently ignored).
   final List<String> contrastWarnings;
 
-  /// The [FaUiTheme] that applies this pack app-wide.
-  FaUiTheme toFaUiTheme() => FaUiTheme(
-    darkPalette: dark?.toFahColors(FahColors.dark),
-    lightPalette: light?.toFahColors(FahColors.light),
+  /// The [FaUiTheme] that applies this pack app-wide. [lockAccents]
+  /// (gh-2391 addendum 5) co-derives an undefined accent2 from the
+  /// pack's own accent — a locked branded pack never falls back to the
+  /// stock vivid indigo (one visual language, no stock bleed).
+  FaUiTheme toFaUiTheme({bool lockAccents = false}) => FaUiTheme(
+    darkPalette: dark?.toFahColors(
+      FahColors.dark,
+      deriveAccent2FromAccent: lockAccents,
+    ),
+    lightPalette: light?.toFahColors(
+      FahColors.light,
+      deriveAccent2FromAccent: lockAccents,
+    ),
     fontFamily: fontFamily,
   );
 }
@@ -102,7 +111,10 @@ final class ThemePackColors {
   /// Maps the variant onto the stock palette of its brightness: explicit
   /// slots override, accents re-derive the gradient and (unless the pack
   /// sets them explicitly) the bubble tints — exactly the stock derivation.
-  FahColors toFahColors(FahColors stock) => stock
+  FahColors toFahColors(
+    FahColors stock, {
+    bool deriveAccent2FromAccent = false,
+  }) => stock
       .override(
         bg: background,
         panel: surface,
@@ -115,7 +127,10 @@ final class ThemePackColors {
         error: error,
         codeBg: codeBg,
       )
-      .withAccents(indigo: accent2, teal: accent)
+      .withAccents(
+        indigo: accent2 ?? (deriveAccent2FromAccent ? accent : null),
+        teal: accent,
+      )
       .withUserBubble(color: userBubble, border: userBubbleBorder);
 }
 
