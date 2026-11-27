@@ -33,11 +33,17 @@ Future<void> _deleteBestEffort(Directory dir) async {
       await dir.delete(recursive: true);
       return;
     } on FileSystemException catch (error) {
-      if (attempt >= 3) {
+      // Issue #2355 occ4: 3 x 50ms was thinner than the hostile-leg
+      // straggler window (ENOTEMPTY 39 escaped the seam). A longer
+      // exponential ladder - 8 sleeps over 9 tries, 50+100+...+6400 =
+      // ~12.75s ceiling - still ends in the printed abandon: a
+      // disposable systemTemp artifact must never fail a green run,
+      // but a real straggler gets room to land.
+      if (attempt >= 9) {
         print('teardown left ${dir.path} behind: $error');
         return;
       }
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await Future<void>.delayed(Duration(milliseconds: 50 << (attempt - 1)));
     }
   }
 }
@@ -254,6 +260,79 @@ void main() {
     );
   });
 
+  test('REG: an occupancy refusal on a real fs is CODED exists - the '
+      'release-in-window retry reads it (issue #2355)', () async {
+    final workspace = await Directory.systemTemp.createTemp('fah2355-map-');
+    addTearDown(() => _deleteBestEffort(workspace));
+    final env = LocalExecutionEnv(cwd: workspace.path);
+    final lock = File('${workspace.path}/occupied.lock');
+    await lock.writeAsString('held');
+    final refusal = await env.createFileExclusive(lock.path);
+    expect(refusal.isErr, isTrue);
+    final error = refusal.errorOrNull!;
+    expect(
+      error.code,
+      FileErrorCode.exists,
+      reason:
+          'occupancy must arrive CODED regardless of which dart:io '
+          'branch produced the throw - current SDKs map EEXIST to '
+          'PathExistsException, so this pins the typed-branch '
+          'contract the lock coordinator reads',
+    );
+    expect(error.pathExistsAtFailure, isTrue);
+    // The errno detail differs per host (17 POSIX, 183 Windows); the
+    // contract is the code + flag, the substring is the sanity echo.
+    expect(
+      error.message,
+      Platform.isWindows ? contains('errno 183') : contains('errno 17'),
+    );
+  });
+
+  test('AC1 REG: a coded-occupancy refusal over a vanished lock retries '
+      'the claim - never surfaces the window (issue #2355)', () async {
+    final workspace = await Directory.systemTemp.createTemp('fah2355-win-');
+    addTearDown(() => _deleteBestEffort(workspace));
+    final delegate = LocalExecutionEnv(cwd: workspace.path);
+    final env = _CodedOccupancyThenReleaseEnv(delegate);
+    final io = FakeCliIO();
+    addTearDown(io.close);
+    final logs = '${workspace.path}/.fah/bash_jobs';
+    await delegate.createDir(logs);
+    await delegate.writeFile(
+      '$logs/running.json',
+      '[{"id":"sh-x","command":"watch.sh","pid":"999999"}]',
+    );
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+      ),
+      io: io,
+      streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+    );
+    cli.waitingProcessTableForTest = () async =>
+        (pids: <int>{}, starts: <int, String>{});
+
+    await cli.waitingCaptureLostJobsForTest();
+
+    expect(
+      env.claimAttempts,
+      greaterThanOrEqualTo(2),
+      reason: 'the EEXIST refusal (flag lost, code present) retried',
+    );
+    expect(
+      cli.waitingRegistryNoticeForTest,
+      isNull,
+      reason: 'the release-in-window is contention, not an fs failure',
+    );
+    expect(
+      (await delegate.readTextFile('$logs/running.json')).getOrThrow(),
+      '[]',
+    );
+  });
+
   test('REG: a non-occupancy lock refusal surfaces its real fs cause '
       'without contention retries', () async {
     final delegate = MemoryExecutionEnv(cwd: '/ws');
@@ -390,6 +469,47 @@ final class _ReleasedLockEnv extends ForwardingFs
       released = true;
     }
     return result;
+  }
+}
+
+/// The #2355 hostile-leg shape: an exclusive-create backend whose
+/// EEXIST refusal arrives as the UNMAPPED plain-FileSystemException
+/// variant (code exists, pathExistsAtFailure flag lost), then the
+/// rival releases before the coordinator's fileInfo probe. The old
+/// coordinator threw the refusal as an fs failure; the belt reads the
+/// coded occupancy and retries.
+final class _CodedOccupancyThenReleaseEnv extends ForwardingFs
+    implements ExclusiveCreateFileSystem {
+  _CodedOccupancyThenReleaseEnv(this._local) : super(_local);
+
+  final LocalExecutionEnv _local;
+  var claimAttempts = 0;
+
+  @override
+  Future<Result<void, FileError>> createFileExclusive(String path) async {
+    claimAttempts++;
+    if (claimAttempts == 1) {
+      // The rival holds the lock at the moment of the claim.
+      await _local.writeFile(path, 'held');
+      final result = await _local.createFileExclusive(path);
+      if (result.isErr) {
+        // ...and releases in the window: strip the flag, keep the
+        // code - the hostile platform's mapping drift, constructed.
+        final error = result.errorOrNull!;
+        await _local.remove(path);
+        return Err(
+          FileError(
+            error.code,
+            error.message,
+            path: error.path,
+            cause: error.cause,
+            pathExistsAtFailure: false,
+          ),
+        );
+      }
+      return result;
+    }
+    return _local.createFileExclusive(path);
   }
 }
 

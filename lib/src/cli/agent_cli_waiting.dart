@@ -858,8 +858,17 @@ final class _WaitingCoordinator {
       final info = await _cli._env.fileInfo(_manifestLockPath);
       if (claimError != null) {
         if (info.isErr) {
-          // A rival may release the lock after exclusive create refused it.
-          if (!claimError.pathExistsAtFailure) throw claimError;
+          // A rival may release the lock after exclusive create refused
+          // it: an OCCUPANCY refusal (EEXIST, coded or flagged) over a
+          // now-vanished lock is the retry window this loop exists for —
+          // never a surfable failure (issue #2355: the hostile-leg
+          // errno 17 reds were exactly this window with an unmapped
+          // plain-FileSystemException EEXIST). A non-occupancy refusal
+          // (permission denied, ...) keeps its loud no-retry surface.
+          if (!claimError.pathExistsAtFailure &&
+              claimError.code != FileErrorCode.exists) {
+            throw claimError;
+          }
           final infoError = info.errorOrNull!;
           if (infoError.code != FileErrorCode.notFound) throw infoError;
         }
