@@ -15,6 +15,7 @@ import '../compaction/structured/projection.dart';
 import '../compaction/summary_sanitizer.dart';
 import '../compaction/token_estimation.dart';
 import '../compaction/working_set.dart';
+import '../compaction/working_set_snapshot.dart';
 import '../context.dart';
 import '../exceptions.dart';
 import '../session_seal.dart';
@@ -183,26 +184,26 @@ final class Session {
         : ObligationsLedger.fromPayload(records.last.data);
   }
 
-  /// Cached result of the one-time goal-recitation scan fallback (gh-210):
-  /// null means "not scanned yet" — a scanned-empty result caches the
-  /// sentinel so cold projections do not re-scan on every rebuild.
+  /// The latest working-set snapshot (issue #2423 C1 — generalises the
+  /// gh-210 goal-recitation reader): the resident view first; when
+  /// residency shows NO snapshot and the storage is windowed, the raw-scan
+  /// fallback runs once (cached — a scanned-empty result too). The request
+  /// build reads it on EVERY request, so the one-time scan keeps a
+  /// snapshot-less session from re-reading its file per request.
   /// Resident appends always win over it, so no invalidation is needed.
-  GoalRecitation? _goalRecitationFromScan;
-  bool _goalRecitationScanDone = false;
-
-  /// The latest goal recitation from the raw scan fallback, or null when
-  /// no scan hook exists / was already consulted and found nothing. Runs
-  /// at most once per session instance.
-  Future<GoalRecitation?> _scanGoalRecitation() async {
-    if (_goalRecitationScanDone) return _goalRecitationFromScan;
-    _goalRecitationScanDone = true;
+  Future<WorkingSetSnapshot?> workingSetSnapshot() async {
+    final resident = latestWorkingSetIn(await getEntries());
+    if (resident != null) return resident;
+    if (_workingSetScanDone) return _workingSetFromScan;
+    _workingSetScanDone = true;
     final scan = customRecordScan;
-    if (scan == null) return null;
-    final records = await scan({goalRecitationRecordType});
-    return _goalRecitationFromScan = records.isEmpty
-        ? null
-        : goalRecitationFromPayload(records.last.data);
+    if (scan == null || _storage is! WindowedSessionStorage) return null;
+    final records = await scan(workingSetRecordTypes);
+    return _workingSetFromScan = latestWorkingSetIn(records);
   }
+
+  WorkingSetSnapshot? _workingSetFromScan;
+  bool _workingSetScanDone = false;
 
   /// The session metadata (from the file header).
   Future<SessionMetadata> getMetadata() => _storage.getMetadata();
@@ -310,16 +311,44 @@ final class Session {
   /// needs only what fits the context, and older history pages in lazily
   /// through the scrollback's loadOlder path. `null` walks to the
   /// boundary/file head as before.
+  ///
+  /// [checkpointsAreBoundaries] (gh-241 follow-up #5d, D2): a structured
+  /// `CompactCheckpointRecord` ends the walk too. The predicate knew
+  /// classic compactions only, so every session of the structured engine
+  /// paged to the file head on an unbudgeted walk — the whole branch,
+  /// raw history earlier cuts had removed included.
   Future<bool> ensureCompactionBoundaryResident({
     int maxPages = 512,
     int? tokenBudget,
+    bool checkpointsAreBoundaries = false,
   }) async {
     final storage = _storage;
     if (storage is! WindowedSessionStorage) return true;
     return storage.growOlderUntil(
-      (r) => r is CompactionRecord,
+      (r) =>
+          r is CompactionRecord ||
+          (checkpointsAreBoundaries && r is CompactCheckpointRecord),
       maxPages: maxPages,
       tokenBudget: tokenBudget,
+      trimToBoundary: checkpointsAreBoundaries,
+    );
+  }
+
+  /// gh-241 follow-up #5 (F3/R3): what the resume walk left out of
+  /// residency, so the host can say so. `droppedByBudget` counts the
+  /// records the token-budget stop of [ensureCompactionBoundaryResident]
+  /// un-indexed (0 when the walk ran to a compaction boundary or the file
+  /// head); `hasOlder` reports records above the window — the loaded
+  /// projection is a TAIL of the file either way. A full storage reports
+  /// nothing dropped and nothing older.
+  ({int droppedByBudget, bool hasOlder}) resumeWalkReport() {
+    final storage = _storage;
+    if (storage is! WindowedSessionStorage) {
+      return (droppedByBudget: 0, hasOlder: false);
+    }
+    return (
+      droppedByBudget: storage.budgetTrimDroppedRecords,
+      hasOlder: storage.hasOlder,
     );
   }
 
@@ -849,27 +878,20 @@ final class Session {
     );
   }
 
-  /// Appends the bounded working-set block (gh-210) as the tail-most
-  /// message. Presence-gated on a `goal_recitation` snapshot or a
-  /// compaction boundary on the path — a session with neither (a fresh
-  /// session, pre-gh-210 shape) projects exactly as before. The block is
-  /// derived on every rebuild, so a cleared slot (an empty goal string)
-  /// stops rendering without any tombstone.
+  /// Appends the bounded working-set tail block (gh-210) as the tail-most
+  /// message — since issue #2423 (C1) ONLY the recently-touched-files
+  /// section: the agent's working-set TEXT moved to the system channel of
+  /// every request (`working_set_snapshot.dart`), where no hide path can
+  /// reach it. Presence-gated on a compaction boundary on the path — a
+  /// session without one (a fresh session, pre-gh-210 shape) projects
+  /// exactly as before.
   Future<List<Message>> _withWorkingSetBlock(
     List<Message> messages, {
     required List<SessionRecord> path,
     List<SessionRecord> dropped = const [],
     List<SessionRecord>? entries,
   }) async {
-    var recitation = latestGoalRecitationIn(entries ?? await getEntries());
-    if (recitation == null && _storage is WindowedSessionStorage) {
-      recitation = await _scanGoalRecitation();
-    }
-    final block = renderWorkingSetBlock(
-      path,
-      recitation: recitation,
-      dropped: dropped,
-    );
+    final block = renderWorkingSetBlock(path, dropped: dropped);
     if (block.isEmpty) return messages;
     return [...messages, UserMessage.text(block)];
   }

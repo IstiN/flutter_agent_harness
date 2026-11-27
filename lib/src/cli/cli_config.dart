@@ -2167,6 +2167,20 @@ bool? loadProjectWireDump(String projectDir) =>
 /// Null when the file or the section is absent/unreadable; a
 /// present-but-invalid section throws [ConfigException] (strict, like the
 /// user config — same [agent-section rules](_parseAgentSection)).
+/// gh-241 follow-up #5b (parity with the app, owner live test): the
+/// effective `agent.contextWindowCap` and where it came from. The
+/// PROJECT `.fah/config.yaml` wins over the user file — a project pin is
+/// the more specific intent (the app already loads it through
+/// [loadProjectContextWindowCap]; the CLI used to ignore it: a tester's
+/// `25000` was silently dropped). `source` is `null` when no cap applies.
+({int? cap, String? source}) resolveContextWindowCap({
+  required int? userCap,
+  required int? projectCap,
+}) => switch (projectCap) {
+  final cap? => (cap: cap, source: 'project'),
+  _ => (cap: userCap, source: userCap == null ? null : 'user'),
+};
+
 int? loadProjectContextWindowCap(String projectDir) {
   final file = File('$projectDir/.fah/config.yaml');
   if (!file.existsSync()) return null;

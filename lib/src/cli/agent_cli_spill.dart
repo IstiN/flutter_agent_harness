@@ -12,7 +12,11 @@ extension AgentCliSpillWiring on AgentCli {
   /// resolves last — a bench run enables/tunes the cap through the
   /// environment without any config file.
   void attachSpillWiring() {
-    final section = config.spills;
+    // gh-2411 rework review (spills): the PROJECT file participates in the
+    // `spills:` section — resolve it exactly like the app host
+    // (bin/fah_runapp.dart: loadProjectSpillsConfig(cwd) ?? saved.spills);
+    // the self-settings doc already documents the project scope.
+    final section = loadProjectSpillsConfig(_env.cwd) ?? config.spills;
     final spills = resolveRunSpillsConfig(section, environment);
     if (spills != null && spills.isActive) {
       attachSpillHooks(
@@ -65,7 +69,7 @@ extension AgentCliSpillWiring on AgentCli {
   /// the bare steering paths that skip the entry redaction still never
   /// write raw secrets to the spill file.
   void attachUserSpillWiring() {
-    final section = config.spills;
+    final section = loadProjectSpillsConfig(_env.cwd) ?? config.spills;
     final spills = resolveRunSpillsConfig(section, environment);
     if (spills == null || !spills.isUserActive) return;
     final pipeline = config.redactionPipeline;

@@ -209,6 +209,10 @@ extension on AgentCli {
         ? 'last ${messages.length - firstIndex} of ${messages.length}'
         : '${messages.length}';
     io.writeln(_style.dim('─── restored session: $label ($count messages)'));
+    if (_useTui) {
+      final notice = _resumeTailNotice;
+      if (notice != null) io.writeln(_style.dim(notice));
+    }
     for (final entry in entries) {
       for (final line in entry) {
         io.writeln(line);
@@ -441,6 +445,16 @@ extension on AgentCli {
   }
 
   Future<Session> _initializeSession() async {
+    // gh-241 follow-up #5b: one boot line naming the setting that won —
+    // the project `.fah/config.yaml` or the user file (both boot paths:
+    // interactive and headless).
+    final windowCap = config.contextWindowCap;
+    if (windowCap != null) {
+      _logDiagnostic(
+        'context window cap source=${config.contextWindowCapSource ?? 'user'} '
+        'window=$windowCap',
+      );
+    }
     // gh-1746 boot hygiene: resolve the resume target FIRST, then run the
     // opt-in sessions retention sweep (AC7). The sweeper must exempt the
     // session this process is about to open: its presence row registers
@@ -865,7 +879,213 @@ extension on AgentCli {
     }
   }
 
+  /// gh-241 follow-up #5d (D1 — owner live test round 5): the overhead is
+  /// calibrated by the OVERHEAD-DOMINATED request of the session — its
+  /// first valid provider report (pre-boundary allowed; the C1 seam) —
+  /// never by a tail-heavy post-boundary reply. `ratio = reported /
+  /// (estimated history + estimated overhead)` conflates the two, and a
+  /// reply that priced a folded tail read x0.82 where the session's first
+  /// request read x0.66 (≈19,500 against ≈15,700 real at a 25k window —
+  /// enough to switch the soft-window regime on at every resume).
+  /// The estimate is always taken over the very request the provider
+  /// priced: the anchor's context start (the file head or a boundary
+  /// above it) is paged resident first (bounded: 64 block pages).
+  /// `null` = nothing vouches, so the walk must not truncate on the
+  /// heuristic (R1). Every applied calibration names its anchor in one
+  /// log line: `resume calibration source=first|pre-boundary|post-boundary`
+  /// followed by the anchor record id and `ratio=x<N>`.
+  Future<OverheadCalibration?> _residentTailCalibration(Session session) async {
+    final storage = session.getStorage();
+    var branch = await session.getBranch();
+    // A header-only session (nothing appended yet) measures nothing.
+    if (branch.isEmpty) return null;
+    if (storage is WindowedSessionStorage) {
+      branch = await _pageTowardFirstReport(storage, session, branch);
+    }
+    return _calibrateFromBranch(branch);
+  }
+
+  /// Toward the file head — the session's FIRST report is the anchor,
+  /// whatever a nearer report says. Bounded twice: 64 block pages, and a
+  /// marathon keeps its newest vouchable report instead of a full open. A
+  /// context nothing measures (no report below a resident boundary) ends
+  /// the probe: that session is unmeasured and the walk runs under R1
+  /// (only a boundary may limit it).
+  Future<List<SessionRecord>> _pageTowardFirstReport(
+    WindowedSessionStorage storage,
+    Session session,
+    List<SessionRecord> branch,
+  ) async {
+    for (var pages = 0; pages < 64 && storage.hasOlder; pages++) {
+      if (branch.length >= _calibrationProbeMaxRecords) break;
+      if (_oldestUsageReply(branch) == null && branch.any(_isContextBoundary)) {
+        break;
+      }
+      await storage.growOlderUntil((_) => false, maxPages: 1);
+      branch = await session.getBranch();
+    }
+    return branch;
+  }
+
+  /// The calibration a resident [branch] vouches for: the oldest report
+  /// whose request opened a context (the first request of the file or of
+  /// a segment after a boundary), else the resident-tail fallback
+  /// ([_residentTailFallbackCalibration]).
+  OverheadCalibration? _calibrateFromBranch(List<SessionRecord> branch) {
+    final oldest = _oldestUsageReply(branch);
+    final oldestIndex = oldest == null ? -1 : branch.indexOf(oldest);
+    if (oldest != null && _contextOpened(branch, oldestIndex)) {
+      final calibration = _calibrationOver(branch, oldestIndex);
+      if (calibration != null) {
+        _logCalibration(
+          branch.first.parentId == null ? 'first' : 'pre-boundary',
+          oldest,
+          calibration,
+        );
+        return calibration;
+      }
+    }
+    return _residentTailFallbackCalibration(branch);
+  }
+
+  /// Nothing older vouches (a mid-chain tail whose oldest report has no
+  /// boundary above it): fall back to the first report on the RESIDENT
+  /// tail — a tail-heavy price, logged as such.
+  OverheadCalibration? _residentTailFallbackCalibration(
+    List<SessionRecord> branch,
+  ) {
+    final start = _newestContextBoundaryIndex(branch);
+    // gh-2237's rule, mirrored: with no boundary, an anchor is vouchable
+    // only from a COMPLETE walk (the branch reaches a tree root) — every
+    // anchor of a mid-chain tail priced a request whose head is missing.
+    if (start < 0 && branch.first.parentId != null) return null;
+    final from = start < 0 ? 0 : start;
+    final calibration = _calibrationOver(branch, null, from: from);
+    if (calibration == null) return null;
+    _logCalibration(
+      'post-boundary',
+      _oldestUsageReply(branch.sublist(from)),
+      calibration,
+    );
+    return calibration;
+  }
+
+  /// Index of the newest record that opens a context on [branch], `-1`
+  /// when there is none.
+  int _newestContextBoundaryIndex(List<SessionRecord> branch) {
+    var start = -1;
+    for (var i = 0; i < branch.length; i++) {
+      if (_isContextBoundary(branch[i])) start = i;
+    }
+    return start;
+  }
+
+  /// Whether [record] opens a new context (every projection cuts here):
+  /// a classic compaction, a structured fold or a checkpoint.
+  static bool _isContextBoundary(SessionRecord record) =>
+      record is CompactionRecord ||
+      record is HiddenRangeRecord ||
+      record is CompactCheckpointRecord;
+
+  /// Whether the context the reply at [at] was sent with is resident:
+  /// a boundary opens it at a lower index, or the branch starts at a
+  /// tree root (the file head — nothing is missing above it).
+  static bool _contextOpened(List<SessionRecord> branch, int at) =>
+      at > 0 &&
+      (branch.first.parentId == null ||
+          branch.sublist(0, at).any(_isContextBoundary));
+
+  /// Resident records the calibration probe may page in before it
+  /// settles for the newest vouchable report (a full open is the thing
+  /// the windowed resume exists to avoid).
+  static const _calibrationProbeMaxRecords = 4096;
+
+  /// Names the anchor every applied load calibration rests on.
+  void _logCalibration(
+    String source,
+    MessageRecord? anchor,
+    OverheadCalibration calibration,
+  ) {
+    _logDiagnostic(
+      'resume calibration source=$source anchor=${anchor?.id} '
+      'ratio=x${calibration.ratio.toStringAsFixed(2)}',
+    );
+  }
+
+  /// [deriveOverheadCalibration] over the requests from [from] up to and
+  /// including the record at [to] (`null`: the branch end) — its anchor
+  /// is the first valid provider report in that span, priced against the
+  /// history the span lays before it.
+  OverheadCalibration? _calibrationOver(
+    List<SessionRecord> branch,
+    int? to, {
+    int from = 0,
+  }) => deriveOverheadCalibration(
+    [
+      for (final entry in branch.sublist(
+        from,
+        to == null ? branch.length : to + 1,
+      ))
+        if (entry is MessageRecord) entry.message,
+    ],
+    systemPrompt: _agent.state.systemPrompt,
+    tools: _agent.state.tools,
+  );
+
+  /// The OLDEST usage-bearing assistant reply on the [branch].
+  static MessageRecord? _oldestUsageReply(List<SessionRecord> branch) {
+    for (final entry in branch) {
+      if (entry is MessageRecord && assistantUsageOf(entry.message) != null) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  /// gh-241 follow-up #5 (F3/R3): a resumed projection that is a TAIL of
+  /// the session says so — one line, on every path, measured or not, in
+  /// the transcript (fa.log) and on screen; the TUI re-prints it with the
+  /// restored-session replay (the boot load runs before the alternate
+  /// screen). A whole-session projection prints nothing.
+  /// Sets [_resumeTailNotice] — the R3 line of a session whose loaded
+  /// projection is a tail; the TUI replay re-prints it.
+  void _reportResumeTail(
+    Session session,
+    List<Message> messages,
+    TranscriptSeqMap? seqs,
+  ) {
+    final report = session.resumeWalkReport();
+    if (report.droppedByBudget == 0 && !report.hasOlder) return;
+    final estimate = estimateContextTokens(messages);
+    final provenance = estimate.lastUsageIndex == null
+        ? 'estimate'
+        : 'estimate, calibrated from the provider turn '
+              '${estimate.lastUsageIndex! + 1} report';
+    // gh-2411 follow-up #5c (C4 — owner live test round 4): the figure
+    // is overhead + the estimated loaded tail — the number the FIRST
+    // REQUEST is metered at. It used to print the overhead alone (the
+    // agent still held no messages: ≈15,732 against a real 18,228).
+    final tokens = estimateRequestTokens(
+      resetLoadedUsageAnchors(messages),
+      systemPrompt: _agent.state.systemPrompt,
+      tools: _agent.state.tools,
+      calibration: _agent.state.overheadCalibration,
+    );
+    final how = report.droppedByBudget > 0
+        ? '${report.droppedByBudget} older record(s) left on disk — '
+              'the context window or the newest compaction boundary bounds '
+              'what loads (paged lazily)'
+        : 'older history sits above the newest compaction boundary';
+    final line =
+        '[resume] loaded the last ${messages.length} message(s) of the '
+        'session ($how; ≈$tokens tokens, $provenance)${_resumeSummaryNote(session, messages, seqs)}';
+    _logDiagnostic('resume tail sid=${session.cachedId} $line');
+    if (!_useTui) io.writeln(_style.dim(line));
+    _resumeTailNotice = line;
+  }
+
   Future<Session> _loadSessionInner(SessionMetadata metadata) async {
+    _resumeTailNotice = null;
     final bootSw = Stopwatch()..start();
     // A loaded session was minted by another run (or an earlier flow):
     // #2320's keep-guard applies to it (see [_deleteEmptySessionFile]).
@@ -895,69 +1115,35 @@ extension on AgentCli {
     await _vacuumLedgersAtOpen(metadata);
     // Issue #1882 AC3: no silent GB-scale operations — a resume over a
     // heavy session file says so (exact size + the hygiene escapes).
-    final heavyScan = await sessionSizeIfHeavy(_env, metadata.path);
-    if (heavyScan != null) {
-      for (final line in heavyScanGuardLines(heavyScan, metadata.path)) {
-        io.writeln(_style.dim(line));
-      }
-      _logDiagnostic('[heavy-scan] resume over $heavyScan bytes');
-    }
+    await _reportHeavySessionScan(metadata);
     final fpBefore = await _sessionFileFingerprint(metadata);
     // The resume budget bounds how much history the walk keeps resident —
     // two different budgets legitimately build different context slices,
     // so it rides the cache key as the build variant (gh-1734).
-    final budget = resumeParityBudget(
-      effectiveContextWindow: _effectiveContextWindow,
-      reserveTokens: _effectiveCompactionSettings.reserveTokens,
-      systemPrompt: _agent.state.systemPrompt,
-      tools: _agent.state.tools,
-    );
+    // gh-241 follow-up #5 (F3/R1-R2 — owner live test, round 2): the
+    // budget is a MEASUREMENT or it is nothing (see [_resumeWalkPlan]).
+    final session = await _repo.open(metadata, windowed: true);
+    stage('open');
+    // `config.initialOverheadCalibration` is the test seam: a fixture
+    // declares its session measured (the reset of a session switch
+    // wipes the agent's copy).
+    final residentCalibration = _agent.state.overheadCalibration.measured
+        ? _agent.state.overheadCalibration
+        : (await _residentTailCalibration(session) ??
+              config.initialOverheadCalibration);
+    final plan = _resumeWalkPlan(residentCalibration);
+    _logResumeWalkPlan(metadata.id, plan);
+    // The resume budget bounds the walk and rides the cache key as the
+    // build variant (gh-1734): two budgets legitimately build two slices.
     final cachedContext = fpBefore == null
         ? null
         : _resumedContextCache.match(
             metadata.path,
             sizeBytes: fpBefore.sizeBytes,
             mtimeMs: fpBefore.mtimeMs,
-            variant: budget,
+            variant: plan.budget ?? -1,
           );
-    final session = await _repo.open(metadata, windowed: true);
-    stage('open');
-    // A marathon WITHOUT compaction pages past the windowed residency
-    // cache — the leaf slides out and the branch would read empty (a
-    // resume that looks like a fresh session, pty_resume_equivalence
-    // AC6). Fall back to the full open: the documented degenerate path.
-    //
-    // Token budget (owner directive, issue #503 round 3): a resume needs
-    // only the tail that fits the model's context window — walking a
-    // marathon file back to the newest compaction parsed ~470MB / 11.5k
-    // records (~10s) on a session whose window holds a fraction of that.
-    //
-    // gh-968 (AC-R3): the budget is the PARITY formula — effective
-    // window minus the SAME unanchored system-prompt/tool-schema
-    // overhead the ctx meter adds, minus the ACTIVE compaction reserve.
-    // Pricing the transcript alone against the window (the old budget)
-    // let a resume materialize MORE request than the live loop carried
-    // before exit (the reported `127%/200k` footer): the meter read
-    // transcript + overhead over the window and tripped the guard /
-    // auto-compaction on a fresh resume. With the parity budget the
-    // resumed meter sits at/below window − reserve — below the
-    // compaction trigger — on every fresh resume.
-    final boundaryResident = await session.ensureCompactionBoundaryResident(
-      tokenBudget: budget,
-    );
-    if (!boundaryResident) {
-      // gh-1555 W1 (d2): the walk exhausted maxPages without reaching a
-      // boundary or the file head — a degenerate giant. The OLD fallback
-      // re-opened FULL, which refuses outright past the gh-1073 backstop
-      // (the incident's broken rescue): the marathon then could not
-      // resume at all. Proceed with the tail-anchored windowed session
-      // instead: the resident tail is a valid budget-truncated resume,
-      // and the boot cap below owns the over-window residue.
-      _logDiagnostic(
-        'boot_stage boundary-walk exhausted maxPages; proceeding with '
-        'the tail window sid=${metadata.id}',
-      );
-    }
+    await _walkResumeBoundary(session, plan, sid: metadata.id);
     stage('walk');
     // gh-1734: a warm switch to an unchanged session reuses the built
     // context — the projection (compaction transform + per-record
@@ -970,50 +1156,21 @@ extension on AgentCli {
       context = cachedContext;
       stage('context source=cache');
     } else {
-      final built = await session.buildContext();
-      context = built;
-      stage('context');
-      await _rememberResumedContext(metadata, fpBefore, budget, built);
+      context = await _buildResumedContext(
+        session,
+        metadata,
+        fpBefore,
+        plan.budget,
+        residentCalibration,
+        stage,
+      );
     }
-    final messages = context.messages;
-    // Loaded usage anchors are generation-time: post-compaction they
-    // phantom-report the pre-compaction size (183k on a 27k branch) and
-    // fire a no-op compaction on every resume. Re-anchor at chars/4.
-    _agent.state.messages = resetLoadedUsageAnchors(messages);
-    // GOAL #2394: the tag epoch of the resumed transcript (tags appear on
-    // the FIRST request after a pre-2.1 session resumes — no migration).
-    _agent.state.recordSeqs = context.recordSeqs;
-    // GOAL #2394 (AC2): S0 described the PREVIOUS session's transcript —
-    // a merged hand-over must never read it against this one.
-    _agent.invalidateRequestSnapshot('session resumed');
-    _persistedCount = messages.length;
-    // gh-1449 AC6: seed the one-shot orphan-report latch from the persisted
-    // `orphan_report` records (raw scan — the windowed open drops side-leaf
-    // custom records out of getEntries, the same reason the subagent
-    // registry scans raw). A resumed session never re-reports an orphan
-    // it already reported. Best-effort: a scan failure must not break boot.
-    //
-    // lastSegmentOnly (gh-1449 rework): the scan rides the RESUME BOOT
-    // PATH, so it reads the primary segment only — orphan_report records
-    // are tail-appended during runs, and the primary is rotation-bounded
-    // (kSessionSegmentRotateBytes). A record already rotated into a
-    // `.part-NN` segment may cost one re-report after a resume — the
-    // accepted trade against the #503 whole-chain boot cost below.
-    // clear() first: the Agent instance is reused across session opens,
-    // so the latch must be strictly per-session.
-    try {
-      final repo = _repo;
-      if (repo is JsonlSessionRepo) {
-        final reports = await repo.readCustomRecordsOfType(metadata, {
-          orphanReportRecordType,
-        }, lastSegmentOnly: true);
-        _agent.reportedOrphanKeys
-          ..clear()
-          ..addAll(orphanReportKeysFromRecords(reports));
-      }
-    } on Object catch (error) {
-      _logDiagnostic('orphan_report seed failed sid=${metadata.id}: $error');
+    if (residentCalibration != null &&
+        !_agent.state.overheadCalibration.measured) {
+      _agent.state.overheadCalibration = residentCalibration;
     }
+    _adoptResumedContext(session, context);
+    await _seedOrphanReportLatch(metadata);
     // Issue #437: persisted-but-unconsumed steering from a crashed
     // session re-enters the queue and wakes the idle agent (E1: one
     // record, consumed once — restart-safe).
@@ -1024,16 +1181,7 @@ extension on AgentCli {
     // lands. The method catches its own errors (a broken session must
     // still boot), so an unawaited future cannot go unhandled.
     unawaited(_queueRecoveredSteering(session));
-    // Adopt the session's original project folder. This matters both when
-    // switching mid-run and when the CLI starts with --session: tools like
-    // bash/read/edit must operate in the session's directory, not the launch
-    // directory.
-    if (_env.cwd != metadata.cwd) {
-      _env.cwd = metadata.cwd;
-      _modes = builtInAgentModes(_env.cwd, overrides: config.promptOverrides);
-      _currentMode = _modes[_currentMode.name] ?? _modes['code']!;
-      await _loadAgentContext();
-    }
+    await _restoreSessionFolder(metadata);
     // The session may live in a DIFFERENT folder than the launch cwd: the
     // boot applied the launch folder's model memory, so a session opened
     // across folders landed on the wrong provider (user report: a z.ai
@@ -1055,6 +1203,416 @@ extension on AgentCli {
     // wrong endpoint before the restore lands.
     await _capResumedContext(session);
     return session;
+  }
+
+  /// Issue #1882 AC3: no silent GB-scale operations — a resume over a
+  /// heavy session file says so (exact size + the hygiene escapes).
+  Future<void> _reportHeavySessionScan(SessionMetadata metadata) async {
+    final heavyScan = await sessionSizeIfHeavy(_env, metadata.path);
+    if (heavyScan == null) return;
+    for (final line in heavyScanGuardLines(heavyScan, metadata.path)) {
+      io.writeln(_style.dim(line));
+    }
+    _logDiagnostic('[heavy-scan] resume over $heavyScan bytes');
+  }
+
+  /// gh-241 follow-up #5 (F3/R1-R2 — owner live test, round 2): the
+  /// budget is a MEASUREMENT or it is nothing. It used to be the
+  /// heuristic (chars/token) overhead on every session, and with an
+  /// over-reading heuristic the parity formula went ≤ 0 — the walk kept
+  /// a one-message tail of the owner's resumed session, silently (no
+  /// record, no line; 28,440 → 17,773 prompt tokens). A session the
+  /// RESIDENT tail can already measure (a provider usage report after
+  /// its newest boundary) gets today's budget, priced by the report
+  /// (R2). An unmeasured one walks with NO budget — to the newest
+  /// compaction boundary or the file head; only a boundary (durable,
+  /// visible) may limit what loads (R1). The anchor the walk then
+  /// surfaces is applied by [_buildResumedContext], budget included.
+  ///
+  /// A budget of ZERO (the window does not cover overhead + reserve even
+  /// calibrated — the soft-window regime) is no budget either: the trim
+  /// would floor at ONE record, whatever role it has, and drop the newest
+  /// user turn from the context (gh-2411's invariant). The measured boot
+  /// relief owns that residue, with the turn carried.
+  ///
+  /// gh-241 follow-up #5d (D2 — owner live test round 5): a measured
+  /// ZERO budget is `null` too — and `null` used to walk UNBOUNDED to the
+  /// file head (47–53 messages, ≈31k estimated: the raw history earlier
+  /// cuts had removed), because the walk knew classic compactions only.
+  /// Now an unbudgeted walk stops at the newest durable boundary — a
+  /// structured checkpoint included — and cuts the window there; a
+  /// measured zero with NO boundary to stop at is bounded after the walk
+  /// by the parity budget floored at a tenth of the window (a larger
+  /// reserve still keeps strictly less; the newest turn always loads).
+  _ResumeWalkPlan _resumeWalkPlan(OverheadCalibration? residentCalibration) {
+    final parityBudget = residentCalibration == null
+        ? null
+        : resumeParityBudget(
+            effectiveContextWindow: _effectiveContextWindow,
+            reserveTokens: _effectiveCompactionSettings.reserveTokens,
+            systemPrompt: _agent.state.systemPrompt,
+            tools: _agent.state.tools,
+            overheadCalibration: residentCalibration,
+          );
+    final calibratedOverhead = residentCalibration?.apply(
+      estimateRequestOverheadTokens(
+        _agent.state.systemPrompt,
+        _agent.state.tools,
+      ),
+    );
+    final parityFloored =
+        _effectiveContextWindow -
+        (calibratedOverhead ?? 0) -
+        _effectiveCompactionSettings.reserveTokens;
+    final windowTenth = _effectiveContextWindow ~/ 10;
+    return _ResumeWalkPlan(
+      budget: (parityBudget ?? 0) > 0 ? parityBudget : null,
+      measured: parityBudget != null,
+      tightBudget: parityFloored > windowTenth ? parityFloored : windowTenth,
+      ratio: residentCalibration?.ratio,
+    );
+  }
+
+  /// The `resume walk … budget=…` diagnostic line (one line, the same
+  /// text for every caller of [_resumeWalkPlan]).
+  void _logResumeWalkPlan(String sid, _ResumeWalkPlan plan) {
+    final budget = plan.budget;
+    _logDiagnostic(
+      'resume walk sid=$sid '
+      'budget=${budget ?? 'none'} '
+      '${!plan.measured
+          ? '(unmeasured: estimate only — the walk stops at the newest '
+                'compaction boundary or checkpoint)'
+          : budget == null
+          ? '(zero: window below overhead + reserve — the walk stops at '
+                'the newest compaction boundary or checkpoint, else at a '
+                'tenth of the window)'
+          : 'calibrated x${plan.ratio!.toStringAsFixed(2)} (reported)'}',
+    );
+  }
+
+  /// Pages the resident window back under [plan]: to the budget, or —
+  /// unbudgeted — to the newest durable boundary.
+  ///
+  /// A marathon WITHOUT compaction pages past the windowed residency
+  /// cache — the leaf slides out and the branch would read empty (a
+  /// resume that looks like a fresh session, pty_resume_equivalence
+  /// AC6). Fall back to the full open: the documented degenerate path.
+  ///
+  /// Token budget (owner directive, issue #503 round 3): a resume needs
+  /// only the tail that fits the model's context window — walking a
+  /// marathon file back to the newest compaction parsed ~470MB / 11.5k
+  /// records (~10s) on a session whose window holds a fraction of that.
+  ///
+  /// gh-968 (AC-R3): the budget is the PARITY formula — effective
+  /// window minus the SAME unanchored system-prompt/tool-schema
+  /// overhead the ctx meter adds, minus the ACTIVE compaction reserve.
+  /// Pricing the transcript alone against the window (the old budget)
+  /// let a resume materialize MORE request than the live loop carried
+  /// before exit (the reported `127%/200k` footer): the meter read
+  /// transcript + overhead over the window and tripped the guard /
+  /// auto-compaction on a fresh resume. With the parity budget the
+  /// resumed meter sits at/below window − reserve — below the
+  /// compaction trigger — on every fresh resume.
+  Future<void> _walkResumeBoundary(
+    Session session,
+    _ResumeWalkPlan plan, {
+    required String sid,
+  }) async {
+    final budget = plan.budget;
+    // gh-241 follow-up #5e (E1): a measured budget accounts for the
+    // newest durable boundary's summary FIRST — page to it, capture it,
+    // then bound the raw tail under budget − summary. The tail-first
+    // walk met the budget before it met the boundary: the owner's
+    // session opened on a raw tool result and the model answered "I see
+    // no earlier conversation".
+    final boundaryResident = await session.ensureCompactionBoundaryResident(
+      tokenBudget: budget,
+      checkpointsAreBoundaries: budget == null,
+    );
+    // gh-241 follow-up #5d (D2): a measured zero budget found no durable
+    // boundary to stop at (the walk reached the file head) — bound the
+    // tail by the window minus the calibrated overhead instead.
+    if (budget == null &&
+        plan.measured &&
+        !session.resumeWalkReport().hasOlder) {
+      await session.ensureCompactionBoundaryResident(
+        tokenBudget: plan.tightBudget,
+      );
+    }
+    if (boundaryResident) return;
+    // gh-1555 W1 (d2): the walk exhausted maxPages without reaching a
+    // boundary or the file head — a degenerate giant. The OLD fallback
+    // re-opened FULL, which refuses outright past the gh-1073 backstop
+    // (the incident's broken rescue): the marathon then could not
+    // resume at all. Proceed with the tail-anchored windowed session
+    // instead: the resident tail is a valid budget-truncated resume,
+    // and the boot cap below owns the over-window residue.
+    _logDiagnostic(
+      'boot_stage boundary-walk exhausted maxPages; proceeding with '
+      'the tail window sid=$sid',
+    );
+  }
+
+  static bool _hasResumeSummary(List<Message> messages) =>
+      newestBoundarySummaries(messages).isNotEmpty;
+
+  /// E1: does the window as it stands already hold a durable boundary —
+  /// a checkpoint summary the belt recognises (`ckpt·` header), or a
+  /// compaction / checkpoint record on the resident branch (a CLASSIC
+  /// compaction summary has no recognizable header, and HEAD's budget
+  /// walk already opens on it)? Record-level too on purpose. Read-only:
+  /// neither the walk report nor the window is touched.
+  static Future<bool> _windowHasDurableBoundary(
+    Session session,
+    List<Message> built,
+  ) async =>
+      _hasResumeSummary(built) ||
+      (await session.getBranch()).any(
+        (record) =>
+            record is CompactCheckpointRecord || record is CompactionRecord,
+      );
+
+  /// E6: the newest boundary's summaries OPEN the context, oldest first
+  /// — a checkpoint that rides after the tail it summarizes moves up.
+  /// Same projection, so every message keeps its record alias.
+  SessionContext _carryResumeSummary(SessionContext built) {
+    final messages = built.messages;
+    final run = newestBoundarySummaries(messages);
+    if (run.isEmpty) return built;
+    final first = messages.indexOf(run.first);
+    if (first == 0) return built;
+    final last = messages.indexOf(run.last);
+    final seqs = built.recordSeqs;
+    bool kept(int i) => i < first || i > last;
+    int? alias(int i) =>
+        seqs != null && i < seqs.headSeqs.length ? seqs.headSeqs[i] : null;
+    return SessionContext(
+      messages: [
+        for (var i = first; i <= last; i++) messages[i],
+        for (var i = 0; i < messages.length; i++)
+          if (kept(i)) messages[i],
+      ],
+      thinkingLevel: built.thinkingLevel,
+      model: built.model,
+      activeToolNames: built.activeToolNames,
+      recordSeqs: seqs == null
+          ? null
+          : TranscriptSeqMap(
+              headSeqs: [
+                for (var i = first; i <= last; i++) alias(i),
+                for (var i = 0; i < messages.length; i++)
+                  if (kept(i)) alias(i),
+              ],
+              index: seqs.index,
+            ),
+    );
+  }
+
+  static int _summaryTokens(List<Message> messages) => [
+    for (final message in messages) estimateTokens(message),
+  ].fold(0, (a, b) => a + b);
+
+  /// The id of the record the request's opening summary projects from
+  /// (`<untagged>` outside a tag epoch), and its tokens.
+  ({String id, int tokens}) _resumeSummaryRef(
+    List<Message> summaries,
+    List<Message> messages,
+    TranscriptSeqMap? seqs,
+  ) {
+    final at = messages.indexOf(summaries.last);
+    return (
+      id: seqs?.recordIdAt(at) ?? '<untagged>',
+      tokens: _summaryTokens(summaries),
+    );
+  }
+
+  /// The resume tail line's summary field: the record the request's
+  /// opening summary projects from and its tokens, or why there is none.
+  String _resumeSummaryNote(
+    Session session,
+    List<Message> messages,
+    TranscriptSeqMap? seqs,
+  ) {
+    final summaries = [
+      for (final message in leadingBoundaryCluster(messages))
+        if (isBoundarySummary(message)) message,
+    ];
+    if (summaries.isNotEmpty) {
+      final ref = _resumeSummaryRef(summaries, messages, seqs);
+      return ' (summary=${ref.id} ≈${ref.tokens} tokens)';
+    }
+    final why = session.resumeWalkReport().hasOlder
+        ? 'no durable boundary found'
+        : 'tail reaches the file head';
+    return ' (no summary: $why)';
+  }
+
+  /// Builds the resumed context and applies the late anchor (R2 — the
+  /// walk surfaced a usage report the resident tail could not vouch
+  /// for): a surfaced report measures the session, and a measured
+  /// session carries today's budget — when the projection exceeds it,
+  /// the walk's record-granular trim applies (logged like every tail),
+  /// once.
+  Future<SessionContext> _buildResumedContext(
+    Session session,
+    SessionMetadata metadata,
+    ({int sizeBytes, int mtimeMs})? fpBefore,
+    int? budget,
+    OverheadCalibration? residentCalibration,
+    void Function(String name) stage,
+  ) async {
+    var built = await session.buildContext();
+    // gh-241 follow-up #5e (E1): a MEASURED budget walk that did NOT
+    // reach the newest durable boundary (the tail-first walk met the
+    // budget before it met the boundary: the owner's session opened on
+    // a raw tool result and the model answered "I see no earlier
+    // conversation") pages to that boundary — the window then opens at
+    // the summary plus the raw tail after it, untrimmed by the budget
+    // (it cuts oldest-first, so it took the summary before any tail
+    // record; an over-window tail is the boot cap's — the valve pins
+    // the summaries like the newest user turn). A window that already
+    // opens at a checkpoint boundary is HEAD's, record for record —
+    // one walk, one build (regression pins AC3/AC5 of the resume boot
+    // cap: a second walk or build is not free, it dropped the classic
+    // summary's hidden-segment index and one record).
+    if (budget != null &&
+        !await _windowHasDurableBoundary(session, built.messages)) {
+      await session.ensureCompactionBoundaryResident(
+        maxPages: 16,
+        checkpointsAreBoundaries: true,
+      );
+      var paged = await session.buildContext();
+      // No boundary within reach: HEAD's window stands — the page-in
+      // is undone by the same budget walk, so the request is HEAD's
+      // record for record.
+      if (!await _windowHasDurableBoundary(session, paged.messages)) {
+        await session.ensureCompactionBoundaryResident(
+          tokenBudget: budget,
+          checkpointsAreBoundaries: false,
+        );
+        paged = await session.buildContext();
+      }
+      built = paged;
+    }
+    if (residentCalibration != null) {
+      if (!_agent.state.overheadCalibration.measured) {
+        _agent.state.overheadCalibration = residentCalibration;
+      }
+    } else {
+      final surfaced = deriveOverheadCalibration(
+        built.messages,
+        systemPrompt: _agent.state.systemPrompt,
+        tools: _agent.state.tools,
+      );
+      if (surfaced != null) {
+        _agent.state.overheadCalibration = surfaced;
+        built = await _trimToSurfacedBudget(session, surfaced, built);
+      }
+    }
+    built = _carryResumeSummary(built);
+    stage('context');
+    await _rememberResumedContext(metadata, fpBefore, budget ?? -1, built);
+    return built;
+  }
+
+  /// R2's trim: the projection exceeds the budget the surfaced report
+  /// prices — re-walk under that budget and rebuild when it cut.
+  Future<SessionContext> _trimToSurfacedBudget(
+    Session session,
+    OverheadCalibration surfaced,
+    SessionContext built,
+  ) async {
+    final calibratedBudget = resumeParityBudget(
+      effectiveContextWindow: _effectiveContextWindow,
+      reserveTokens: _effectiveCompactionSettings.reserveTokens,
+      systemPrompt: _agent.state.systemPrompt,
+      tools: _agent.state.tools,
+      overheadCalibration: surfaced,
+    );
+    final loadedTokens = estimateRequestTokens(
+      built.messages,
+      systemPrompt: _agent.state.systemPrompt,
+      tools: _agent.state.tools,
+      calibration: surfaced,
+    );
+    if (loadedTokens <= calibratedBudget) return built;
+    // gh-241 follow-up #5e (E1): the summary outranks the parity trim
+    // — it cuts oldest-first and would take the boundary first.
+    if (_hasResumeSummary(built.messages)) return built;
+    await session.ensureCompactionBoundaryResident(
+      tokenBudget: calibratedBudget,
+    );
+    if (session.resumeWalkReport().droppedByBudget <= 0) return built;
+    return session.buildContext();
+  }
+
+  /// The built context becomes the live transcript (gh-1734 cache entry
+  /// included, via [_rememberResumedContext]).
+  void _adoptResumedContext(Session session, SessionContext context) {
+    final messages = context.messages;
+    _reportResumeTail(session, messages, context.recordSeqs);
+    final summaries = newestBoundarySummaries(messages);
+    if (summaries.isNotEmpty) {
+      final ref = _resumeSummaryRef(summaries, messages, context.recordSeqs);
+      _logDiagnostic(
+        'resume summary sid=$_logSid summary=${ref.id} '
+        '≈${ref.tokens} tokens',
+      );
+    }
+    // Loaded usage anchors are generation-time: post-compaction they
+    // phantom-report the pre-compaction size (183k on a 27k branch) and
+    // fire a no-op compaction on every resume. Re-anchor at chars/4.
+    _agent.state.messages = resetLoadedUsageAnchors(messages);
+    // GOAL #2394: the tag epoch of the resumed transcript (tags appear on
+    // the FIRST request after a pre-2.1 session resumes — no migration).
+    _agent.state.recordSeqs = context.recordSeqs;
+    // GOAL #2394 (AC2): S0 described the PREVIOUS session's transcript —
+    // a merged hand-over must never read it against this one.
+    _agent.invalidateRequestSnapshot('session resumed');
+    _persistedCount = messages.length;
+  }
+
+  /// gh-1449 AC6: seed the one-shot orphan-report latch from the persisted
+  /// `orphan_report` records (raw scan — the windowed open drops side-leaf
+  /// custom records out of getEntries, the same reason the subagent
+  /// registry scans raw). A resumed session never re-reports an orphan
+  /// it already reported. Best-effort: a scan failure must not break boot.
+  ///
+  /// lastSegmentOnly (gh-1449 rework): the scan rides the RESUME BOOT
+  /// PATH, so it reads the primary segment only — orphan_report records
+  /// are tail-appended during runs, and the primary is rotation-bounded
+  /// (kSessionSegmentRotateBytes). A record already rotated into a
+  /// `.part-NN` segment may cost one re-report after a resume — the
+  /// accepted trade against the #503 whole-chain boot cost below.
+  /// clear() first: the Agent instance is reused across session opens,
+  /// so the latch must be strictly per-session.
+  Future<void> _seedOrphanReportLatch(SessionMetadata metadata) async {
+    try {
+      final repo = _repo;
+      if (repo is JsonlSessionRepo) {
+        final reports = await repo.readCustomRecordsOfType(metadata, {
+          orphanReportRecordType,
+        }, lastSegmentOnly: true);
+        _agent.reportedOrphanKeys
+          ..clear()
+          ..addAll(orphanReportKeysFromRecords(reports));
+      }
+    } on Object catch (error) {
+      _logDiagnostic('orphan_report seed failed sid=${metadata.id}: $error');
+    }
+  }
+
+  /// Adopt the session's original project folder. This matters both when
+  /// switching mid-run and when the CLI starts with --session: tools like
+  /// bash/read/edit must operate in the session's directory, not the launch
+  /// directory.
+  Future<void> _restoreSessionFolder(SessionMetadata metadata) async {
+    if (_env.cwd == metadata.cwd) return;
+    _env.cwd = metadata.cwd;
+    _modes = builtInAgentModes(_env.cwd, overrides: config.promptOverrides);
+    _currentMode = _modes[_currentMode.name] ?? _modes['code']!;
+    await _loadAgentContext();
   }
 
   /// Re-applies the model/provider binding the restored session ran on —
@@ -1495,4 +2053,31 @@ extension on AgentCli {
     final hint = await sessionResumeHint();
     if (hint != null) io.writeln(_style.dim(hint));
   }
+}
+
+/// The resume walk's budget decision (gh-241 follow-up #5/#5d): what
+/// limits the resident window — a measured parity budget, or nothing
+/// (the newest durable boundary does) — plus the post-walk bound for a
+/// measured zero budget and the ratio the diagnostic line names.
+final class _ResumeWalkPlan {
+  const _ResumeWalkPlan({
+    required this.budget,
+    required this.measured,
+    required this.tightBudget,
+    required this.ratio,
+  });
+
+  /// The token budget of the walk; `null` = unbudgeted (the walk stops
+  /// at the newest durable boundary).
+  final int? budget;
+
+  /// Whether a provider report priced this session at all.
+  final bool measured;
+
+  /// The post-walk bound for a measured zero budget that found no
+  /// boundary: the parity budget floored at a tenth of the window.
+  final int tightBudget;
+
+  /// The calibrated overhead ratio (`null` when unmeasured).
+  final double? ratio;
 }
