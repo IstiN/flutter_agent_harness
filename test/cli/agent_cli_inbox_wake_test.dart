@@ -41,10 +41,16 @@ void main() {
 
   tearDown(() => io.close());
 
+  /// Every rig in this file exercises WAKE POLICY, not tick cadence:
+  /// the whole file builds on a 20ms inbox tick so "mail lands → next
+  /// tick wakes" walls shrink from ~2s per round to ~milliseconds. The
+  /// production 2s default is pinned by its own test in
+  /// agent_cli_viewer_test.dart.
   AgentCli buildCli(
     FakeStreamFunction fake, {
     MessagingConfig? messaging,
     MessagingRepository? hubFabric,
+    Duration inboxTickInterval = const Duration(milliseconds: 20),
   }) => AgentCli(
     config: AgentCliConfig(
       model: testModel,
@@ -54,6 +60,7 @@ void main() {
       providerKind: 'openai-completions',
       messaging: messaging,
       hubFabric: hubFabric,
+      inboxTickInterval: inboxTickInterval,
     ),
     io: io,
     streamFunction: fake.call,

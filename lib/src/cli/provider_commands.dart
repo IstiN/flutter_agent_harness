@@ -1900,7 +1900,14 @@ extension on AgentCli {
   Future<String?> _dialAskDeployment(String baseUrl, String key) async {
     List<String> deployments = const [];
     try {
-      deployments = await fetchDialModels(baseUrl, key);
+      // `modelFetchClient('dial')` — same rule as the settings-flow fetch
+      // (provider_models.dart): the proxy gate applies, and test injection
+      // via `AgentCliConfig.modelsHttpClient` wins over the live client.
+      deployments = await fetchDialModels(
+        baseUrl,
+        key,
+        client: modelFetchClient('dial'),
+      );
     } on Object {
       // Dead endpoint / bad key — the user can still type a deployment.
     }
