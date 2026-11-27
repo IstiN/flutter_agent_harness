@@ -5,6 +5,8 @@
 import 'package:fa_ui/fa_ui.dart' show FaDesignTokens, FaLogo, buildFaTheme;
 import 'package:flutter/material.dart';
 
+import 'product_brand.dart' show ProductBrandMark, ProductConfigScope;
+
 /// The canonical B3-square-accent mark used by compact brand actions.
 class FaMark extends StatelessWidget {
   const FaMark({super.key, this.size = 20});
@@ -17,24 +19,47 @@ class FaMark extends StatelessWidget {
 
 /// The canonical brand app tile, sharing its geometry with the platform
 /// launcher icons. [dark] defaults to the ambient theme brightness.
+///
+/// The tile consults [ProductConfigScope] itself (gh-2391 addendum 8): a
+/// branded profile renders the host mark — the declared asset, else the
+/// deterministic monogram — so no call site can forget the scoping and
+/// leak the stock tile; the stock identity keeps rendering today's
+/// [FaLogo] tile unchanged.
 class FaBrandTile extends StatelessWidget {
-  const FaBrandTile({super.key, this.size = 28, this.dark});
+  const FaBrandTile({
+    super.key,
+    this.size = 28,
+    this.dark,
+    this.trailingDot = false,
+  });
 
   final double size;
 
   /// Forces the dark/light form; null follows the theme brightness.
   final bool? dark;
 
+  /// Stock-only: places the accent dot after the `a` (the collapsed
+  /// messenger header's more horizontal mark). Branded marks ignore it.
+  final bool trailingDot;
+
   @override
   Widget build(BuildContext context) {
+    final product = ProductConfigScope.of(context);
+    if (!product.isStock) {
+      return ProductBrandMark(productConfig: product, size: size);
+    }
+    return _stockTile(context);
+  }
+
+  Widget _stockTile(BuildContext context) {
     final forced = dark;
-    if (forced == null) return FaLogo(size: size);
+    if (forced == null) return FaLogo(size: size, trailingDot: trailingDot);
     return Theme(
       data: buildFaTheme(
         direction: FaDesignTokens.of(context).direction,
         brightness: forced ? Brightness.dark : Brightness.light,
       ),
-      child: FaLogo(size: size),
+      child: FaLogo(size: size, trailingDot: trailingDot),
     );
   }
 }

@@ -6,6 +6,7 @@ import 'dart:math' as math;
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/ui/widgets/session_search_field.dart';
+import 'package:fa/ui/widgets/fa_mark.dart' show FaBrandTile;
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -613,7 +614,9 @@ final class MessengerSectionHeader extends StatelessWidget {
         child: SizedBox.square(
           key: const ValueKey('wideShellFaBrand'),
           dimension: brandSize,
-          child: FaLogo(size: brandSize, trailingDot: collapsed),
+          // The scoping lives in FaBrandTile (addendum 8 item 1): branded
+          // builds render the host mark, stock keeps the trailing-dot logo.
+          child: FaBrandTile(size: brandSize, trailingDot: collapsed),
         ),
       ),
     );
