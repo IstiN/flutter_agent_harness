@@ -150,4 +150,48 @@ void main() {
       expect(garbage['contextWindow'], 264000);
     });
   });
+
+  group('mergeProvider headers (gh-2425)', () {
+    test('an incoming headers map wins over the stored one', () {
+      final merged = mergeProvider(
+        const {
+          'headers': {'x-old': '1'},
+        },
+        const {
+          'headers': {'x-new': '2'},
+        },
+      );
+      expect(merged['headers'], {'x-new': '2'});
+    });
+
+    test('a save without headers keeps the stored ones', () {
+      final merged = mergeProvider(
+        const {
+          'headers': {'x-old': '1'},
+        },
+        const {'baseUrl': 'https://b/v1'},
+      );
+      expect(merged['headers'], {'x-old': '1'});
+    });
+
+    test('garbled incoming headers keep the stored ones; empty result '
+        'omits the key (storage docs stay clean)', () {
+      final kept = mergeProvider(
+        const {
+          'headers': {'x-old': '1'},
+        },
+        const {'headers': 'not-a-map'},
+      );
+      expect(kept['headers'], {'x-old': '1'});
+      final clean = mergeProvider(null, const {'model': 'm'});
+      expect(clean.containsKey('headers'), isFalse);
+    });
+
+    test('non-string header values are dropped, strings survive', () {
+      final merged = mergeProvider(null, const {
+        'headers': {'x-a': '1', 'x-num': 42},
+      });
+      expect(merged['headers'], {'x-a': '1'});
+    });
+  });
 }

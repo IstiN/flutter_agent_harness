@@ -270,10 +270,36 @@ $('saveProvider').addEventListener('click', async () => {
     baseUrl: $('pBaseUrl').value,
     apiKey: $('pApiKey').value,
     model: $('pModel').value,
+    // gh-2425: the window override and the custom-header text ride the save
+    // raw (string values); the SW parses, merges with the stored provider,
+    // and persists — blank fields keep the stored values.
+    contextWindow: $('pContextWindow').value.trim(),
+    headers: $('pHeaders').value,
     approvalMode: $('pApproval').value,
   });
   if (res?.ok) log('provider saved (stored in the service worker only)');
 });
+
+// gh-2425: prefill the form from the stored provider. provider.get answers
+// every field EXCEPT the key — the key stays write-only (a save that omits
+// it keeps the stored one via the SW-side merge), so a reload never echoes
+// it back.
+(async () => {
+  try {
+    const res = await chrome.runtime.sendMessage({ type: 'provider.get' });
+    if (!res?.ok) return;
+    const p = res.provider ?? {};
+    if (!$('pBaseUrl').value.trim()) $('pBaseUrl').value = p.baseUrl ?? '';
+    if (!$('pModel').value.trim()) $('pModel').value = p.model ?? '';
+    if (p.contextWindow) $('pContextWindow').value = String(p.contextWindow);
+    const headerText = Object.entries(p.headers ?? {})
+      .map(([name, value]) => `${name}: ${value}`)
+      .join('\n');
+    if (headerText) $('pHeaders').value = headerText;
+  } catch {
+    // SW unavailable: the form just starts empty.
+  }
+})();
 
 // -- CodeMie cookie sign-in (ext ops over the fa-ui-v2 port) ------------------
 // The service worker serves three one-shot ops to this panel only:

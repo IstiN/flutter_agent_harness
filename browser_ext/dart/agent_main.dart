@@ -33,6 +33,7 @@ import 'src/fetch_client.dart';
 import 'package:flutter_agent_harness/src/web_search/web_search.dart';
 import 'src/providers.dart';
 import 'src/security/exfil_gate.dart' show originOf;
+import 'src/settings_merge.dart' show headersFromStored;
 import 'src/ui_host_adapter.dart';
 import 'src/ui_port_server.dart';
 import 'src/ui_transport.dart';
@@ -755,6 +756,13 @@ HostConfig _configFrom({
     legacyActive: entry == null,
     legacyProvider: provider is Map ? provider : null,
   );
+  // gh-2425: custom headers ride the LEGACY map only when IT produced the
+  // provider (the same ACTIVE-source rule as the window settings above —
+  // machine review I2): a synced registry entry never inherits a stale
+  // header set from a previous endpoint.
+  final providerHeaders = entry == null && provider is Map
+      ? headersFromStored(provider['headers'])
+      : const <String, String>{};
   return (
     provider: resolved,
     approvalMode: approval is String ? approval : 'ask',
@@ -764,6 +772,7 @@ HostConfig _configFrom({
     browserTools: _browserToolsFrom(browserTools),
     contextWindow: windows.contextWindow,
     contextWindowCap: windows.contextWindowCap,
+    providerHeaders: providerHeaders,
   );
 }
 
