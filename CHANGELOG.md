@@ -87,6 +87,9 @@ block a release again.
   wrappers of the roles that inherit it, so the switch takes effect on
   the next run for compaction summaries and smol takeovers too
   (gh-2433 review).
+
+
+
 - fix(2356): tag-run CANCELLED legs now reach ci-red-report (gh-2436 /
   v1.0.782 run 45830131519 class) — the hung binaries-macos-x64 leg
   concluded CANCELLED at timeout-minutes:45 and the failure-only arming
@@ -100,6 +103,22 @@ block a release again.
   conclusion query (failing-first: 2 red → 7 green); tag runs are never
   concurrency-cancelled (cancel-in-progress is PR-only), so a cancelled
   tag leg is always an incident, never queue churn.
+
+- fix(2415): fd exhaustion in long-lived sessions — the CLI raises the fd
+  soft limit once at startup (`getrlimit`/`setrlimit` via dart:ffi in the
+  io boundary, target `min(hard, 10240)`; the macOS launchd default of 256
+  was far below an orchestrator's spike load) with a one-line `[fd]`
+  notice on stderr when it moves; an EMFILE/ENFILE spawn failure is now a
+  typed `ExecutionErrorCode.fdExhausted` carrying an honest "fd pressure"
+  text with the current soft limit and the way out (settle/stop jobs,
+  `ulimit -n`) — the bash tool retries ONCE after a settle beat and the
+  agent loop renders it as operational instead of the "uncaught exception
+  / tool may be unavailable" mislabel; the scheduled-receipt writer keeps
+  failed lines in memory, warns ONCE per pressure window (`[sched]
+  receipt write deferred`), and flushes the whole backlog in order on the
+  first successful write — a lost receipt is impossible and the per-tick
+  failure spam is gone.
+
 - fix(gh-2426): every CodeMie request now carries the `x-codemie-client`
   budget-attribution header. The CodeMie gateway picks the BILLING BUDGET
   by that header; a request without it lands in the user's PERSONAL budget
@@ -119,6 +138,7 @@ block a release again.
   byte-identical on the wire. Per-org adaptation needs no code change:
   the `CODEMIE_CLIENT_ID` env var (CLI process env / app `.env`) overrides
   the client value at startup (issue #2426 review).
+
 - feat(2416): GOAL #28 slim tool manifest — the default load mode is the
   owner's partition: twelve always-visible tools (keep-12, name-level:
   `memory_add`/`memory_search` stay while `memory_list`/`memory_delete`

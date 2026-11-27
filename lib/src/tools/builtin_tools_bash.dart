@@ -296,10 +296,6 @@ Future<ToolExecutionResult> _executeShellCall(
   required Set<String> Function()? approvedSecretLiterals,
 }) async {
   cancelToken?.throwIfCancelled();
-  // gh-2415: before any Process.start — release settled jobs' leftovers
-  // and refuse with the typed error when the descriptor table is still
-  // above the limit (never an uncaught ProcessException).
-  jobs?.guardFdPressure();
   final command = arguments['command'] as String;
   final (effectiveCommand, rewriteNotice) = _rewriteShellCommand(
     command,
@@ -557,14 +553,6 @@ Future<ToolExecutionResult> _runForegroundBash(
       );
       await Future<void>.delayed(retryBackoff);
       continue;
-    } on Object catch (error) {
-      // gh-2415: an errno-24 the OS raised inside the exec path (a spawn
-      // refusal, a log file the job could not open) surfaces as the
-      // typed, visible fd-pressure tool error — never a crash hint. The
-      // check is textual (the library is pure Dart: no dart:io types);
-      // every other throw keeps its shape.
-      if (isFdPressureError(error)) throw const FdPressureException.unsampled();
-      rethrow;
     }
 
     if (result.isErr) {
@@ -573,20 +561,14 @@ Future<ToolExecutionResult> _runForegroundBash(
       // survivors here too, before a retry or failure throw can discard
       // the process evidence (issue #2276).
       await _adoptExecSurvivors(jobs, command, error.survivors, notices);
-      // gh-1444 C5: a timeout the MODEL passed is a transient-failure
-      // candidate (a hung network call under a deliberate bail cap) and is
-      // retried; a SHELL-default timeout (no timeout argument) is the
-      // harness's own cap firing — re-running a long command up to 3×
-      // parks the turn ("looked stuck"), so it fails once with the honest
-      // text and the captured partial output.
-      if (error.code == ExecutionErrorCode.timeout &&
-          canRetry &&
-          timeoutArg != null) {
-        notices.add(
-          '[bash attempt $attempt/${bashToolMaxRetries + 1} timed out'
-          ' after ${timeoutArg}s — '
-          'retrying]',
-        );
+      final retryNotice = _execRetryNotice(
+        error,
+        timeoutArg: timeoutArg,
+        attempt: attempt,
+        canRetry: canRetry,
+      );
+      if (retryNotice != null) {
+        notices.add(retryNotice);
         await Future<void>.delayed(retryBackoff);
         continue;
       }
@@ -614,18 +596,47 @@ Future<ToolExecutionResult> _runForegroundBash(
   }
 }
 
-/// The user-visible error for a non-retryable bash exec failure. A
-/// `StateError` (operational texts matched by the loop) or, for an EMFILE
-/// spawn failure (gh-2415), the typed [FdPressureException].
-Object _bashFailureError(
+/// The retry notice for a retryable exec Err, or null when the failure is
+/// final. Two retry classes (issue #2415 + gh-1444 C5):
+///
+/// - a timeout the MODEL passed is a transient-failure candidate (a hung
+///   network call under a deliberate bail cap) and is retried; a
+///   SHELL-default timeout (no timeout argument) is the harness's own cap
+///   firing — re-running a long command up to 3× parks the turn ("looked
+///   stuck"), so it fails once with the honest text and the captured
+///   partial output;
+/// - fd-table exhaustion (EMFILE) gets exactly ONE retry after a settle
+///   beat, because drains that are mid-flight when the first spawn hits
+///   the limit often finish within it. A second EMFILE is a hard
+///   environmental wall — the typed fd-pressure text (operational, no
+///   "uncaught exception" mislabel) reports it as-is.
+String? _execRetryNotice(
+  ExecutionError error, {
+  required num? timeoutArg,
+  required int attempt,
+  required bool canRetry,
+}) {
+  if (error.code == ExecutionErrorCode.fdExhausted) {
+    if (!canRetry || attempt != 1) return null;
+    return '[bash attempt $attempt hit fd pressure (too many open files) '
+        '— retrying once]';
+  }
+  if (error.code == ExecutionErrorCode.timeout &&
+      canRetry &&
+      timeoutArg != null) {
+    return '[bash attempt $attempt/${bashToolMaxRetries + 1} timed out'
+        ' after ${timeoutArg}s — '
+        'retrying]';
+  }
+  return null;
+}
+
+/// The user-visible error for a non-retryable bash exec failure.
+StateError _bashFailureError(
   ExecutionError error,
   List<String> notices,
   num? timeoutArg,
 ) {
-  if (error.code == ExecutionErrorCode.spawnError &&
-      isFdPressureError(error.cause ?? error.message)) {
-    throw const FdPressureException.unsampled();
-  }
   // gh-1053 (review rework): a killed call's error carries the captured
   // partial output — render it so the model sees WHERE the call stalled,
   // not just the verdict.
