@@ -71,10 +71,13 @@ ChainLoopGuard _defaultChainLoopGuard() {
 ///   streak, so gating it on the counter would deadlock
 ///   (no run → no reset → no run);
 /// - the smart chain guard ([chainGuard], issue #2226): the DEFAULT
-///   bound — loop detection (content-similarity + no-progress signals)
-///   and an autonomous-chain token budget pause a looping or runaway
-///   chain with a user-facing digest, while productive long
-///   collaborations (fresh ids/state every round) never trigger;
+///   bound is the loop detection (content-similarity + no-progress
+///   signals) — a looping chain pauses with a user-facing digest, while
+///   productive long collaborations (fresh ids/state every round) never
+///   trigger. The autonomous-chain TOKEN BUDGET is OPT-IN since PR
+///   #2435 (owner directive "let the mail arrive"): the default
+///   `messaging.chainBudgetTokens` is 0, so spend alone never pauses a
+///   chain — a positive value re-enables the #2226 budget pause;
 /// - the LEGACY chatter cap ([maxStreak]): the raw consecutive-wake
 ///   counter, now **OFF by default** (0) — volume is not looping, and
 ///   the money-project incident (10 productive exchanges refused) is the

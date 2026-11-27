@@ -52,11 +52,21 @@ void main() {
             realRoot
                 .listSync()
                 .whereType<Directory>()
+                // Parity with the listing walk: it never enters the trash
+                // (issue #522, `JsonlSessionRepo.trashDirName`) — a sampler
+                // that copies from it over-counts `copiedFiles`, and the
+                // replica then reports sessions the pipeline rightly hides
+                // (a freshly swept store puts `.trash` among the newest
+                // depth-1 dirs, so `take(maxDirsPerRoot)` selects it).
+                .where(
+                  (dir) =>
+                      dir.uri.pathSegments.where((s) => s.isNotEmpty).last !=
+                      JsonlSessionRepo.trashDirName,
+                )
                 .toList()
               ..sort(
-                (a, b) => b.statSync().modified.compareTo(
-                  a.statSync().modified,
-                ),
+                (a, b) =>
+                    b.statSync().modified.compareTo(a.statSync().modified),
               );
         var copiedInRoot = 0;
         for (final dir in cwdDirs.take(maxDirsPerRoot)) {
@@ -67,13 +77,13 @@ void main() {
                   .where((f) => f.path.endsWith('.jsonl'))
                   .toList()
                 ..sort(
-                  (a, b) => b.statSync().modified.compareTo(
-                    a.statSync().modified,
-                  ),
+                  (a, b) =>
+                      b.statSync().modified.compareTo(a.statSync().modified),
                 );
           for (final file in jsonls) {
             if (file.lengthSync() > maxCopyBytes) continue;
-            final dest = '$copyRoot/${dir.uri.pathSegments.reversed.skip(1).first}'
+            final dest =
+                '$copyRoot/${dir.uri.pathSegments.reversed.skip(1).first}'
                 '/${file.uri.pathSegments.last}';
             Directory(dest).parent.createSync(recursive: true);
             file.copySync(dest);

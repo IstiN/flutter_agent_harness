@@ -32,7 +32,13 @@ import '../providers/payload_stall.dart'
 import '../providers/provider_tuning.dart';
 import 'agent_loop.dart';
 import '../compaction/record_tag.dart' show TranscriptSeqMap;
+import '../compaction/record_tag_echo.dart' show stripRecordTagEcho;
+import '../compaction/overhead_calibration.dart';
+import '../compaction/token_estimation.dart' show deriveOverheadCalibration;
 import '../compaction/request_snapshot.dart' show RequestSnapshotStore;
+import '../compaction/working_set_snapshot.dart' show WorkingSetSnapshot;
+import '../compaction/working_set_store.dart'
+    show WorkingSetStore, runWithWorkingSetStore;
 import 'image_recovery.dart' show ImagePayloadRecoveryState;
 import 'message_cap.dart' show MessageCapPolicy;
 import 'misuse_breaker.dart';
@@ -81,7 +87,9 @@ final class AgentState {
     List<Tool> tools = const [],
     List<Message> messages = const [],
   }) : _tools = List.of(tools),
-       _messages = List.of(messages);
+       _messages = List.of(messages) {
+    _anchorOverheadFromTranscript();
+  }
 
   /// System prompt sent with each model request.
   String systemPrompt;
@@ -96,9 +104,34 @@ final class AgentState {
   List<Tool> get tools => List.unmodifiable(_tools);
   set tools(List<Tool> value) => _tools = List.of(value);
 
-  /// Conversation transcript. Assigning copies the list.
+  /// Conversation transcript. Assigning copies the list — and anchors the
+  /// overhead estimate when the transcript carries provider usage and the
+  /// session has no measurement yet (see [_anchorOverheadFromTranscript]).
   List<Message> get messages => List.unmodifiable(_messages);
-  set messages(List<Message> value) => _messages = List.of(value);
+  set messages(List<Message> value) {
+    _messages = List.of(value);
+    _anchorOverheadFromTranscript();
+  }
+
+  /// gh-2411 follow-up #5 (owner live test, round 2): a transcript that is
+  /// LOADED with provider usage already anchors the overhead estimate —
+  /// a resumed session is then priced by the provider's own number on its
+  /// very first request. The calibration used to be runtime-only (taken
+  /// when a reply ends), so the first request of a restarted session went
+  /// out on the chars/token heuristic alone (+54% on the owner's prompt),
+  /// the over-window guard stopped it before the provider could answer,
+  /// and with no reply there was never an anchor: every prompt failed
+  /// identically. Same rule as the live path — the FIRST valid usage
+  /// report wins; once measured, it stands for the session.
+  void _anchorOverheadFromTranscript() {
+    if (overheadCalibration.measured) return;
+    final calibration = deriveOverheadCalibration(
+      _messages,
+      systemPrompt: systemPrompt,
+      tools: _tools,
+    );
+    if (calibration != null) overheadCalibration = calibration;
+  }
 
   /// True while the agent is processing a prompt or continuation.
   ///
@@ -125,6 +158,14 @@ final class AgentState {
   /// `messages`; the loop stamps request COPIES from it, never the
   /// transcript.
   TranscriptSeqMap? recordSeqs;
+
+  /// gh-2411: the session's overhead calibration — measured from the
+  /// FIRST valid provider usage the transcript carried and kept for the
+  /// rest of the session, so the unanchored estimates (every turn after a
+  /// compaction zeroed the usage anchors) price the system prompt and the
+  /// tool schemas as that provider does. Runtime-only, never persisted;
+  /// [Agent.reset] starts a session clean.
+  OverheadCalibration overheadCalibration = OverheadCalibration.uncalibrated;
 }
 
 /// Placeholder model mirroring pi's `DEFAULT_MODEL`, used when the caller
@@ -239,6 +280,7 @@ class Agent {
     this.foregroundCall,
     this.finalizeGate = false,
     this.operativeSkills = const [],
+    this.workingSetStore,
     Set<String>? reportedOrphanKeys,
   }) : toolExecutor =
            toolExecutor ?? toolRegistry?.executor ?? _missingToolExecutor(),
@@ -322,6 +364,38 @@ class Agent {
   /// requests. Mutable by design: `/skills reload` and availability
   /// toggles swap the list.
   List<Skill> operativeSkills;
+
+  /// gh-2423 (C1): the agent's OWN working-set store — the session the
+  /// `working_set` tool writes into and the loop reads the newest
+  /// snapshot from for the system channel of every request. Null = the
+  /// agent has no session to pin notes in (the tool answers gracefully,
+  /// the request carries no block — byte-identical to before). Set by the
+  /// session's OWNER: the host for its main agent, the task executor for
+  /// each child (its own file). Mutable like [transformContext]: hosts
+  /// attach it after construction; a run reads it once at start.
+  WorkingSetStore? workingSetStore;
+
+  /// gh-2423 (C3): context notices waiting for the agent's NEXT request
+  /// (the honest post-hide / near-limit `<system-notice>` records a host
+  /// emits at a compaction boundary). Drained by the loop right before it
+  /// injects queued steering, so a notice rides the next request the run
+  /// makes anyway — same inject/persist path as steering, but it never
+  /// opens a turn of its own ([queueContextNotice] vs [steer]). Empty on
+  /// every request when no notice is pending: byte-identical to before.
+  final _pendingContextNotices = <Message>[];
+
+  /// Queues a harness context notice for the agent's next request (see
+  /// [_pendingContextNotices]). Not [steer]: a steered message that lands
+  /// after a run's last boundary is delivered by the loop's stop-check
+  /// drain as a whole extra turn — right for user mail, wrong for a
+  /// notice the model should simply see with its next request.
+  void queueContextNotice(Message message) =>
+      _pendingContextNotices.add(message);
+
+  /// The notices waiting for the next request, oldest first (test /
+  /// diagnostic read; the loop drains through its config).
+  List<Message> get pendingContextNotices =>
+      List.unmodifiable(_pendingContextNotices);
 
   /// gh-1449: the session's one-shot latch of already-reported orphan
   /// results ([orphanReportKey]s, mutable — the agent loop adds every key
@@ -426,6 +500,16 @@ class Agent {
   /// service exists (the app's pre-constructed-agent constructor) attach
   /// the relief right after (gh-1077).
   OverWindowRelief? overWindowRelief;
+
+  /// gh-2411: the host's compaction reserve for the effective window,
+  /// threaded into every [AgentLoopConfig] — the loop's soft-window
+  /// regime (fixed overhead + newest user turn ≥ `window - reserve`: no
+  /// trim can ever land under it, so the request goes out as is instead
+  /// of trimming every turn) must key off the SAME reserve the host's
+  /// compaction trigger uses. `null` = no reserve (the window is the
+  /// line). Mutable like [overWindowRelief]: hosts attach it after
+  /// construction.
+  int Function()? windowReserveTokens;
 
   /// gh-1680: the learned per-model message-cap policy threaded into every
   /// [AgentLoopConfig]. `null` = the loop keeps the pre-gh-1680 behavior
@@ -647,6 +731,7 @@ class Agent {
     _state._streamingMessage = null;
     _state._pendingToolCalls.clear();
     _state._errorMessage = null;
+    _state.overheadCalibration = OverheadCalibration.uncalibrated;
     clearAllQueues();
     requestSnapshots.invalidate('agent reset');
   }
@@ -778,6 +863,31 @@ class Agent {
     );
   }
 
+  /// gh-2423 (C1): the loop's working-set provider — resolves the
+  /// agent's newest snapshot before a provider call; null when the agent
+  /// has no store (the request is then byte-identical to before). The
+  /// store is read ONCE here, at run start (the config is per run); a
+  /// failing read resolves to null — the block is additive and must never
+  /// fail the request.
+  Future<WorkingSetSnapshot?> Function()? _workingSetProvider() {
+    final store = workingSetStore;
+    if (store == null) return null;
+    return () => store.load().then<WorkingSetSnapshot?>(
+      (snapshot) => snapshot,
+      onError: (_) => null,
+    );
+  }
+
+  /// gh-2423 (C3): hands the queued context notices to the loop and
+  /// empties the queue (drained right before the queued steering is
+  /// injected — see [_pendingContextNotices]).
+  List<Message> _takePendingContextNotices() {
+    if (_pendingContextNotices.isEmpty) return const <Message>[];
+    final drained = List<Message>.of(_pendingContextNotices);
+    _pendingContextNotices.clear();
+    return drained;
+  }
+
   AgentLoopConfig _createLoopConfig({bool skipInitialSteeringPoll = false}) {
     var skip = skipInitialSteeringPoll;
     final relief = overWindowRelief;
@@ -814,6 +924,11 @@ class Agent {
             },
       messageCapPolicy: messageCapPolicy,
       messageCapRelief: messageCapRelief,
+      // gh-2411: read per request — the first valid usage of the session
+      // calibrates the state mid-run; a value snapshotted here would
+      // leave this run's guard on the stale basis.
+      overheadCalibration: () => _state.overheadCalibration,
+      windowReserveTokens: windowReserveTokens,
       onTruncatedToolCall: onTruncatedToolCall,
       stuckTool: stuckTool,
       foregroundCallBudget: foregroundCall,
@@ -822,6 +937,8 @@ class Agent {
       toolExecution: toolExecution,
       finalizeGate: finalizeGate,
       operativeSkills: operativeSkills,
+      workingSetProvider: _workingSetProvider(),
+      takePendingNotices: _takePendingContextNotices,
       beforeToolCall: beforeToolCall,
       afterToolCall: afterToolCall,
       missingToolResolver: missingToolResolver,
@@ -899,7 +1016,17 @@ class Agent {
     _armRunWatchdog();
 
     try {
-      await executor(run.source.token, run.source);
+      // gh-2423 (C1): the run publishes the agent's working-set store in
+      // the zone, so the `working_set` tool resolves the CALLING agent's
+      // own session at call time (a task child's file, never the host's) —
+      // the same mechanism as the subagent scope.
+      final workingSet = workingSetStore;
+      await (workingSet == null
+          ? executor(run.source.token, run.source)
+          : runWithWorkingSetStore(
+              workingSet,
+              () => executor(run.source.token, run.source),
+            ));
     } catch (error) {
       await _handleRunFailure(error, run.source.token.isCancelled);
     } finally {
@@ -953,12 +1080,43 @@ class Agent {
     _activeRun = null;
   }
 
+  /// gh-2412: an assistant reply joins the transcript (the state and
+  /// every listener — the session persist included) WITHOUT an echoed
+  /// record tag, and only while tags are enabled: the tags ride the wire
+  /// copy alone, so an alias the model repeats is never its own words.
+  /// The turn-end event repeats the same reply object — it gets the
+  /// cleaned twin (headless `turn_end` consumers read the same text).
+  AgentEvent _withoutRecordTagEcho(AgentEvent event) {
+    if (!recordTagsEnabled) return event;
+    switch (event) {
+      case MessageEndEvent(:final message):
+        if (message is! AssistantMessage) return event;
+        final clean = stripRecordTagEcho(message);
+        if (identical(clean, message)) return event;
+        _echoCleaned = (raw: message, clean: clean);
+        return MessageEndEvent(clean);
+      case TurnEndEvent(:final message, :final toolResults):
+        final echoed = _echoCleaned;
+        if (echoed == null || !identical(message, echoed.raw)) return event;
+        _echoCleaned = null;
+        return TurnEndEvent(message: echoed.clean, toolResults: toolResults);
+      default:
+        return event;
+    }
+  }
+
+  /// The last reply whose echoed tag was stripped at finalize — the raw
+  /// object and its cleaned twin — kept for the turn-end event that
+  /// repeats the raw object; cleared when that event was rewritten.
+  ({AssistantMessage raw, AssistantMessage clean})? _echoCleaned;
+
   /// Reduce internal state for a loop event, then await listeners.
   ///
   /// `agent_end` only means no further loop events will be emitted. The run
   /// is considered idle later, after all awaited listeners for `agent_end`
   /// finish and [_finishRun] clears runtime-owned state (pi semantics).
   Future<void> _processEvent(AgentEvent event) async {
+    event = _withoutRecordTagEcho(event);
     _reduceState(event);
     _touchRunWatchdog(event);
 
@@ -1097,6 +1255,7 @@ class Agent {
         _state._streamingMessage = message;
       case MessageEndEvent(:final message):
         _state._streamingMessage = null;
+        _calibrateOverhead(message);
         _state._messages.add(message);
       case TurnEndEvent(:final message):
         _recordTurnError(message);
@@ -1117,6 +1276,23 @@ class Agent {
       default:
         break;
     }
+  }
+
+  /// gh-2411: the session's first valid provider usage calibrates the
+  /// overhead estimate ([AgentState.overheadCalibration]). Measured
+  /// BEFORE the reply joins the transcript, so the request it answered is
+  /// exactly the transcript prefix; once taken, the measurement stands
+  /// for the session.
+  void _calibrateOverhead(Message message) {
+    if (_state.overheadCalibration.measured || message is! AssistantMessage) {
+      return;
+    }
+    final calibration = deriveOverheadCalibration(
+      [..._state._messages, message],
+      systemPrompt: _state.systemPrompt,
+      tools: _state._tools,
+    );
+    if (calibration != null) _state.overheadCalibration = calibration;
   }
 
   /// Remembers the turn's error message when the turn ended in failure.

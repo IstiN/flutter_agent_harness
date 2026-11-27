@@ -197,6 +197,7 @@ final class LocalFileSystem
   }) async {
     if (maxLines != null && maxLines <= 0) return const Ok([]);
     final resolved = _resolve(path);
+    if (maxLines != null) return _readTextLinesBounded(resolved, maxLines);
     try {
       final lines = <String>[];
       final stream = File(
@@ -209,6 +210,57 @@ final class LocalFileSystem
       return Ok(lines);
     } on Object catch (error) {
       return Err(_toFileError(error, resolved));
+    }
+  }
+
+  /// Chunk size of a bounded header read.
+  static const _boundedReadChunkBytes = 64 * 1024;
+
+  /// A bounded read never scans more than this for its lines: a session
+  /// header line is a few hundred bytes; a single line past 4 MiB is
+  /// not a header, and the partial text is returned as-is.
+  static const _boundedReadMaxBytes = 4 * 1024 * 1024;
+
+  /// A BOUNDED line read (gh-2415 session-handle hygiene): an explicit
+  /// open → read → close-in-`finally`, so the descriptor's lifetime is
+  /// this call and never a stream subscription's cancel/finalizer timing.
+  /// The session listing reads one or two header lines per file across
+  /// EVERY project's sessions on a long-lived host (the live orchestrator
+  /// carried 114 session-file handles); this path guarantees each read
+  /// hands its descriptor back before answering. Same semantics as the
+  /// streaming path: `\r\n` and `\n` breaks, no trailing empty line,
+  /// malformed UTF-8 → an error (not silently replaced).
+  Future<Result<List<String>, FileError>> _readTextLinesBounded(
+    String resolved,
+    int maxLines,
+  ) async {
+    RandomAccessFile? handle;
+    try {
+      handle = await File(resolved).open();
+      final bytes = <int>[];
+      var breaks = 0;
+      var total = 0;
+      while (breaks < maxLines && total < _boundedReadMaxBytes) {
+        final chunk = await handle.read(_boundedReadChunkBytes);
+        if (chunk.isEmpty) break;
+        for (final b in chunk) {
+          if (b == 0x0a) breaks++;
+        }
+        bytes.addAll(chunk);
+        total += chunk.length;
+      }
+      final text = utf8.decode(bytes);
+      var lines = text.split('\n');
+      if (lines.isNotEmpty && lines.last.isEmpty) lines.removeLast();
+      lines = [
+        for (final line in lines)
+          line.endsWith('\r') ? line.substring(0, line.length - 1) : line,
+      ];
+      return Ok(lines.length > maxLines ? lines.sublist(0, maxLines) : lines);
+    } on Object catch (error) {
+      return Err(_toFileError(error, resolved));
+    } finally {
+      await handle?.close();
     }
   }
 
@@ -746,11 +798,14 @@ final class LocalShell implements Shell, BackgroundShell {
   /// script body (with any `pkill -f <pattern>`) never lands in
   /// `/proc/<pid>/cmdline`, so a broad kill inside the script cannot match
   /// its own shell. The caller deletes the dir once the process exits.
-  /// Null on any failure → the legacy `sh -c <command>` delivery.
+  /// Null on any failure → the legacy `sh -c <command>` delivery. The dir
+  /// is created under this process's owner marker (gh-2413,
+  /// [shellCommandOwnerMarker]) so a backgrounded subshell's argv carries
+  /// proof of which harness launched it.
   static Future<Directory?> _writeGuardedScript(String command) async {
     Directory dir;
     try {
-      dir = await Directory.systemTemp.createTemp('fa_sh_cmd_');
+      dir = await Directory.systemTemp.createTemp(currentProcessOwnerMarker());
     } on Object {
       return null;
     }
@@ -1045,6 +1100,9 @@ final class LocalShell implements Shell, BackgroundShell {
     token?.onCancel.then(onCancel);
 
     final exitCode = await process.exitCode;
+    // gh-2413: the survivor window's upper bound — a process that started
+    // after this call's child exited is never this call's orphan.
+    final execEnd = DateTime.now();
     // gh-1053: the timer stays ARMED after the direct child exits — an
     // orphaned descendant can hold the pipes past the child's death, and
     // this timer is what bounds the call ("≤ timeout + kill grace + drain
@@ -1094,6 +1152,8 @@ final class LocalShell implements Shell, BackgroundShell {
         ownGroup: ownGroup,
         ourPgid: LocalShell.ourPgid,
         execStart: execStart,
+        execEnd: execEnd,
+        ownerMarker: currentProcessOwnerMarker(),
         table:
             await (processDetailTableSnapshotOverride ??
                 processDetailTableSnapshot)(),
@@ -1236,7 +1296,8 @@ final class LocalShell implements Shell, BackgroundShell {
 
 /// A [ShellJob] over a local [Process]: stdout/stderr stream into the log
 /// file; timeout and the cancel token both stop the process.
-final class _LocalShellJob implements ShellJob, SurvivorReporting {
+final class _LocalShellJob
+    implements ShellJob, SurvivorReporting, ResourceReleaser {
   _LocalShellJob({
     required this.id,
     required this.command,
@@ -1322,6 +1383,7 @@ final class _LocalShellJob implements ShellJob, SurvivorReporting {
     unawaited(
       _process.exitCode.then((code) async {
         _exitCode = code;
+        _execEnd = DateTime.now();
         _timer?.cancel();
         // Wait for the streams to drain, but cap it so a killed process
         // cannot hang settled forever.
@@ -1392,6 +1454,8 @@ final class _LocalShellJob implements ShellJob, SurvivorReporting {
             ownGroup: _ownGroup,
             ourPgid: LocalShell.ourPgid,
             execStart: _execStart,
+            execEnd: _execEnd,
+            ownerMarker: currentProcessOwnerMarker(),
             table:
                 await (LocalShell.processDetailTableSnapshotOverride ??
                     processDetailTableSnapshot)(),
@@ -1406,9 +1470,28 @@ final class _LocalShellJob implements ShellJob, SurvivorReporting {
   final RandomAccessFile _logSink;
   final JobLogCeiling _ceiling;
 
+  /// Gh-2415 [ResourceReleaser]: the settle path already closes the
+  /// stdin pipe, the stream subscriptions and the log sink; this is the
+  /// idempotent backstop the registry calls under fd pressure (a job
+  /// settled through the capped drain may still sit on a subscription).
+  @override
+  void releaseResources() {
+    // Both subscriptions are assigned in the constructor body, so the
+    // `late final` reads cannot throw; cancelling an already-cancelled
+    // subscription is a no-op, which is what makes this idempotent.
+    unawaited(_stdoutSub.cancel());
+    unawaited(_stderrSub.cancel());
+    unawaited(_process.stdin.close().catchError((_) {}));
+  }
+
   /// This job's spawn moment (issue #2201): the lower bound of the
   /// orphan-window survivor scan on non-ownGroup hosts.
   final DateTime _execStart;
+
+  /// When this job's process exited (gh-2413): the UPPER bound of the
+  /// orphan-window survivor scan — nothing that started later is this
+  /// job's orphan.
+  DateTime? _execEnd;
 
   /// Survivors observed at this job's normal exit, consumed once by the
   /// registry's settle listener ([SurvivorReporting.takeSurvivors]).

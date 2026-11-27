@@ -205,15 +205,31 @@ extension AgentCliRun on AgentCli {
     if (lastMessage is AssistantMessage &&
         lastMessage.stopReason == StopReason.error) {
       if (await _maybeHandleCodeMieError(lastMessage.errorMessage ?? '')) {
+        _settleContextStopLog(ContextStopOutcome.ended);
         return false;
       }
       // The loop's over-window guard refused to send: compact and continue.
-      if (await _maybeOverWindowContinue(
+      // gh-241 follow-up #5e (E2): the log tells the truth about the stop
+      // BEFORE the attempts — `compacting` when they will run.
+      final continuing = _contextStopContinuationArmed(
         lastMessage,
         isAutoContinue: isAutoContinue,
-      )) {
-        return false;
+      );
+      _settleContextStopLog(
+        continuing ? ContextStopOutcome.compacting : ContextStopOutcome.ended,
+      );
+      var consumed = false;
+      try {
+        consumed = await _maybeOverWindowContinue(
+          lastMessage,
+          isAutoContinue: isAutoContinue,
+        );
+      } catch (_) {
+        _settleContextStopLog(ContextStopOutcome.failed);
+        rethrow;
       }
+      if (consumed) return false;
+      _settleContextStopLog(ContextStopOutcome.failed);
     }
 
     // An assistant turn that produced nothing actionable (no text, no tool

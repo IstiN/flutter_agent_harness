@@ -14,11 +14,22 @@ import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/task/child_session_io.dart';
+import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:test/test.dart';
 
 /// Tiny window: reserve 1024 → compaction trigger 2976, keep-recent 2048.
 /// The child window: the pre-#1829 calibration 4000t plus the tokens the
 /// report-size contract (issue #1829) adds to every child system prompt.
+/// gh-2411: the estimator now bills the fixed request overhead (system
+/// prompt + tool schemas — ≈4.9k chars on this child surface) at 2.5
+/// chars per token instead of 4: +733 tokens on EVERY request. The
+/// trigger is 75% of the window, so it moves by the same delta only when
+/// the window grows by 733 / 0.75 — that keeps every trigger crossing of
+/// the trajectory below exactly where it was (measured: requests
+/// 1236/1944/2652/3360 → 1969/2677/3385/4093 against the shifted
+/// trigger 3587 → 4320).
+const int _overheadDeltaTokens = 978; // (733 / 0.75).ceil()
+
 /// The compaction-threshold fixtures are calibrated to the original
 /// trajectory; raising the window by the contract's own estimate keeps the
 /// trigger crossings exactly where they were.
@@ -27,8 +38,24 @@ final _model = Model(
   api: 'test-api',
   provider: 'test-provider',
   baseUrl: 'https://example.test',
-  contextWindow: 4300 + _contractTokens,
+  contextWindow: 4300 + _contractTokens + _contextIncludesTokens,
   maxTokens: 4096,
+);
+
+/// The pre-gh-2423 child window (the trajectory the fixtures are
+/// calibrated to).
+final int _baseWindow = 4300 + _contractTokens;
+
+/// Keeps the compaction crossings where they were on [_baseWindow]: every
+/// request now also carries the include delta, so the estimate is
+/// `est_base + Δ` at every boundary and the trigger must move by the same
+/// Δ — `(base + Δ) − reserve_base` — i.e. the reserve and the keep-recent
+/// stay at the base window's `forWindow` values instead of following the
+/// raised window (the curve is not flat: a plain window raise moves the
+/// trigger by only ¾Δ here and the fill fixtures cross it).
+final CompactionTuning _crossingCalibratedTuning = CompactionTuning(
+  reserveTokens: CompactionSettings.forWindow(_baseWindow).reserveTokens,
+  keepRecentTokens: CompactionSettings.forWindow(_baseWindow).keepRecentTokens,
 );
 
 /// The token estimate of the report-size contract's footprint in a child
@@ -59,8 +86,24 @@ final int _contractTokens = () {
   const gh1956BaselineChars = 2339;
   final footprintChars =
       contract + descriptions.fold<int>(0, (a, d) => a + d.length);
-  return 237 + ((footprintChars - gh1956BaselineChars) / 4).ceil();
+  return 237 +
+      ((footprintChars - gh1956BaselineChars) / 4).ceil() +
+      _overheadDeltaTokens;
 }();
+
+/// gh-2423 (C1/C7): the two system-prompt includes (`working_set`,
+/// `context_hygiene`) ride every child prompt. The same measured-delta
+/// calibration as [_contractTokens]: the fixtures are calibrated to the
+/// pre-gh-2423 trajectory, so the child window grows by the includes' own
+/// request footprint. MEASURED through the estimator itself (the same
+/// call the pressure gate runs): the gh-2411 estimator prices system-prompt
+/// text at the dense `overheadCharsPerToken`, not the transcript heuristic,
+/// so a hand-derived `chars / 4` under-measures the delta and the
+/// crossings shift under the fixtures.
+final int _contextIncludesTokens = estimateRequestOverheadTokens(
+  '\n\n$workingSetPrompt\n\n$contextHygienePrompt',
+  const [],
+);
 
 final _fakeTime = DateTime.utc(2026, 9, 15, 12, 0, 0);
 
@@ -130,14 +173,23 @@ final class _ScriptedStream {
     tools: context.tools ?? const [],
   );
 
+  /// The routing key: the last user text that is not a gh-2423 context
+  /// notice (`isContextNoticeText` — a harness notice rides a synthetic
+  /// user record right before the request and must not re-route a turn).
   static String lastUserText(Context context) {
     for (final message in context.messages.reversed) {
       if (message is UserMessage) {
         final content = message.content;
-        if (content is String) return content;
-        if (content is List<ContentBlock>) {
-          return content.whereType<TextContent>().map((b) => b.text).join('\n');
+        String text;
+        if (content is String) {
+          text = content;
+        } else if (content is List<ContentBlock>) {
+          text = content.whereType<TextContent>().map((b) => b.text).join('\n');
+        } else {
+          continue;
         }
+        if (isContextNoticeText(text)) continue;
+        return text;
       }
     }
     return '';
@@ -238,6 +290,7 @@ final class _Wiring {
       store: AgentOutputStore(),
       rolesResolver: rolesResolver,
       subagentManager: manager,
+      compactionTuning: _crossingCalibratedTuning,
       childSessionFactory: (parentId, childId) => repo.create(
         JsonlSessionCreateOptions(
           cwd: '/work',
@@ -600,7 +653,16 @@ void main() {
     test(
       "a smol-role child compacts on its OWN window, not the parent's",
       () async {
-        // Window 2000: reserve 500 → trigger 1500, keep-recent 1000.
+        // Window 3400 (+ the gh-2423 prompt includes, see
+        // _contextIncludesTokens): reserve 850 → trigger 2550, keep-recent
+        // 1700.
+        // gh-2411: honest overhead accounting puts the child's FIRST request
+        // at ~1.9k tokens (system prompt + tool schemas), so the former
+        // 2000 window is the soft-window regime — overhead + the newest
+        // user turn ≥ window − reserve — where compaction is correctly
+        // skipped for good: no fold can ever fit under it. 3400 keeps the
+        // smol role far below the parent's window while leaving the
+        // trajectory room to cross ITS OWN trigger (2550).
         final smolStream = _ScriptedStream([
           (
             match: 'grow',
@@ -617,10 +679,12 @@ void main() {
           config: ModelRolesConfig(
             roles: {
               smolModelRole: [
-                const ModelRef(
+                // Non-const: the window carries the measured gh-2423 include
+                // footprint (see _contextIncludesTokens).
+                ModelRef(
                   provider: 'anthropic',
                   modelId: 'test-smol',
-                  contextWindow: 2000,
+                  contextWindow: 3400 + _contextIncludesTokens,
                   maxTokens: 128,
                 ),
               ],
@@ -639,13 +703,158 @@ void main() {
         final handle = w.manager['smol_child']!;
         // The pressure is measured against the CHILD's 2000t window — not
         // the parent's 100000t one — and the compaction fired on it.
-        expect(handle.windowTokens, 2000);
+        expect(handle.windowTokens, 3400 + _contextIncludesTokens);
         expect(handle.compactions, greaterThanOrEqualTo(1));
         expect(
           smolStream.contexts.map(smolStream.requestTokens),
-          everyElement(lessThanOrEqualTo(2000)),
+          everyElement(lessThanOrEqualTo(3400 + _contextIncludesTokens)),
         );
       },
     );
+  });
+
+  group('gh-2423 C3 — the defered post-hide notice rides the next run', () {
+    /// Every context notice (any kind) of [context], oldest first.
+    List<String> noticesIn(Context context) => [
+      for (final message in context.messages.whereType<UserMessage>())
+        if (isContextNoticeText(userMessageText(message.content)))
+          userMessageText(message.content),
+    ];
+
+    /// Whether [notice] is the POST-HIDE one (the near-limit notice is a
+    /// different contract and may legitimately ride the same request).
+    bool isPostHide(String notice) => notice.contains('compacted: ');
+
+    /// The context notices delivered AFTER [prompt] in [context] — the
+    /// notices THIS run received. Everything before the prompt is
+    /// replayed history: an earlier notice is a transcript record and
+    /// rides every later request.
+    List<String> deliveredAfter(Context context, String prompt) {
+      final promptIndex = context.messages.lastIndexWhere(
+        (message) =>
+            message is UserMessage &&
+            // The resumed child's prompt is the drained mail, attributed
+            // (`from <sender>: <text>`).
+            userMessageText(message.content).endsWith(prompt),
+      );
+      expect(promptIndex, greaterThanOrEqualTo(0), reason: 'the prompt');
+      return noticesIn(
+        Context(
+          systemPrompt: context.systemPrompt,
+          messages: context.messages.sublist(promptIndex + 1),
+          tools: context.tools,
+        ),
+      );
+    }
+
+    Iterable<Context> requestsMatching(_ScriptedStream stream, String text) =>
+        stream.contexts.where(
+          (context) => _ScriptedStream.lastUserText(context).contains(text),
+        );
+
+    test('a post-run hide defers ONE notice; the first request of the '
+        'resumed run carries it, last; a second resume carries none', () async {
+      // Three fat tool turns (~600t each) stay under the 4382t trigger at
+      // every mid-run boundary (≈3835t after the third); the final text
+      // turn (2800 chars ≈ 700t) crosses it only AFTER the last
+      // boundary — the post-run pass hides, and with no next request to
+      // ride the post-hide notice is defered to the next run.
+      final w = _Wiring(
+        rules: [
+          (
+            match: 'grow',
+            turns: [
+              _toolTurn('read', 'c1'),
+              _toolTurn('read', 'c2'),
+              _toolTurn('read', 'c3'),
+              _textTurn('done: ${'y' * 2800}'),
+            ],
+          ),
+          (match: 'continue', turns: [_textTurn('resumed: finished')]),
+        ],
+      );
+      final first = await w.spawn('deferrer', 'grow the context');
+      expect(first.status, TaskSpawnStatus.completed, reason: first.error);
+      final handle = w.manager['deferrer']!;
+      // No request of the first run could carry the post-hide notice:
+      // every mid-run boundary was under the trigger.
+      for (final context in requestsMatching(w.stream, 'grow')) {
+        expect(
+          noticesIn(context).where(isPostHide),
+          isEmpty,
+          reason: 'nothing hid before the post-run pass',
+        );
+      }
+      expect(handle.compactions, greaterThanOrEqualTo(1));
+      expect(handle.status, SubagentStatus.completed);
+
+      // Resume 1: the defered notice rides the FIRST request of the
+      // resumed run — exactly one, as the last message. (The resume
+      // probe may also hand the child its near-limit notice: the
+      // post-hide context sits ≈73 % here, over the 43 % near-limit
+      // point — a different contract, latched to one per cycle.)
+      await w.executor.resumeChild('deferrer', 'continue the work');
+      expect(w.manager['deferrer']!.status, SubagentStatus.completed);
+      final resumed = _firstRequest(w.stream, 'continue the work');
+      final delivered = deliveredAfter(resumed, 'continue the work');
+      final postHide = delivered.where(isPostHide).toList();
+      expect(postHide, hasLength(1), reason: '$delivered');
+      expect(postHide.single, startsWith('<system-notice>'));
+      expect(postHide.single, contains('records hidden'));
+      expect(delivered.last, postHide.single, reason: 'it rides last');
+      expect(
+        delivered.length,
+        lessThanOrEqualTo(2),
+        reason: 'one defered notice + at most one near-limit',
+      );
+      expect(
+        resumed.messages.last,
+        isA<UserMessage>(),
+        reason: 'the notice rides last',
+      );
+      // …and once per hide pass: no later request of that run carries a
+      // fresh post-hide delivery.
+      for (final later in requestsMatching(
+        w.stream,
+        'continue the work',
+      ).skip(1)) {
+        expect(
+          deliveredAfter(later, 'continue the work').where(isPostHide),
+          isEmpty,
+        );
+      }
+
+      // Resume 2: the defered list is TAKEN, not copied.
+      await w.executor.resumeChild('deferrer', 'continue once more');
+      expect(w.manager['deferrer']!.status, SubagentStatus.completed);
+      expect(
+        deliveredAfter(
+          _firstRequest(w.stream, 'continue once more'),
+          'continue once more',
+        ).where(isPostHide),
+        isEmpty,
+      );
+    });
+
+    test('a run that hid nothing defers nothing', () async {
+      final w = _Wiring(
+        rules: [
+          (match: 'grow', turns: [_textTurn('done')]),
+          (match: 'continue', turns: [_textTurn('resumed: ok')]),
+        ],
+      );
+      final result = await w.spawn('quiet', 'grow the context');
+      expect(result.status, TaskSpawnStatus.completed, reason: result.error);
+      expect(w.manager['quiet']!.compactions, 0);
+      await w.executor.resumeChild('quiet', 'continue the work');
+      expect(w.manager['quiet']!.status, SubagentStatus.completed);
+      expect(
+        deliveredAfter(
+          _firstRequest(w.stream, 'continue the work'),
+          'continue the work',
+        ),
+        isEmpty,
+      );
+    });
   });
 }

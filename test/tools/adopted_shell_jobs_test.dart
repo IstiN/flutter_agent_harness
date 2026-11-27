@@ -135,30 +135,246 @@ void main() async {
       },
     );
 
-    test('non-ownGroup host: the orphan-window heuristic (macOS shape)', () {
+    test('non-ownGroup host: the bounded, marker-gated orphan window '
+        '(macOS shape)', () {
+      final marker = shellCommandOwnerMarker(50);
+      expect(marker, 'fa_sh_cmd_50_');
+      final wrapper = 'sh -c . \$1 sh /T/${marker}AbC/cmd.sh';
       final survivors = classifyShellSurvivors(
         childPid: 100,
         ownGroup: false,
-        ourPgid: 100,
+        ourPgid: 50,
         execStart: spawn,
+        execEnd: spawn.add(const Duration(minutes: 2)),
+        ownerMarker: marker,
         table: [
-          // The instant-& catch: orphaned, in our group, started in-window.
-          (pid: 600, ppid: 1, pgid: 100, lstart: fresh, command: 'nohup-sleep'),
+          // The instant-& catch: orphaned, in our group, started in-window
+          // AND still carrying this harness's wrapper argv.
+          (pid: 600, ppid: 1, pgid: 50, lstart: fresh, command: wrapper),
           // Pre-window kin: in our group, orphaned — but it spawned long
           // before this call: not this call's survivor.
-          (pid: 700, ppid: 1, pgid: 100, lstart: old, command: 'harness-kin'),
-          // Still parented by a live process outside the dead subtree —
-          // not an orphan of this shell.
-          (pid: 800, ppid: 42, pgid: 100, lstart: fresh, command: 'parented'),
+          (pid: 700, ppid: 1, pgid: 50, lstart: old, command: wrapper),
+          // Still parented by a live process outside the dead subtree and
+          // wearing no tag of ours — not ours (gh-2413: the chain is the
+          // proof, and this one leads away from us).
+          (pid: 800, ppid: 42, pgid: 50, lstart: fresh, command: 'x'),
           // Escaped our group entirely (its own setsid): the documented
           // residual gap — invisible.
-          (pid: 900, ppid: 1, pgid: 999, lstart: fresh, command: 'daemon'),
+          (pid: 900, ppid: 1, pgid: 999, lstart: fresh, command: wrapper),
           // The direct child: never named a survivor of itself.
-          (pid: 100, ppid: 1, pgid: 100, lstart: fresh, command: 'sh -c cmd'),
+          (pid: 100, ppid: 1, pgid: 50, lstart: fresh, command: wrapper),
         ],
       );
       expect(survivors.map((s) => s.pid), {600});
-      expect(survivors.single.command, 'nohup-sleep');
+      expect(survivors.single.command, wrapper);
+    });
+
+    test('gh-2413 (a): a peer session\'s orphan in the shared pgid is never '
+        'adopted — only a row carrying THIS harness\'s marker is', () {
+      final survivors = classifyShellSurvivors(
+        childPid: 100,
+        ownGroup: false,
+        ourPgid: 50,
+        execStart: spawn,
+        execEnd: spawn.add(const Duration(minutes: 2)),
+        ownerMarker: shellCommandOwnerMarker(50),
+        table: [
+          // The reported incident: a hook backstop another session
+          // launched, orphaned inside our call's window, in OUR group.
+          (
+            pid: 600,
+            ppid: 1,
+            pgid: 50,
+            lstart: fresh,
+            command: 'dispatch_and_watch.sh --dw-orphan-backstop x.yml',
+          ),
+          // A detached program this call itself launched: its own argv,
+          // no marker — unprovable on this host, left alone.
+          (pid: 610, ppid: 1, pgid: 50, lstart: fresh, command: 'sleep 9'),
+          // A PEER harness's wrapper (its pid in the tag): foreign.
+          (
+            pid: 620,
+            ppid: 1,
+            pgid: 50,
+            lstart: fresh,
+            command: 'sh -c . \$1 sh /T/fa_sh_cmd_51_Zz/cmd.sh',
+          ),
+          // Ours: a backgrounded subshell still wearing our wrapper…
+          (
+            pid: 630,
+            ppid: 1,
+            pgid: 50,
+            lstart: fresh,
+            command: 'sh -c . \$1 sh /T/fa_sh_cmd_50_Ab/cmd.sh',
+          ),
+          // …and the work under it: its own argv, no tag — ours because
+          // the ppid chain (631 → 630) reaches our wrapper.
+          (pid: 631, ppid: 630, pgid: 50, lstart: fresh, command: 'sleep 9'),
+          // The same shape under the PEER's wrapper (621 → 620): foreign.
+          (pid: 621, ppid: 620, pgid: 50, lstart: fresh, command: 'sleep 9'),
+        ],
+      );
+      expect(survivors.map((s) => s.pid), {630, 631});
+    });
+
+    test('gh-2413: the ancestry walk stops at init, at a missing row, and at '
+        'a table cycle', () {
+      const marker = 'fa_sh_cmd_50_';
+      final tagged = (
+        pid: 10,
+        ppid: 1,
+        pgid: 50,
+        lstart: fresh,
+        command: 'sh -c . \$1 sh /T/fa_sh_cmd_50_Ab/cmd.sh',
+      );
+      final orphan = (
+        pid: 11,
+        ppid: 1,
+        pgid: 50,
+        lstart: fresh,
+        command: 'sleep 9',
+      );
+      final byPid = {tagged.pid: tagged};
+      // childPid 9 = the completed call's (dead, reaped) wrapper pid.
+      bool owned(ProcessDetailRow r, {int childPid = 9}) =>
+          ownedByCall(r, byPid, childPid, marker);
+      expect(owned(tagged), isTrue);
+      // Chain to init without a tag.
+      expect(owned(orphan), isFalse);
+      // Parent missing from the table.
+      final stray = (
+        pid: 12,
+        ppid: 99,
+        pgid: 50,
+        lstart: fresh,
+        command: 'sleep 9',
+      );
+      expect(owned(stray), isFalse);
+      // A cycle (a recycled pid mid-walk) terminates — false, never hangs.
+      final cyc = <int, ProcessDetailRow>{
+        20: (pid: 20, ppid: 21, pgid: 50, lstart: fresh, command: 'a'),
+        21: (pid: 21, ppid: 20, pgid: 50, lstart: fresh, command: 'b'),
+      };
+      expect(ownedByCall(cyc[20]!, cyc, 9, marker), isFalse);
+      // Grandchildren under the tag.
+      final tree = {
+        ...byPid,
+        orphan.pid: orphan,
+        stray.pid: (pid: 12, ppid: 10, pgid: 50, lstart: fresh, command: 'c'),
+        13: (pid: 13, ppid: 12, pgid: 50, lstart: fresh, command: 'd'),
+      };
+      expect(ownedByCall(tree[12]!, tree, 9, marker), isTrue);
+      expect(ownedByCall(tree[13]!, tree, 9, marker), isTrue);
+    });
+
+    test('gh-2413: a LIVE sibling job\'s subtree is never a survivor of the '
+        'completed call (same harness marker)', () {
+      // The harness (pid 50) runs two jobs: call A (pid 101, just exited)
+      // and job B (wrapper 200 alive, child 201 = `sleep 4`). B wears the
+      // same harness marker — ownership of the HARNESS is not ownership of
+      // the CALL: a settled job must never adopt its running sibling.
+      final marker = shellCommandOwnerMarker(50);
+      final wrapper = 'sh -c . \$1 sh /T/${marker}Ab/cmd.sh';
+      final table = [
+        (pid: 50, ppid: 1, pgid: 50, lstart: old, command: 'dart fa'),
+        (pid: 200, ppid: 50, pgid: 50, lstart: fresh, command: wrapper),
+        (pid: 201, ppid: 200, pgid: 50, lstart: fresh, command: 'sleep 4'),
+        // A's own leftover: an orphaned tagged subshell and its work.
+        (pid: 300, ppid: 1, pgid: 50, lstart: fresh, command: wrapper),
+        (pid: 301, ppid: 300, pgid: 50, lstart: fresh, command: 'sleep 8'),
+        // A child the snapshot still shows under A's dead wrapper.
+        (pid: 302, ppid: 101, pgid: 50, lstart: fresh, command: 'sleep 7'),
+      ];
+      print(
+        'DBG row300=${ownedByCall(table[3], {for (final r in table) r.pid: r}, 101, marker)} row302=${ownedByCall(table[5], {for (final r in table) r.pid: r}, 101, marker)} win=${spawn.millisecondsSinceEpoch}..${spawn.add(const Duration(seconds: 2)).millisecondsSinceEpoch} started=${tryParseLstart(fresh)?.millisecondsSinceEpoch}',
+      );
+      final survivors = classifyShellSurvivors(
+        childPid: 101,
+        ownGroup: false,
+        ourPgid: 50,
+        execStart: spawn,
+        execEnd: spawn.add(const Duration(minutes: 2)),
+        ownerMarker: marker,
+        table: table,
+      );
+      expect(survivors.map((s) => s.pid).toSet(), {300, 301, 302});
+      final byPid = {for (final r in table) r.pid: r};
+      expect(
+        ownedByCall(table[2], byPid, 101, marker),
+        isFalse,
+        reason: "job B's sleep is B's, not A's",
+      );
+      expect(ownedByCall(table[1], byPid, 101, marker), isFalse);
+    });
+
+    test('gh-2413 (a): the upper bound — a process started after the call '
+        'ended is never its survivor', () {
+      final marker = shellCommandOwnerMarker(50);
+      final inWindow = _lstartOf(DateTime(2026, 11, 16, 10, 59, 20));
+      final after = _lstartOf(DateTime(2026, 11, 16, 11, 0, 30));
+      final wrapper = 'sh -c . \$1 sh /T/${marker}Ab/cmd.sh';
+      final survivors = classifyShellSurvivors(
+        childPid: 100,
+        ownGroup: false,
+        ourPgid: 50,
+        execStart: spawn,
+        execEnd: DateTime(2026, 11, 16, 11, 0, 0),
+        ownerMarker: marker,
+        table: [
+          (pid: 600, ppid: 1, pgid: 50, lstart: inWindow, command: wrapper),
+          (pid: 601, ppid: 1, pgid: 50, lstart: after, command: wrapper),
+        ],
+      );
+      expect(survivors.map((s) => s.pid), {600});
+      // Without a bound the later orphan would have been adopted too.
+      expect(
+        classifyShellSurvivors(
+          childPid: 100,
+          ownGroup: false,
+          ourPgid: 50,
+          execStart: spawn,
+          ownerMarker: marker,
+          table: [
+            (pid: 601, ppid: 1, pgid: 50, lstart: after, command: wrapper),
+          ],
+        ).map((s) => s.pid),
+        {601},
+        reason: 'execEnd stays optional for ownGroup-style callers',
+      );
+    });
+
+    test('gh-2413: no owner marker (harness pid unknown) adopts nothing '
+        'on the window alone; the ownGroup scan needs no marker', () {
+      final row = (
+        pid: 600,
+        ppid: 1,
+        pgid: 50,
+        lstart: fresh,
+        command: 'sh -c . \$1 sh /T/fa_sh_cmd_50_Ab/cmd.sh',
+      );
+      expect(
+        classifyShellSurvivors(
+          childPid: 100,
+          ownGroup: false,
+          ourPgid: 50,
+          execStart: spawn,
+          table: [row],
+        ),
+        isEmpty,
+      );
+      // The authoritative ownGroup scan is unaffected by the marker rule.
+      expect(
+        classifyShellSurvivors(
+          childPid: 100,
+          ownGroup: true,
+          ourPgid: 50,
+          execStart: spawn,
+          table: [
+            (pid: 600, ppid: 1, pgid: 100, lstart: fresh, command: 'sleep 9'),
+          ],
+        ).map((s) => s.pid),
+        {600},
+      );
     });
 
     test('a missing or unparseable table adopts nothing (AC7 shape)', () {
@@ -716,6 +932,59 @@ void main() async {
       expect(entry.isRunning, isFalse);
     });
 
+    test('gh-2413: stop refuses a pid whose start tag was never recorded while '
+        'the platform reports one — nothing is signaled, the job stays '
+        'tracked, the tool says so', () async {
+      final killed = <int>[];
+      final registry = _registry(
+        livenessTableOverride: () async =>
+            (pids: {99}, starts: {99: 'Mon Nov 16 10:00:00 2026'}),
+        stopAdoptedOverride: (pid) async {
+          killed.add(pid);
+          return const [];
+        },
+      );
+      // A legacy manifest record adopted without a pidStart (the probe
+      // could not report one at record time): `startTag: ''`.
+      final entry = registry.adoptRunningEntry(
+        id: 'sh-legacy',
+        command: 'old daemon',
+        pid: 99,
+        adoptedFrom: 'unknown owner',
+      );
+      final text = await _toolText(bashJobTool(registry), {
+        'action': 'stop',
+        'id': entry.id,
+      });
+      expect(killed, isEmpty, reason: 'a recycled pid is never signaled');
+      expect(entry.isRunning, isTrue);
+      expect(entry.stopAttempted, isFalse);
+      expect(entry.stopRefused, isTrue);
+      expect(text, contains('NOT stopped: its pid 99 cannot be verified'));
+      expect(text, isNot(contains('Stopped')));
+    });
+
+    test('gh-2413: a presence-only row (no start time either side) keeps the '
+        'legacy kill — nothing contradicts the recorded identity', () async {
+      final killed = <int>[];
+      final registry = _registry(
+        livenessTableOverride: () async =>
+            (pids: {99}, starts: <int, String>{}),
+        stopAdoptedOverride: (pid) async {
+          killed.add(pid);
+          return const [];
+        },
+      );
+      final entry = registry.adoptRunningEntry(
+        id: 'sh-legacy',
+        command: 'old daemon',
+        pid: 99,
+      );
+      await entry.stop();
+      expect(killed, [99]);
+      expect(entry.stopRefused, isFalse);
+    });
+
     test('adoptRunningEntry is idempotent across boots (r3)', () async {
       var starts = 0;
       final registry = _registry(onStart: (_) => starts++);
@@ -851,6 +1120,30 @@ void main() async {
       });
       expect(output, contains('ADOPTED background process'));
     });
+
+    test('gh-2413: a FOREIGN session\'s `<id>.log` in the shared dir is never '
+        'attached to a different adopted id (negative)', () async {
+      // Another session's native job log sits in the shared dir; this
+      // boot re-adopts a different id (its own record) — the id-keyed
+      // snapshot must not hand it the foreign file.
+      final (registry, _) = await seededRegistry('foreign output\n');
+      final own = registry.adoptRunningEntry(
+        id: 'sh-7-mine',
+        command: 'my daemon',
+        pid: 4242,
+        pidStart: 'PS',
+      );
+      expect(own.logPath, isEmpty, reason: 'keyed by id, never by dir');
+      expect(own.command, 'my daemon');
+      // The foreign log stays on disk, untouched by this boot's adoption.
+      expect(
+        (await _toolText(bashJobTool(registry), {
+          'action': 'output',
+          'id': own.id,
+        })),
+        contains('ADOPTED background process'),
+      );
+    });
   });
 
   group('notice texts', () {
@@ -873,12 +1166,56 @@ void main() async {
           ),
         ];
         final text = adoptedSurvivorsNoticeText(adopted, source: 'make all');
-        expect(text, contains('Detected 2 surviving background processes'));
+        // gh-2413: "orphaned … near", never "left by" — the pid set is a
+        // process-table sweep, not parentage evidence.
+        expect(
+          text,
+          contains(
+            "Detected 2 orphaned processes in this session's process group "
+            'near `make all`',
+          ),
+        );
+        expect(text, isNot(contains('left by')));
         expect(text, contains('(pid 1, `a`)'));
         expect(text, contains('no captured output and no exit code'));
         expect(text, contains('nohup.out'));
       },
     );
+
+    test('settle notice carries the adopted-from clause (gh-2413): unknown '
+        'owner for a legacy record, none for an inline survivor', () async {
+      final registry = _registry();
+      final legacy = registry.adoptRunningEntry(
+        id: 'sh-5-x',
+        command: 'backtest --full',
+        pid: 777,
+        pidStart: 'S',
+        adoptedFrom: 'unknown owner',
+      );
+      final own = registry.adoptRunningEntry(
+        id: 'sh-6-x',
+        command: 'c',
+        pid: 778,
+        pidStart: 'S',
+        adoptedFrom: 'this session',
+      );
+      final inline = (await registry.adoptSurvivors('make', const [
+        ShellSurvivor(pid: 42, startTag: 'S1', command: 'x'),
+      ])).single;
+      expect(
+        adoptedJobSettleNoticeText(legacy),
+        contains(', adopted from unknown owner) '),
+      );
+      expect(
+        adoptedJobSettleNoticeText(own),
+        contains(', adopted from this session) '),
+      );
+      expect(
+        adoptedJobSettleNoticeText(inline),
+        isNot(contains('adopted from')),
+      );
+      expect(adoptedFromClause(inline), isEmpty);
+    });
 
     test(
       'adopted settle notice names pid, honesty, and the redirect hint',
@@ -1054,26 +1391,105 @@ void main() async {
 
   group('real-process detection (POSIX; AC1/AC7)', () {
     final posix = !Platform.isWindows;
+    // gh-2413: on hosts without setsid (macOS) the orphan window is
+    // marker-gated — a detached program's own argv cannot be proven ours,
+    // so `nohup prog &` is NOT adopted there; only ownGroup hosts (Linux
+    // CI: the authoritative group scan) adopt it. Both shapes are pinned.
+    final ownGroup = LocalShell.ownProcessGroupAvailable;
+    final needsPs = posix && psAvailable ? null : 'needs POSIX with ps access';
+
+    // The marker must stay a valid `sleep` argument on every host: BSD
+    // sleep rejects values above INT32_MAX (`usage: sleep …`, exit 1), and
+    // an overflowing marker made the "orphan" die before the scan — the
+    // pre-gh-2413 flake of this group on macOS. 8 digits ≈ 2.2e8 s.
+    String marker() => '2201${DateTime.now().microsecondsSinceEpoch % 100000}';
 
     test(
-      'exec adopts a nohup survivor of a normal exit (AC1)',
-      skip: posix && psAvailable ? null : 'needs POSIX with ps access',
+      'exec adopts a nohup survivor of a normal exit on ownGroup hosts and '
+      'never a detached program on marker-gated hosts (AC1 / gh-2413)',
+      skip: needsPs,
       () async {
         final shell = LocalShell();
-        final marker = '2201${DateTime.now().microsecondsSinceEpoch % 1000000}';
+        final m = marker();
         final result = await shell.exec(
-          'nohup sleep $marker >/dev/null 2>&1 & echo hi',
+          'nohup sleep $m >/dev/null 2>&1 & echo hi',
           options: ShellExecOptions(cwd: Directory.systemTemp.path),
         );
-        addTearDown(() => Process.run('pkill', ['-f', 'sleep $marker']));
+        addTearDown(() => Process.run('pkill', ['-f', 'sleep $m']));
         expect(result.isOk, isTrue);
         final execResult = result.valueOrNull!;
         expect(execResult.exitCode, 0);
-        expect(execResult.survivors, hasLength(1));
-        final survivor = execResult.survivors.single;
-        expect(survivor.command, contains('sleep $marker'));
-        expect(survivor.startTag, isNotEmpty);
-        Process.killPid(survivor.pid, ProcessSignal.sigkill);
+        if (ownGroup) {
+          expect(execResult.survivors, hasLength(1));
+          final survivor = execResult.survivors.single;
+          expect(survivor.command, contains('sleep $m'));
+          expect(survivor.startTag, isNotEmpty);
+          Process.killPid(survivor.pid, ProcessSignal.sigkill);
+        } else {
+          expect(
+            execResult.survivors,
+            isEmpty,
+            reason: 'own argv, no owner marker — unprovable, left alone',
+          );
+        }
+      },
+    );
+
+    test(
+      "gh-2413: a backgrounded SUBSHELL still wearing this harness's "
+      'wrapper argv is adopted on marker-gated hosts',
+      skip: !posix
+          ? 'needs POSIX'
+          : ownGroup
+          ? 'needs a host without setsid (the marker-gated path)'
+          : psAvailable
+          ? null
+          : 'needs ps access',
+      () async {
+        final shell = LocalShell();
+        final m = marker();
+        // Two statements on purpose: sh/bash exec-optimizes a
+        // single-command subshell into the program (own argv, no marker);
+        // the two-statement form keeps the wrapper argv — and the
+        // `fa_sh_cmd_<pid>_` tag the classifier keys on. The `sleep` under
+        // it is OURS through the ppid chain (its own argv carries nothing).
+        final result = await shell.exec(
+          '(nohup sleep $m >/dev/null 2>&1; :) >/dev/null 2>&1 & echo hi',
+          options: ShellExecOptions(cwd: Directory.systemTemp.path),
+        );
+        addTearDown(() => Process.run('pkill', ['-f', 'sleep $m']));
+        final execResult = result.valueOrNull!;
+        expect(execResult.exitCode, 0);
+        // Keyed on the work's unique marker: another test file sharing
+        // this test process (same pid → same owner tag) may leave its own
+        // tagged leftovers alive, and they are ours too by the rule.
+        final under = execResult.survivors
+            .where((s) => s.command!.contains('sleep $m'))
+            .toList();
+        expect(under, hasLength(1));
+        // The tagged subshell that launched it. NOT pinned to
+        // `work.pid - 1`: pid allocation is not contiguous under load
+        // (a hook run interleaved other forks between the two).
+        final tagged = execResult.survivors
+            .where((s) => s.command!.contains(shellCommandOwnerMarker(pid)))
+            .toList();
+        expect(tagged, isNotEmpty);
+        // Honest linkage: the work's `ppid` (one fresh table read) IS one
+        // of the tagged shells — the ancestry proof the classifier used.
+        final table = await processDetailTableSnapshot();
+        final parentOf = {
+          for (final r in table ?? const <ProcessDetailRow>[]) r.pid: r.ppid,
+        };
+        expect(
+          tagged.map((s) => s.pid),
+          contains(parentOf[under.single.pid]),
+          reason: 'the adopted sleep must hang under the adopted subshell',
+        );
+        // Kill the work first (the subshell waits on it), then the shells.
+        Process.killPid(under.single.pid, ProcessSignal.sigkill);
+        for (final shell in tagged) {
+          Process.killPid(shell.pid, ProcessSignal.sigkill);
+        }
       },
     );
 
@@ -1082,11 +1498,43 @@ void main() async {
       skip: posix ? null : 'needs POSIX',
       () async {
         final shell = LocalShell();
+        // OwnGroup hosts (setsid): the pgid contract is absolute — nothing
+        // of any other call can match. Marker-gated hosts share the owner
+        // tag with every other LocalShell user in this process (other test
+        // files run as isolates of the same `dart test` process), so a
+        // leftover THEY leave is legitimately adopted here; the contract
+        // under test is that THIS call leaves nothing: no survivor may
+        // reference a wrapper dir that no other call owned — a dir created
+        // after the pre-call snapshot and already gone at the post-call
+        // one is this call's own (its wrapper deleted it at exit).
+        var knownDirs = ownGroup ? const <String>{} : _liveScriptDirs();
+        String? own(Iterable<ShellSurvivor> survivors) {
+          final post = _liveScriptDirs();
+          for (final s in survivors) {
+            final tag = _scriptDirTagOf(s.command ?? '');
+            if (tag != null &&
+                !knownDirs.contains(tag) &&
+                !post.contains(tag)) {
+              return tag;
+            }
+          }
+          knownDirs = post;
+          return null;
+        }
+
         final clean = await shell.exec(
           'echo done',
           options: ShellExecOptions(cwd: Directory.systemTemp.path),
         );
-        expect(clean.valueOrNull!.survivors, isEmpty);
+        if (ownGroup) {
+          expect(clean.valueOrNull!.survivors, isEmpty);
+        } else {
+          expect(
+            own(clean.valueOrNull!.survivors),
+            isNull,
+            reason: 'a clean call left a process of its own behind',
+          );
+        }
 
         // A backgrounded child the shell WAITS on is dead at shell exit —
         // never adopted.
@@ -1094,7 +1542,15 @@ void main() async {
           'sleep 0.3 & wait',
           options: ShellExecOptions(cwd: Directory.systemTemp.path),
         );
-        expect(joined.valueOrNull!.survivors, isEmpty);
+        if (ownGroup) {
+          expect(joined.valueOrNull!.survivors, isEmpty);
+        } else {
+          expect(
+            own(joined.valueOrNull!.survivors),
+            isNull,
+            reason: 'a joined child outlived its call',
+          );
+        }
       },
     );
 
@@ -1119,20 +1575,21 @@ void main() async {
     );
 
     test(
-      'registry job path: a nohup survivor of a settled job is adopted',
-      skip: posix && psAvailable ? null : 'needs POSIX with ps access',
+      'registry job path: a nohup survivor of a settled job is adopted on '
+      'ownGroup hosts, left alone on marker-gated hosts',
+      skip: needsPs,
       () async {
         final workspace = await Directory.systemTemp.createTemp('fah2201-');
         addTearDown(() => workspace.delete(recursive: true));
-        final marker = '2201${DateTime.now().microsecondsSinceEpoch % 1000000}';
-        addTearDown(() => Process.run('pkill', ['-f', 'sleep $marker']));
+        final m = marker();
+        addTearDown(() => Process.run('pkill', ['-f', 'sleep $m']));
         final adoptedBatches = <List<ShellJobEntry>>[];
         final registry = ShellJobRegistry(
           env: LocalExecutionEnv(cwd: workspace.path),
           onAdopt: (adopted, {required source}) => adoptedBatches.add(adopted),
         );
         final job = await registry.start(
-          'nohup sleep $marker >/dev/null 2>&1 & echo started',
+          'nohup sleep $m >/dev/null 2>&1 & echo started',
         );
         await job.settled;
         // The settle listener adopts the survivor the env buffered.
@@ -1141,24 +1598,40 @@ void main() async {
           for (final entry in registry.jobs)
             if (entry.isAdopted) entry,
         ];
-        expect(adopted, hasLength(1));
-        expect(adoptedBatches, hasLength(1));
-        expect(adopted.single.command, contains('sleep $marker'));
-        expect(adopted.single.pid, isNot(job.pid));
-        // Stop the adopted process so nothing outlives the test.
-        await adopted.single.stop();
+        if (ownGroup) {
+          expect(adopted, hasLength(1));
+          expect(adoptedBatches, hasLength(1));
+          expect(adopted.single.command, contains('sleep $m'));
+          expect(adopted.single.pid, isNot(job.pid));
+          // Stop the adopted process so nothing outlives the test.
+          await adopted.single.stop();
+        } else {
+          // The detached program is unprovable here: never adopted, never
+          // announced. (Leftovers of an earlier test may be adopted — this
+          // call's window is theirs too — so the check keys on OUR work.)
+          expect(adopted.where((e) => e.command.contains('sleep $m')), isEmpty);
+          expect(
+            adoptedBatches.where(
+              (b) => b.any((e) => e.command.contains('sleep $m')),
+            ),
+            isEmpty,
+          );
+          for (final entry in adopted) {
+            await entry.stop();
+          }
+        }
         await pumpEventQueue();
       },
     );
 
     test(
       'bash tool inline path: adoption notice rides the result (AC1)',
-      skip: posix && psAvailable ? null : 'needs POSIX with ps access',
+      skip: needsPs,
       () async {
         final workspace = await Directory.systemTemp.createTemp('fah2201t-');
         addTearDown(() => workspace.delete(recursive: true));
-        final marker = '2201${DateTime.now().microsecondsSinceEpoch % 1000000}';
-        addTearDown(() => Process.run('pkill', ['-f', 'sleep $marker']));
+        final m = marker();
+        addTearDown(() => Process.run('pkill', ['-f', 'sleep $m']));
         final registry = ShellJobRegistry(
           env: LocalExecutionEnv(cwd: workspace.path),
         );
@@ -1170,22 +1643,73 @@ void main() async {
           // adoption notice would ride onAdopt instead of the result.
           autoBackgroundAfter: Duration.zero,
         );
-        final text = await _toolText(tool, {
-          'command': 'nohup sleep $marker >/dev/null 2>&1 & echo launched',
-        });
+        // gh-2413: the marker-gated path needs a survivor that still wears
+        // the wrapper argv (a two-statement backgrounded subshell).
+        final command = ownGroup
+            ? 'nohup sleep $m >/dev/null 2>&1 & echo launched'
+            : '(nohup sleep $m >/dev/null 2>&1; :) >/dev/null 2>&1 '
+                  '& echo launched';
+        final text = await _toolText(tool, {'command': command});
         expect(text, contains('adopted as tracked jobs'));
+        expect(text, contains('orphaned process'));
+        expect(text, contains("in this session's process group near"));
+        expect(text, isNot(contains('left by')));
         final adopted = [
           for (final entry in registry.jobs)
             if (entry.isAdopted) entry,
         ];
-        expect(adopted, hasLength(1));
-        expect(text, contains(adopted.single.id));
-        await adopted.single.stop();
+        // The work itself is adopted on both hosts; on the marker-gated
+        // host the tagged subshell that launched it rides along (the
+        // ancestry proof), so the count is 2 there.
+        final work = adopted.where((e) => e.command.contains('sleep $m'));
+        expect(work, hasLength(1));
+        expect(text, contains(work.single.id));
+        if (!ownGroup) {
+          // The tagged subshell that launched the work rides along (its
+          // pid is the work's fork parent) — the ancestry proof itself.
+          // Honest linkage: the adopted work's `ppid` (one fresh table
+          // read) is the adopted tagged subshell — the ancestry proof.
+          final table = await processDetailTableSnapshot();
+          final parentOf = {
+            for (final r in table ?? const <ProcessDetailRow>[]) r.pid: r.ppid,
+          };
+          final shells = adopted
+              .where((e) => e.command.contains(shellCommandOwnerMarker(pid)))
+              .map((e) => e.pid)
+              .toSet();
+          expect(shells, isNotEmpty);
+          expect(
+            shells,
+            contains(parentOf[work.single.pid]),
+            reason: 'the adopted sleep must hang under the adopted subshell',
+          );
+        }
+        // Stop everything adopted (leftovers included) so nothing outlives
+        // the test.
+        for (final entry in adopted) {
+          await entry.stop();
+        }
         await pumpEventQueue();
       },
     );
   });
 }
+
+/// The `fa_sh_cmd_<pid>_XXXX` wrapper dirs alive in the system temp right
+/// now — the script dirs of this process's still-running LocalShell
+/// wrappers (gh-2413 owner tags). A survivor referencing a dir OUTSIDE a
+/// pre-call snapshot was created by the call under test.
+Set<String> _liveScriptDirs() => {
+  for (final entity in Directory.systemTemp.listSync())
+    if (entity is Directory)
+      entity.uri.pathSegments.where((s) => s.isNotEmpty).last,
+}.where((name) => name.startsWith('fa_sh_cmd_')).toSet();
+
+final _scriptDirTagPattern = RegExp(r'fa_sh_cmd_\d+_[A-Za-z0-9]+');
+
+/// The wrapper dir tag a survivor's command line references, if any.
+String? _scriptDirTagOf(String command) =>
+    _scriptDirTagPattern.firstMatch(command)?.group(0);
 
 /// Renders a local DateTime the way `ps -o lstart=` prints it (the test
 /// fixtures reuse the real format so [tryParseLstart] round-trips).

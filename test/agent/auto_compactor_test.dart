@@ -128,6 +128,12 @@ void main() {
     bool force = false,
     Duration? attemptBudget,
   }) {
+    // gh-2411 follow-up #5: a transcript LOADED with provider usage now
+    // calibrates the overhead estimate (AgentState messages setter). This
+    // suite's usage fixtures (500 tokens on a ~100-token transcript) are
+    // stale-anchor tests, not density measurements — keep the estimate
+    // uncalibrated so each fixture's arithmetic stands.
+    state.overheadCalibration = OverheadCalibration.uncalibrated;
     return AutoCompactor(
       session: session,
       state: state,
@@ -154,6 +160,9 @@ void main() {
       model: _model,
       messages: await session.buildContextMessages(),
     );
+    // gh-2411 follow-up #5: see `compactorFor` — the loaded transcript must
+    // not calibrate this fixture's estimate.
+    state.overheadCalibration = OverheadCalibration.uncalibrated;
     final hooks = _RecordingHooks();
     final ledger = CompactionUsageAccumulator();
     // A real adapter over a scripted stream — the only way usage reaches
@@ -260,10 +269,12 @@ void main() {
     await session.appendMessage(unanchored('c' * 400));
     final state = AgentState(
       model: _model,
-      // …but every request also carries this system prompt (+600 tokens):
-      // 400 + 600 > 900 means the gate must fire, exactly like the loop's
-      // over-window guard and the ctx meter read it.
-      systemPrompt: 's' * 2400,
+      // …but every request also carries this system prompt (+560 tokens
+      // at the overhead density, gh-2411): 400 + 560 > 900 means the gate
+      // must fire, exactly like the loop's over-window guard and the ctx
+      // meter read it — while 560 + the 150-token kept region still lands
+      // under the trigger after ONE pass.
+      systemPrompt: 's' * 1400,
       messages: await session.buildContextMessages(),
     );
     final fake = _FakeSummarizer([SummarizationResult.success('SUMMARY')]);
@@ -280,6 +291,10 @@ void main() {
   test('a no-op pass (already compacted at the leaf) stops the loop instead '
       'of spinning to maxPasses', () async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    // gh-2411: an OLDER foldable turn — the newest real user turn is
+    // never cut, so a lone turn has nothing to summarize.
+    await session.appendMessage(UserMessage.text('u0${'x' * 400}'));
+    await session.appendMessage(assistantWithUsage('y' * 400, 5000));
     await session.appendMessage(UserMessage.text('u1${'a' * 400}'));
     await session.appendMessage(assistantWithUsage('b' * 400, 5000));
     // Compact once for real: the leaf becomes a compaction record.
@@ -292,6 +307,9 @@ void main() {
       model: _model,
       messages: await session.buildContextMessages(),
     );
+    // gh-2411 follow-up #5: see `compactorFor` — the loaded transcript must
+    // not calibrate this fixture's estimate.
+    state.overheadCalibration = OverheadCalibration.uncalibrated;
     final hooks = _RecordingHooks();
     final ok = await compactorFor(
       session,
@@ -318,6 +336,9 @@ void main() {
       model: _model,
       messages: await session.buildContextMessages(),
     );
+    // gh-2411 follow-up #5: see `compactorFor` — the loaded transcript must
+    // not calibrate this fixture's estimate.
+    state.overheadCalibration = OverheadCalibration.uncalibrated;
     final hooks = _RecordingHooks();
     // The endpoint accepted the request and never answered (no error
     // event, no done) — stream.result pends forever.
@@ -351,6 +372,10 @@ void main() {
     'a hung summarizer with nothing to trim fails the run honestly',
     () async {
       final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+      // gh-2411: an older turn gives the summarizer a foldable region;
+      // the local trim still declines (the keep budget covers it all).
+      await session.appendMessage(UserMessage.text('u0'));
+      await session.appendMessage(assistantWithUsage('a', 5000));
       // One small message: over the window via the stale usage anchor, but
       // the local trim has nothing droppable (keep budget covers it all).
       await session.appendMessage(UserMessage.text('u1'));
@@ -896,6 +921,10 @@ void main() {
   test('both summarizers down but the transcript fits the keep budget: '
       'no trim, honest failure', () async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    // gh-2411: an OLDER foldable turn — the newest real user turn is
+    // never cut, so a lone turn has nothing to summarize.
+    await session.appendMessage(UserMessage.text('old'));
+    await session.appendMessage(assistantWithUsage('was', 500));
     // One short message: under keepRecentTokens — nothing droppable.
     await session.appendMessage(UserMessage.text('tiny'));
     final state = AgentState(
@@ -999,6 +1028,10 @@ void main() {
     'onAttemptStart reports each summarizer attempt with its budget',
     () async {
       final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+      // gh-2411: an OLDER foldable turn — the newest real user turn is
+      // never cut, so a lone turn has nothing to summarize.
+      await session.appendMessage(UserMessage.text('o' * 1200));
+      await session.appendMessage(assistantWithUsage('y' * 400, 500));
       await session.appendMessage(UserMessage.text('a' * 1200));
       final state = AgentState(
         model: _model,
@@ -1083,6 +1116,9 @@ void main() {
       model: _model,
       messages: await session.buildContextMessages(),
     );
+    // gh-2411 follow-up #5: see `compactorFor` — the loaded transcript must
+    // not calibrate this fixture's estimate.
+    state.overheadCalibration = OverheadCalibration.uncalibrated;
     final hooks = _RecordingHooks();
     AssistantMessageEventStream checkpoint(
       Model m,

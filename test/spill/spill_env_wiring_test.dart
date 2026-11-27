@@ -5,6 +5,8 @@
 // threshold, disabling one says so, and the section's own tolerant-parse
 // notes survive the composition (they are the diagnostics a bench run
 // debugging its config needs).
+import 'dart:io';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -92,6 +94,42 @@ void main() {
     expect(
       io.out.toString(),
       contains('threshold overridden via FAH_SPILL_THRESHOLD'),
+    );
+  });
+
+  test('a PROJECT spills section wins over the (absent) user section — '
+      'the app-host parity (gh-2411 rework review)', () async {
+    // The CLI boot resolves loadProjectSpillsConfig(cwd) ?? config.spills,
+    // exactly like bin/fah_runapp.dart. The loader reads the REAL
+    // filesystem (dart:io), so the project file lives in a real temp dir;
+    // the env-retune probe makes the applied threshold observable: with
+    // the project file picked up, the retune announces 1024 → 512 (not
+    // the 'enabled via' legacy silence).
+    final dir = await Directory.systemTemp.createTemp('fah-spill-proj');
+    addTearDown(() => dir.delete(recursive: true));
+    await Directory('${dir.path}/.fah').create();
+    await File(
+      '${dir.path}/.fah/config.yaml',
+    ).writeAsString('spills:\n  threshold: 1024\n');
+    AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: '[REDACTED:Sensitive-Value]',
+        env: MemoryExecutionEnv(cwd: dir.path, shell: FakeShell()),
+        sessionRoot: '/sessions',
+        sessionName: 'spill-wiring-project',
+        providerKind: 'openai-completions',
+        skillsAccess: SkillsAccess.granted,
+      ),
+      io: io,
+      environment: {spillThresholdEnvVar: '512'},
+    ).attachSpillWiring();
+    expect(
+      io.out.toString(),
+      contains(
+        '[spills] threshold overridden via FAH_SPILL_THRESHOLD: '
+        '1024 → 512',
+      ),
     );
   });
 }
