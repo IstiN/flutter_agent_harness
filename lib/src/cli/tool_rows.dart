@@ -223,6 +223,7 @@ String _rawFirstString(Map<String, dynamic> args) {
   }
   return '';
 }
+
 /// One display row, one line: newlines flatten to spaces, whitespace runs
 /// collapse (a two-line compound command stays a single row).
 String _flatten(String text) => text.replaceAll(RegExp(r'\s+'), ' ').trim();
