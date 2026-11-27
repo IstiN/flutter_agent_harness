@@ -13,6 +13,19 @@ block a release again.
 
 ## Unreleased
 
+- fix(2427): un-quarantine `secret_sheet_residual_test.dart` — the RT1
+  flake's product root cause was the #2416 round-2 deferred resolver
+  dying as plain `Tool request_secret not found` on the SECOND direct
+  call to a tool the keep-12 partition demoted and the same run had
+  already mounted (the tool leaves the discoverable set; the run's
+  stale context snapshot still misses it) — the second sheet never
+  opened, so the residual assertions found no frame at all. Fixed by
+  #2416 round 3's live-registry lookup; this change pins that path with
+  a hermetic regression test (`test/cli/request_secret_remount_test.dart`,
+  red on the round-2 resolver shape) and anchors RT1's second-sheet wait
+  on the frame-unique reason row (`waitForScreen`, gh-1049) instead of
+  the raw-stream match that raced the sheet paint. Quarantine entry
+  removed; the gate runs the file again.
 - fix(2433): runtime `/provider` / `/model` switches are no longer
   silently ignored when a `modelOverrides` path entry matches the cwd —
   `ModelRolesConfig` gains `runtimePinned` (runtime-only, never parsed
