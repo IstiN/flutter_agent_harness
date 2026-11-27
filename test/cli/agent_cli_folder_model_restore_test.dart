@@ -225,6 +225,13 @@ void main() {
         second.agent.state.model.headers?['x-codemie-project'],
         'demo-project',
       );
+      // The restored model carries the client header too (issue #2426):
+      // boot restore is a rebuild, and every rebuild re-derives the
+      // always-on set.
+      expect(
+        second.agent.state.model.headers?[codeMieClientHeader],
+        codeMieClient,
+      );
 
       // AC5: the restored header reaches the WIRE through the REAL
       // adapter — a fake endpoint asserts the header VALUE.
@@ -254,6 +261,9 @@ void main() {
       );
       await stream.toList();
       expect(seen!.headers['x-codemie-project'], 'demo-project');
+      // The client header reaches the wire on the restored model
+      // (issue #2426 E2E-1).
+      expect(seen!.headers['x-codemie-client'], codeMieClient);
     },
   );
 

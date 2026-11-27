@@ -251,11 +251,15 @@ void bootWindow() {
 }
 
 /// The services stage: Firebase app, the WASM runtime, and the `.env`
-/// provider filter — the plugin-touching setup that must precede storage.
+/// provider filter + CodeMie client override — the plugin-touching setup
+/// that must precede storage.
 Future<void> bootServices() async {
   await _initFirebaseApp();
   await _setUpWasmRuntimeBestEffort();
   providerFilterEnvOverride = await _loadProviderFilterOverride();
+  codeMieClientOverride = resolveCodeMieClientOverride(
+    dotenv.isInitialized ? dotenv.env : const <String, String>{},
+  );
 }
 
 /// The storage stage: every persisted store the app boots with, loaded over

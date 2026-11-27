@@ -512,6 +512,20 @@ void validateAuthHeaderDialect(
   );
 }
 
+/// The headers a CodeMie model rides (issues #1941, #2426): the always-on
+/// client identity ([codeMieRequestHeaders] — the gateway's budget
+/// attribution) plus the selected [project] (`x-codemie-project` — the
+/// billing scope). Null for non-CodeMie [baseUrl]s keeps today's
+/// byte-identical header absence (INV-3); a null project on a CodeMie URL
+/// still carries the client header — budget attribution never depends on
+/// a picked project.
+Map<String, String>? _codeMieModelHeaders(String? baseUrl, String? project) {
+  if (baseUrl == null || !isCodeMieBaseUrl(baseUrl)) {
+    return project == null ? null : {codeMieProjectHeader: project};
+  }
+  return {...codeMieRequestHeaders, codeMieProjectHeader: ?project};
+}
+
 /// Builds a [Model] for [provider]/[modelId] with catalog defaults, overrid-
 /// able per reference (see `ModelRef`).
 ///
@@ -568,12 +582,14 @@ Model buildCatalogModel(
     contextWindow: caps.contextWindow,
     maxTokens: caps.maxTokens,
     authHeader: authHeader,
-    // The CodeMie project the model bills (issue #1941): the selected
-    // project rides EVERY request — a header-less model falls back to the
-    // user's DEFAULT project on the backend.
-    headers: projectHeader == null
-        ? null
-        : {codeMieProjectHeader: projectHeader},
+    // The CodeMie headers the model bills through (issues #1941, #2426):
+    // the always-on client identity (budget attribution) plus the
+    // selected project (billing scope) — a header-less request falls back
+    // to the user's DEFAULT project AND personal budget on the backend.
+    headers: _codeMieModelHeaders(
+      baseUrl ?? spec.defaultBaseUrl,
+      projectHeader,
+    ),
     // The omit-compat flag rides the model compat (AC7); every other
     // compat field stays null so the adapter's auto-detection applies.
     compat: caps.omitMaxOutputTokens
@@ -763,9 +779,10 @@ Model buildCliDefaultModel(
     // Restores adopt the matching saved entry's CodeMie project (issue
     // #1941) — a restored CodeMie endpoint without its project header
     // bills the user's DEFAULT project, not the selected one.
-    headers: projectHeader == null
-        ? null
-        : {codeMieProjectHeader: projectHeader},
+    headers: _codeMieModelHeaders(
+      baseUrl ?? spec.defaultBaseUrl,
+      projectHeader,
+    ),
     // The omit-compat flag rides the model compat (AC7, gh-1426).
     compat: caps.omitMaxOutputTokens
         ? const OpenAICompletionsCompat(omitMaxOutputTokens: true)

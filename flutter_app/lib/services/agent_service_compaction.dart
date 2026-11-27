@@ -78,9 +78,12 @@ final class AgentConfig {
     // CodeMie authenticates via cookies: the stored apiKey is the full
     // cookie string, which rides in model.headers as a `cookie` entry. The
     // openai-completions adapter skips `Authorization: Bearer` when the key
-    // is empty, so the cookie is the sole auth credential.
+    // is empty, so the cookie is the sole auth credential — plus the
+    // always-on client header (issue #2426): the gateway picks the billing
+    // budget by it, and a header-less request 429s against the personal
+    // budget.
     headers: isCodeMieProvider(baseUrl) && apiKey.isNotEmpty
-        ? {'cookie': apiKey}
+        ? {...codeMieRequestHeaders, 'cookie': apiKey}
         : null,
     input: [
       'text',
