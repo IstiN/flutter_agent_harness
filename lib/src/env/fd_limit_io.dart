@@ -60,24 +60,59 @@ typedef _RLimitOpDart = int Function(int, ffi.Pointer<_RLimit>);
   }
 }
 
-bool _raisedOnce = false;
+/// One-shot soft-limit raise decision over INJECTED seams (issue #2415;
+/// review round 2 demanded the branch matrix be testable — the ffi shape
+/// made the refusal/clamp/armed arms uncoverable). Pure decision, no
+/// dart:ffi: `raiseFdLimitOnce` drives it with the real libc seams; tests
+/// script [limits]/[setSoft]. The arm flag is process-lifetime state on
+/// the instance: a raise happens at most once, and a REFUSAL also arms
+/// (a setrlimit refusal is a host property — sandbox/hardened profile —
+/// not a transient condition; retrying would burn a syscall per later
+/// call).
+final class FdLimitRaise {
+  /// Whether this instance already attempted its raise.
+  bool get armed => _armed;
+  bool _armed = false;
 
-/// Raises the fd soft limit to `min(hard, [target])`, once per process.
-/// Returns the limits AFTER the attempt (the raised state on success, the
-/// untouched state when already at/above the target or the syscall
-/// refused); null when unsupported. Best-effort: never throws.
-({int soft, int hard})? raiseFdLimitOnce({int target = fdLimitTarget}) {
-  final limits = fdLimits();
-  if (limits == null) return null;
-  final hard = limits.hard < 0 || limits.hard >= _rlimInfinitySentinel
-      ? target
-      : limits.hard;
-  final wanted = hard < target ? hard : target;
-  if (_raisedOnce || limits.soft >= wanted) return limits;
-  // Armed BEFORE the attempt, by design: a setrlimit refusal is a host
-  // property (sandbox/hardened profile), not a transient condition —
-  // retrying on every later call would burn a syscall per bash spawn.
-  _raisedOnce = true;
+  /// Reads the limits, raises the soft limit to `min(hard, [target])`
+  /// unless already armed or at/above the wanted value, and answers the
+  /// post-state limits (the re-read state on success, the untouched
+  /// pre-state when the setter refused, threw, or the raise was a
+  /// no-op). Null limits (unsupported platform) answer null. Best-effort:
+  /// never throws.
+  ({int soft, int hard})? apply({
+    required ({int soft, int hard})? Function() limits,
+    required bool Function(int soft, int hard) setSoft,
+    int target = fdLimitTarget,
+  }) {
+    final current = limits();
+    if (current == null) return null;
+    // RLIM_INFINITY loads as a negative (max uint64) or max-int64 (Darwin)
+    // — either means "unlimited", so the target itself is the wanted cap.
+    final unlimited = current.hard < 0 || current.hard >= _rlimInfinitySentinel;
+    final wanted = unlimited
+        ? target
+        : current.hard < target
+        ? current.hard
+        : target;
+    if (_armed || current.soft >= wanted) return current;
+    _armed = true;
+    var applied = false;
+    try {
+      applied = setSoft(wanted, current.hard);
+    } on Object {
+      return current;
+    }
+    if (!applied) return current;
+    return limits();
+  }
+}
+
+final FdLimitRaise _fdLimitRaise = FdLimitRaise();
+
+/// Sets the soft limit to [soft] (hard untouched) through libc
+/// `setrlimit`; whether the syscall accepted it. Never throws.
+bool _setSoftLimitFfi(int soft, int hard) {
   try {
     final libc = ffi.DynamicLibrary.process();
     final setrlimit = libc.lookupFunction<_RLimitOpC, _RLimitOpDart>(
@@ -85,17 +120,28 @@ bool _raisedOnce = false;
     );
     final rl = calloc<_RLimit>();
     try {
-      rl.ref.rlimCur = wanted;
-      rl.ref.rlimMax = limits.hard;
-      if (setrlimit(_rlimitNofile, rl) != 0) return limits;
+      rl.ref.rlimCur = soft;
+      rl.ref.rlimMax = hard;
+      return setrlimit(_rlimitNofile, rl) == 0;
     } finally {
       calloc.free(rl);
     }
   } on Object {
-    return limits;
+    return false;
   }
-  return fdLimits();
 }
+
+/// Raises the fd soft limit to `min(hard, [target])`, once per process
+/// (armed across calls; a refusal arms too — see [FdLimitRaise]).
+/// Returns the limits AFTER the attempt (the raised state on success, the
+/// untouched state when already at/above the target or the syscall
+/// refused); null when unsupported. Best-effort: never throws.
+({int soft, int hard})? raiseFdLimitOnce({int target = fdLimitTarget}) =>
+    _fdLimitRaise.apply(
+      limits: fdLimits,
+      setSoft: _setSoftLimitFfi,
+      target: target,
+    );
 
 /// True when [error] is the spawn-time fd-table exhaustion (EMFILE 24 /
 /// ENFILE 23, or the strerror text as a belt for platform variants) —

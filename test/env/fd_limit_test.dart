@@ -101,6 +101,124 @@ void main() {
     });
   });
 
+  group('FdLimitRaise decision core (branch matrix, scripted seams)', () {
+    test('null limits answers null — the setter is never consulted', () {
+      final calls = <(int, int)>[];
+      final raise = FdLimitRaise();
+      final out = raise.apply(
+        limits: () => null,
+        setSoft: (soft, hard) {
+          calls.add((soft, hard));
+          return true;
+        },
+      );
+      expect(out, isNull);
+      expect(calls, isEmpty);
+    });
+
+    test('an unlimited hard limit raises to the target (the launchd '
+        'shape) and returns the re-read post-state', () {
+      final raise = FdLimitRaise();
+      var reads = 0;
+      final out = raise.apply(
+        limits: () {
+          reads++;
+          // Read #1 pre-state: 256/unlimited; read #2 post-raise: 10240.
+          return reads == 1 ? (soft: 256, hard: -1) : (soft: 10240, hard: -1);
+        },
+        setSoft: (soft, hard) => true,
+      );
+      expect(out, (soft: 10240, hard: -1));
+      expect(raise.armed, isTrue);
+    });
+
+    test('a hard limit below the target clamps the raise to the hard cap', () {
+      final raise = FdLimitRaise();
+      int? askedSoft;
+      raise.apply(
+        limits: () => (soft: 256, hard: 4096),
+        setSoft: (soft, hard) {
+          askedSoft = soft;
+          return true;
+        },
+      );
+      expect(askedSoft, 4096, reason: 'min(hard, target) — never above hard');
+    });
+
+    test('a soft limit already at/above the wanted value is a no-op — '
+        'the setter is not consulted', () {
+      final raise = FdLimitRaise();
+      var setterCalls = 0;
+      final out = raise.apply(
+        limits: () => (soft: 10240, hard: -1),
+        setSoft: (soft, hard) {
+          setterCalls++;
+          return true;
+        },
+      );
+      expect(out, (soft: 10240, hard: -1));
+      expect(setterCalls, 0);
+      // The no-op does NOT arm: a later lower-start raise must still run.
+      expect(raise.armed, isFalse);
+    });
+
+    test('an already-armed raise is a process-lifetime no-op', () {
+      final raise = FdLimitRaise();
+      var setterCalls = 0;
+      // First call arms (the raise happens).
+      raise.apply(
+        limits: () => (soft: 256, hard: -1),
+        setSoft: (soft, hard) => true,
+      );
+      expect(raise.armed, isTrue);
+      // Second call: untouched pre-state, setter never consulted.
+      final out = raise.apply(
+        limits: () => (soft: 256, hard: -1),
+        setSoft: (soft, hard) {
+          setterCalls++;
+          return true;
+        },
+      );
+      expect(out, (soft: 256, hard: -1));
+      expect(setterCalls, 0);
+    });
+
+    test('a setter refusal returns the pre-state and STAYS armed — the '
+        'refusal is a host property, never retried', () {
+      final raise = FdLimitRaise();
+      var setterCalls = 0;
+      final out = raise.apply(
+        limits: () => (soft: 256, hard: -1),
+        setSoft: (soft, hard) {
+          setterCalls++;
+          return false; // setrlimit refused
+        },
+      );
+      expect(out, (soft: 256, hard: -1));
+      expect(setterCalls, 1);
+      expect(raise.armed, isTrue);
+      // The refusal persists: a later call cannot retry the syscall.
+      raise.apply(
+        limits: () => (soft: 256, hard: -1),
+        setSoft: (soft, hard) {
+          setterCalls++;
+          return true;
+        },
+      );
+      expect(setterCalls, 1);
+    });
+
+    test('a throwing setter is contained: pre-state returned, armed', () {
+      final raise = FdLimitRaise();
+      final out = raise.apply(
+        limits: () => (soft: 256, hard: -1),
+        setSoft: (soft, hard) => throw StateError('ffi gone'),
+      );
+      expect(out, (soft: 256, hard: -1));
+      expect(raise.armed, isTrue);
+    });
+  });
+
   group('isFdExhaustion', () {
     test('matches the EMFILE/ENFILE spawn failures', () {
       expect(
