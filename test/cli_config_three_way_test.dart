@@ -400,42 +400,52 @@ models:
       expect(text, contains('config: other.yaml'));
     });
 
-    test('an unwritable project .fah dir degrades to the global '
-        'destination — persistConfig never throws', () async {
-      final h = Harness(tmp);
-      h.seedGlobal('cube:\n  enabled: true\n');
-      h.seedProject('cube:\n  enabled: true\n  config: strict.yaml\n');
-      final projFah = Directory('${h.proj.path}/.fah');
-      // dart:io has no chmod API — the Process.run('chmod', …) precedent
-      // (test/hub/dap_command_test.dart).
-      Process.runSync('chmod', ['555', projFah.path]);
-      addTearDown(() => Process.runSync('chmod', ['755', projFah.path]));
-      final beforeStat = h.project.statSync();
-      final baseline = loadCliConfig(tmp.path);
-      await saveCliConfig(
-        tmp.path,
-        baseline.copyWith(
-          cube: const CubeSettings(enabled: true, configPath: 'other.yaml'),
-        ),
-        base: baseline,
-        projectDir: h.proj.path,
-      );
-      expect(
-        loadCliConfig(tmp.path).cube?.configPath,
-        'other.yaml',
-        reason: 'the save succeeds through the global destination',
-      );
-      expect(
-        h.project.readAsStringSync(),
-        'cube:\n  enabled: true\n  config: strict.yaml\n',
-        reason: 'the unwritable destination stays untouched',
-      );
-      expect(
-        h.project.statSync().modified,
-        beforeStat.modified,
-        reason: 'a degraded target never renames the file',
-      );
-    });
+    test(
+      'an unwritable project .fah dir degrades to the global '
+      'destination — persistConfig never throws',
+      // POSIX-only contract: the unwritable destination is produced with
+      // chmod, like test/hub/dap_command_test.dart. CI dart-test shards
+      // are ubuntu-only; a local Windows run skips instead of failing on
+      // the missing chmod.
+      skip: Platform.isWindows
+          ? 'chmod-based unwritable dir is POSIX-only'
+          : null,
+      () async {
+        final h = Harness(tmp);
+        h.seedGlobal('cube:\n  enabled: true\n');
+        h.seedProject('cube:\n  enabled: true\n  config: strict.yaml\n');
+        final projFah = Directory('${h.proj.path}/.fah');
+        // dart:io has no chmod API — the Process.run('chmod', …) precedent
+        // (test/hub/dap_command_test.dart).
+        Process.runSync('chmod', ['555', projFah.path]);
+        addTearDown(() => Process.runSync('chmod', ['755', projFah.path]));
+        final beforeStat = h.project.statSync();
+        final baseline = loadCliConfig(tmp.path);
+        await saveCliConfig(
+          tmp.path,
+          baseline.copyWith(
+            cube: const CubeSettings(enabled: true, configPath: 'other.yaml'),
+          ),
+          base: baseline,
+          projectDir: h.proj.path,
+        );
+        expect(
+          loadCliConfig(tmp.path).cube?.configPath,
+          'other.yaml',
+          reason: 'the save succeeds through the global destination',
+        );
+        expect(
+          h.project.readAsStringSync(),
+          'cube:\n  enabled: true\n  config: strict.yaml\n',
+          reason: 'the unwritable destination stays untouched',
+        );
+        expect(
+          h.project.statSync().modified,
+          beforeStat.modified,
+          reason: 'a degraded target never renames the file',
+        );
+      },
+    );
 
     test('a content-identical project target skips the write (no mtime '
         'churn on a git-tracked file)', () async {

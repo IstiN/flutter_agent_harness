@@ -202,32 +202,10 @@ Future<Set<String>> _saveChangedProjectSections({
   final newBlocks = _topLevelYamlBlocks(config.toYaml());
   final baseBlocks = _topLevelYamlBlocks(base.toYaml());
   try {
-    return await _serializedConfigWrite<Set<String>>(file.path, () async {
-      var text = file.existsSync() ? file.readAsStringSync() : '';
-      // Targets from the FRESH text — the parse that guards the
-      // destination runs here too, on what the chain actually sees.
-      final doc = _parseYamlMapOrNull(text);
-      if (doc == null) return const {};
-      final targets = _projectTargets(doc, baseBlocks, newBlocks);
-      if (targets.isEmpty) return const {};
-      final original = text.endsWith('\n') ? text : '$text\n';
-      for (final key in targets) {
-        text = _replaceTopLevelBlock(text, key, newBlocks[key]!);
-      }
-      if (!text.endsWith('\n')) text = '$text\n';
-      if (text == original) return targets;
-      // Never persist a project file the next boot would reject: the
-      // edited document must parse and every carried section must pass
-      // the real strict parsers (same refusal rule as the global merge
-      // step).
-      final edited = _parseYamlMapOrNull(text);
-      if (edited == null) {
-        throw ConfigException('refusing to write unparseable ${file.path}');
-      }
-      CliConfig.fromYaml(edited);
-      await _atomicConfigWrite(file, text);
-      return targets;
-    });
+    return await _serializedConfigWrite<Set<String>>(
+      file.path,
+      () => _applyFreshProjectTargets(file, baseBlocks, newBlocks),
+    );
   } on FileSystemException catch (error) {
     stderr.writeln(
       'warning: cannot write project config ${file.path} — saving to the '
@@ -235,6 +213,42 @@ Future<Set<String>> _saveChangedProjectSections({
     );
     return const {};
   }
+}
+
+/// The serialized project write op (gh-2422): reads [file] fresh — the
+/// chain's read decides — derives the targets from that text, applies the
+/// upserts, validates the edited document, and writes atomically,
+/// returning the targeted keys (empty when the fresh disk state targets
+/// nothing). Split out of [_saveChangedProjectSections] for the CRAP
+/// ratchet; the FS errors it throws are the caller's degrade boundary.
+Future<Set<String>> _applyFreshProjectTargets(
+  File file,
+  Map<String, String> baseBlocks,
+  Map<String, String> newBlocks,
+) async {
+  var text = file.existsSync() ? file.readAsStringSync() : '';
+  // Targets from the FRESH text — the parse that guards the destination
+  // runs here too, on what the chain actually sees.
+  final doc = _parseYamlMapOrNull(text);
+  if (doc == null) return const {};
+  final targets = _projectTargets(doc, baseBlocks, newBlocks);
+  if (targets.isEmpty) return const {};
+  final original = text.endsWith('\n') ? text : '$text\n';
+  for (final key in targets) {
+    text = _replaceTopLevelBlock(text, key, newBlocks[key]!);
+  }
+  if (!text.endsWith('\n')) text = '$text\n';
+  if (text == original) return targets;
+  // Never persist a project file the next boot would reject: the edited
+  // document must parse and every carried section must pass the real
+  // strict parsers (same refusal rule as the global merge step).
+  final edited = _parseYamlMapOrNull(text);
+  if (edited == null) {
+    throw ConfigException('refusing to write unparseable ${file.path}');
+  }
+  CliConfig.fromYaml(edited);
+  await _atomicConfigWrite(file, text);
+  return targets;
 }
 
 /// The project-capable keys that live in [doc], changed between the
