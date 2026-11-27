@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-27T13:17:51.102Z",
+  "ticketKey": "gh-2433",
+  "headSha": "dd8002e4c68d711b017abf8fa25eb3f6e6473510",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "merge_conflicts.md": {
+      "hash": "fnv1a64:56b1b9af884fc8fd",
+      "size": 476
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:e9511a2c8c8bb82f",
+      "size": 12301
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:2d37a94ff3bc4070",
+      "size": 10382
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:42c830c1be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:1d9e092e4d34bdd5",
+      "size": 2107
+    },
+    "request.md": {
+      "hash": "fnv1a64:dce87d83839f1210",
+      "size": 1151
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:c4c635b4c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:f09af61ce52553e2",
+      "size": 1210
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:dce87d83839f1210",
+      "size": 1151
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:684df51a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: `setRoleChain` leaves inherit-default sibling wrappers stale — a runtime switch still silently doesn't take effect for them**\n\n`streamForRole` caches per-role wrappers in `_wrappers` across runs by design (cooldowns/chain position persist), but `setRoleChain` invalidates only the switched role's wrapper (`model_resolver.dart:618`). Roles **not** present in `config.roles` resolve by inheriting the `default` chain — and their cached wrapper, if built *before* the switch, keeps streaming the **pre-switch** chain forever:\n\n```dart\n// streamForRole: cached until explicitly removed\nreturn _wrappers.putIfAbsent(role, () { final entries = chainFor(role); ... });\n// setRoleChain: only the switched role is invalidated\n_wrappers.remove(role);\n```\n\nConcrete repro: a minimal config with only `roles.default` set → a compaction run (or stall takeover) builds the `smol` wrapper inheriting claude → `/model gpt-5` on a catalog-default endpoint (no scoped key name, so no `addSecret`/`_seedEnvKeyStack` side effect clears wrappers) → every later compaction summary and smol takeover still streams **claude** while the main agent runs gpt-5. The wrapper invalidation is currently path-dependent: switch paths that seed a scoped key name (`_switchModel`, `/provider` with a saved entry) accidentally clear *all* wrappers via `addSecret`, the plain catalog-default switch clears none.\n\nThis is pre-existing behavior, not introduced by this diff — but this PR edits exactly this seam and re-documents the promise it breaks (\"the new chain takes effect on the next run\", lines 600–603), and it is the same \"runtime switch silently not taking effect\" family gh-2433 fixes. `setRetryPolicy` already establishes the codebase invariant for this exact situation: wrappers capture constructor-time resolution, so they must be rebuilt when the thing they inherited changes.\n\nSuggested fix (preserves other roles' cooldown state):\n\n```dart\n_wrappers.remove(role);\nif (role == defaultModelRole) {\n  // inherit-default siblings captured the OLD default chain — rebuild them.\n  _wrappers.removeWhere((r, _) => !config.roles.containsKey(r));\n}\n```\n\nplus a test: build a sibling wrapper pre-switch (`resolveRole('smol')` with `smol` unset), `setDefaultChain(...)`, assert the next `resolveRole('smol')` returns the switched model."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:0741106a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 1 — `lib/src/model_roles/model_resolver.dart:618` — stale inherit-default sibling wrappers\n\n⚠️ **IMPORTANT — fixed** in `8ec6bf1ae6` (`fix(model_roles): a default-chain switch rebuilds inherit-default sibling wrappers`).\n\n`setRoleChain` now rebuilds the inherit-default sibling wrappers when the switched role is `default` — the suggested fix verbatim:\n\n```dart\n_wrappers.remove(role);\nif (role == defaultModelRole) {\n  // Inherit-default siblings captured the OLD default chain — the\n  // same invariant setRetryPolicy establishes: wrappers capture\n  // resolution at construction, so they must be rebuilt when the\n  // thing they inherited changes. Roles with their own chain keep\n  // their wrapper (and its cooldown state).\n  _wrappers.removeWhere((r, _) => !config.roles.containsKey(r));\n}\n```\n\n`setDefaultChain` routes through `setRoleChain(defaultModelRole, …)`, so the runtime `/model` path is covered; a switch of a **non-default** role still touches only its own wrapper (the default chain it would inherit from is unchanged). `setRetryPolicy`/`refreshCapabilities` already clear everything.\n\n## Regression tests (TDD — `test/model_roles/model_resolver_test.dart`, both named `gh-2433 review …`)\n\n- **Repro (failed RED before the fix)**: minimal config with only `default` set → `resolveRole('smol')` builds the inheriting wrapper → `setDefaultChain` to a catalog-default endpoint (`gpt-switched`; no scoped key name, so no `addSecret`/`_seedEnvKeyStack` side effect clears wrappers) → the next `resolveRole('smol')` must return `gpt-switched`. Before the fix it still returned `claude-main` — exactly the reviewer repro (every later compaction summary / smol takeover streaming the pre-switch chain).\n- **Guard against an over-broad fix**: a smol run first benches `claude-main` into cooldown, then an unrelated non-default switch (`setRoleChain('plan', …)`) runs — `describeRoles()` still renders the smol cooldown annotation, proving the sibling clear is scoped to a default-chain switch and cooldown state survives.\n\n## Verified\n\n- `dart test test/model_roles/model_resolver_test.dart --plain-name \"gh-2433 review\"` → 2 passed (the repro failed before the fix).\n- `dart test test/model_roles` → 419 passed.\n- `dart format --set-exit-if-changed` + `dart analyze` on the touched files → clean.\n\nAlso rode the lap on the same file: joined the split `[ModelRolesConfig.runtimePinned]` dartdoc reference (digest 🪶) so it renders as a resolved reference."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:f78c0b30",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-2433 fix itself is correct and well-tested (runtime pins ride `ModelRolesConfig.runtimePinned`, skip path overrides, never touch yaml; all 5 targeted tests + 417 `test/model_roles` pass, format/analyze clean) and the ticket AC is met. One important issue remains in the same seam: `setRoleChain` still leaves inherit-default sibling wrappers stale after a runtime switch — the \"switch silently doesn't take effect\" bug family, one door over.\n\n**Key Issues** (digest — outside the diff or suggestion/nit tier, no threads):\n\n- `lib/src/cli/session_commands.dart:1410` — 💡 the failed-restore rollback calls `setRoleChain(defaultModelRole, previousChain)`, which now **pins** `default` unconditionally: after a *failed* session-restore re-pin, a yaml `modelOverrides` entry that previously won silently stops applying for the rest of the session (the pin out-ranks it). Restore the captured pin state in the rollback instead of re-pinning blind. Raise to ⚠️ if a session can hit this in practice (needs a failing re-pin + a matching pathOverride + no earlier live switch).\n- `lib/src/model_roles/roles_config.dart:737` — 💡 `pinsRole` is pin-blind: a config with `runtimePinned: {r}` but no `roles[r]` has `pinsRole(r) == false` while `chainFor` skips overrides for `r`. Unreachable via the resolver today (`setRoleChain` always writes the top-level chain), so document the invariant (pin ⇒ role in `roles`) or fold `runtimePinned.contains(role)` into `pinsRole`.\n- `CHANGELOG.md` — 💡 no `## Unreleased` entry; every recent fix PR adds one (repo convention since gh-1522).\n- `lib/src/model_roles/model_resolver.dart:600` — 🪶 the dartdoc reference `[ModelRolesConfig` / `.runtimePinned]` is split across lines and renders as an unresolved reference; join it or drop the brackets.\n- `test/model_roles/model_resolver_test.dart:421`, `test/model_roles/roles_config_test.dart:541` — 🪶 comment typo \"`/provider //model`\" (mangled \"`/provider` / `/model`\").\n\n**Next Steps**:\n1. Fix the stale sibling-wrapper invalidation in `setRoleChain` (see inline thread) + regression test.\n2. Restore pin state in the `_repinRolesChain` rollback path.\n3. Add the CHANGELOG `## Unreleased` line.\n\nVerified locally: `dart test test/model_roles/model_resolver_test.dart test/model_roles/roles_config_test.dart --plain-name \"gh-2433\"` → 5 passed; `dart test test/model_roles` → 417 passed; `dart format --set-exit-if-changed` + `dart analyze` on the touched files → clean."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:04525bf9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Re-review of the rework (`6860c045`): F1 is fixed exactly as raised — `setRoleChain` now rebuilds the inherit-default sibling wrappers when the `default` chain switches (`model_resolver.dart:623-631`), verified against the reviewer repro regression test plus an over-broad-fix guard (cooldown state survives non-default switches). Ticket AC holds (runtime pins skip `modelOverrides`, never serialized to yaml); 7 targeted tests + 419 `test/model_roles` pass, format/analyze clean. Only advisory 💡/🪶 carry-overs remain — none block merge.\n\n**Key Issues** (advisory digest — frozen lines outside the rework hunks, re-posted from round 1; no threads):\n\n- `lib/src/cli/session_commands.dart:1410` — 💡 the failed-restore rollback still re-pins `default` unconditionally: after a failed re-pin, a yaml `modelOverrides` entry that previously won silently stops applying (needs failing re-pin + matching pathOverride + no earlier live switch).\n- `lib/src/model_roles/roles_config.dart:737` — 💡 `pinsRole` is pin-blind vs `runtimePinned` (latent-only today: `setRoleChain` always writes the top-level chain) — document the invariant or fold the pin into the check.\n- `test/model_roles/roles_config_test.dart:541` — 🪶 comment typo \"`/provider //model`\" — the `model_resolver_test.dart` twin was fixed this round; this one remains.\n\n**Next Steps**:\n1. Nothing required for merge — the three advisory lines can ride a later polish lap."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-27:a478d838",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer 6860c04545a4c75f2ee4216b353b53375864e4ec — run 45936729792 still queued at 2026-11-27T04:52:42.808Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-27:73eb1a08",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer 682a6d707530a93fa5f12f0e6f8ae1b9d51b0559 — run 45974041584 still queued at 2026-11-27T11:22:06.951Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    }
+  ]
+}
