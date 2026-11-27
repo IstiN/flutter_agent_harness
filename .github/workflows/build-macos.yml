@@ -1299,14 +1299,157 @@ jobs:
       # job token. Granted on every mint-reachable job.
       actions: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # Blobless full history: the lazy draft create (gh-1801 rework)
-          # builds the release body via scripts/release_notes.sh — same
-          # reason as release-macos's checkout (gh-1477: the notes read
-          # commit MESSAGES, never historical file blobs).
-          fetch-depth: 0
-          filter: blob:none
+      # ── Prepare persistent local git mirrors (gh-2453) ──────────────────────
+      # The RAW actions/checkout this job used before (fetch-depth: 0 +
+      # filter: blob:none) is banned on the fa-m5 pool: its un-guarded,
+      # un-retried full-history `git fetch --unshallow` stalled for 44m45s
+      # in run 45945536578 ("Build macOS CLI arm64") until the job's 45m
+      # ceiling killed it — the sibling x64 leg ran the identical fetch in
+      # 2.25s, pure link roulette (gh-2072's class). This is the gh-1644
+      # failure class (run 38855793382, "error: 2931 bytes of body are
+      # still expected"), already fixed for the build-macos desktop matrix
+      # and the build-mobile iOS legs; build-macos-cli joins them with the
+      # same bootstrapped script + stall guard + bounded retries. Contract:
+      # scripts/update_git_mirror_selftest.sh. Bootstrap (gh-1665): this
+      # step runs BEFORE any checkout on persistent self-hosted runners —
+      # the workspace may hold a pre-merge tree (or be wiped), so the
+      # script is bootstrapped from the commit-pinned raw URL
+      # (workflow_dispatch-only ⇒ ${{ github.sha }} is always a pushed
+      # commit) with the mirror copy as the no-network fallback.
+      - name: Update local git mirrors
+        run: |
+          set -euo pipefail
+          MIRROR_BASE="$HOME/actions-runner-yoloit/mirror"
+          mkdir -p "$MIRROR_BASE"
+          MIRROR="$MIRROR_BASE/flutter_agent_harness.git"
+          SCRIPT="$RUNNER_TEMP/update_git_mirror.sh"
+          RAW="https://raw.githubusercontent.com/IstiN/flutter_agent_harness/${{ github.sha }}/scripts/update_git_mirror.sh"
+          if ! curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "$RAW" -o "$SCRIPT" \
+             || [ ! -s "$SCRIPT" ]; then
+            echo "raw bootstrap failed — syncing the mirror and falling back to its copy" >&2
+            if [ -d "$MIRROR" ] && git -C "$MIRROR" rev-parse --git-dir >/dev/null 2>&1; then
+              git -C "$MIRROR" fetch origin || true
+            else
+              rm -rf "$MIRROR"
+              git clone --mirror https://github.com/IstiN/flutter_agent_harness.git "$MIRROR" || true
+            fi
+            BRANCH="$(git --git-dir="$MIRROR" symbolic-ref --short HEAD 2>/dev/null || echo main)"
+            git --git-dir="$MIRROR" show "$BRANCH:scripts/update_git_mirror.sh" > "$SCRIPT" \
+              || { echo "::error::could not bootstrap update_git_mirror.sh (raw URL unreachable and mirror lacks the script)" >&2; exit 1; }
+          fi
+          bash "$SCRIPT" \
+            https://github.com/IstiN/flutter_agent_harness.git \
+            "$MIRROR"
+
+      # ── Checkout from the local mirror (gh-2453) ────────────────────────────
+      # gh-1644 stall-guarded + bounded-retried; gh-1600 workspace-tolerant
+      # (the persistent shared workspace may hold a previous job's tree —
+      # the fa-m5-3 workspace held an ai/gh-2426 agent checkout that
+      # morning). BLOBLESS FULL — deliberately NOT the desktop matrix's
+      # shallow clone: the lazy draft create (gh-1801 rework) builds the
+      # release body via scripts/release_notes.sh, which falls back to
+      # conventional commits since the previous tag (gh-1477: the notes
+      # read commit MESSAGES, never historical file blobs —
+      # --filter=blob:none keeps them out of the transfer, the mirror
+      # supplies all commits/tags locally, so the network phase is the tip
+      # blobs only). A stalled attempt aborts in ~60s
+      # (http.lowSpeedLimit/http.lowSpeedTime — the update_git_mirror.sh
+      # STALL_GUARD values) and engages the retries instead of holding the
+      # step to the 45m ceiling. INLINE like the desktop checkout: local
+      # `uses: ./...` actions resolve against $GITHUB_WORKSPACE at step
+      # time — on this box that is the PREVIOUS run's tree, and this step
+      # IS the checkout.
+      - name: Checkout repository from local mirrors
+        run: |
+          set -euo pipefail
+
+          MIRROR="$HOME/actions-runner-yoloit/mirror/flutter_agent_harness.git"
+          URL="https://github.com/IstiN/flutter_agent_harness.git"
+          echo "MIRROR=$MIRROR"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+
+          # gh-1600: tolerate stale unremovable paths in the persistent
+          # shared workspace — log-and-prune, never fail the checkout.
+          cd /tmp
+          rm -rf "${RUNNER_TEMP:-/tmp}"/stale-workspace-* 2>/dev/null || true
+          if ! rm -rf "$GITHUB_WORKSPACE" 2>/dev/null; then
+            echo "::warning::$GITHUB_WORKSPACE not fully removable — stale paths held by another process (gh-1600); pruning what is removable"
+            rm -rf "$GITHUB_WORKSPACE" || true
+          fi
+          if [ -d "$GITHUB_WORKSPACE" ] && [ -n "$(ls -A "$GITHUB_WORKSPACE" 2>/dev/null)" ]; then
+            STALE="${RUNNER_TEMP:-/tmp}/stale-workspace-$(date +%Y%m%d-%H%M%S)"
+            echo "::warning::$GITHUB_WORKSPACE still non-empty after prune — moving the remainder to $STALE (gh-1600)"
+            mkdir -p "$(dirname "$STALE")" 2>/dev/null || true
+            if ! mv "$GITHUB_WORKSPACE" "$STALE" 2>/dev/null; then
+              echo "::warning::$GITHUB_WORKSPACE could not be moved aside either — cloning around the stub (gh-1600)"
+              rm -rf "$GITHUB_WORKSPACE" || true
+            fi
+          fi
+          mkdir -p "$GITHUB_WORKSPACE"
+
+          CLONE_TARGET="$GITHUB_WORKSPACE"
+          if [ -n "$(ls -A "$GITHUB_WORKSPACE" 2>/dev/null)" ]; then
+            CLONE_TARGET="$GITHUB_WORKSPACE.checkout"
+            rm -rf "$CLONE_TARGET"
+          fi
+
+          # gh-1644 STALL_GUARD: an attempt moving <1 KB/s for 60s is a
+          # dead connection — abort it and retry instead of hanging.
+          GUARD=(-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60)
+
+          rm -rf "$CLONE_TARGET"
+          clone_attempts=3
+          clone_ok=0
+          for ((attempt = 1; attempt <= clone_attempts; attempt++)); do
+            echo "clone attempt ${attempt}/${clone_attempts}"
+            if git "${GUARD[@]}" clone --no-checkout --filter=blob:none \
+                 --reference "$MIRROR" "$URL" "$CLONE_TARGET"; then
+              clone_ok=1
+              break
+            fi
+            rm -rf "$CLONE_TARGET"
+            if [ "$attempt" -lt "$clone_attempts" ]; then sleep 10; fi
+          done
+          if [ "$clone_ok" -ne 1 ]; then
+            echo "::error::mirror-seeded clone failed after ${clone_attempts} attempt(s) — mirror: $MIRROR (gh-2453)" >&2
+            exit 1
+          fi
+
+          # Materialize the working tree at the dispatched commit: the
+          # blobless clone lazily fetches the tip blobs from origin (the
+          # mirror carries commits/trees only, gh-1477 precedent). Guarded
+          # + retried like the clone; already-fetched blobs persist across
+          # attempts (promisor cache), so a retry resumes instead of
+          # restarting the transfer.
+          checkout_attempts=3
+          checkout_ok=0
+          for ((attempt = 1; attempt <= checkout_attempts; attempt++)); do
+            echo "checkout attempt ${attempt}/${checkout_attempts}: $GITHUB_SHA"
+            if git "${GUARD[@]}" -C "$CLONE_TARGET" checkout --detach "$GITHUB_SHA"; then
+              checkout_ok=1
+              break
+            fi
+            if [ "$attempt" -lt "$checkout_attempts" ]; then sleep 10; fi
+          done
+          if [ "$checkout_ok" -ne 1 ]; then
+            echo "::error::checkout of $GITHUB_SHA failed after ${checkout_attempts} attempt(s) (gh-2453)" >&2
+            exit 1
+          fi
+
+          if [ "$CLONE_TARGET" != "$GITHUB_WORKSPACE" ]; then
+            while IFS= read -r entry; do
+              name="$(basename "$entry")"
+              if [ -e "$GITHUB_WORKSPACE/$name" ]; then
+                echo "::warning::stub collision on '$name' — left in $CLONE_TARGET (gh-1600)"
+              else
+                mv "$entry" "$GITHUB_WORKSPACE/"
+              fi
+            done < <(find "$CLONE_TARGET" -mindepth 1 -maxdepth 1)
+            rm -rf "$CLONE_TARGET"
+          fi
+
+          echo "Checked out: $(git -C "$GITHUB_WORKSPACE" log -1 --oneline)"
+          cd "$GITHUB_WORKSPACE"
 
       - uses: dart-lang/setup-dart@2286a0c042b44434fe26d292bbce8d34f7ec662b # v1
         with:
