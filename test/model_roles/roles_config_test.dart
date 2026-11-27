@@ -537,6 +537,44 @@ modelOverrides:
       );
     });
 
+    test('gh-2433 — a runtime-pinned role skips path overrides', () {
+      // The runtime /provider //model switch writes the new chain into the
+      // top-level roles AND pins the role; the pin skips the override step
+      // so the longest-match override cannot silently resurrect the
+      // config chain over the user's live decision.
+      final pinned = ModelRolesConfig(
+        roles: const {
+          'default': [ModelRef(provider: 'openai', modelId: 'gpt-switched')],
+          'smol': [ModelRef(provider: 'openai', modelId: 'gpt-4o-mini')],
+        },
+        pathOverrides: config.pathOverrides,
+        runtimePinned: const {'default'},
+      );
+      expect(
+        pinned.chainFor('default', cwd: '/work/acme/src')!.single.modelId,
+        'gpt-switched',
+      );
+      expect(pinned.pinsRole('default', cwd: '/work'), isTrue);
+      // The pin is per role — an unpinned role keeps the override win.
+      final override = ModelRolesConfig(
+        roles: pinned.roles,
+        pathOverrides: config.pathOverrides,
+        runtimePinned: const {'smol'},
+      );
+      expect(
+        override.chainFor('default', cwd: '/work')!.single.provider,
+        'anthropic',
+      );
+    });
+
+    test('gh-2433 — a config built without a pin keeps the override win', () {
+      expect(
+        config.chainFor('default', cwd: '/work')!.single.provider,
+        'anthropic',
+      );
+      expect(config.runtimePinned, isEmpty);
+    });
+
     test('unset roles inherit the default chain', () {
       expect(
         config.chainFor('plan', cwd: '/elsewhere')!.single.modelId,
