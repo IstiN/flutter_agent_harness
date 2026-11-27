@@ -23,7 +23,10 @@
 #                   `git diff --name-only $BASE_REF...$HEAD_REF`;
 #                 - otherwise: "all" (safe default).
 #   --scope all   Run every stage.
-#   --scope core  analyze + test-core + coverage + crap + dup + dupx.
+#   --scope core  analyze + test-core + coverage + crap + dup + dupx
+#                 (hook mode: WITHOUT coverage — the coverage ratchet is
+#                 CI-only there, owner directive PR #2435; `--stages
+#                 coverage` still runs it standalone).
 #   --scope app   analyze + dup + dupx + flutter.
 #   --scope docs  analyze only.
 #   --stages l    Comma-separated stage list; overrides the scope-derived set.
@@ -32,7 +35,9 @@
 #
 # Path rules (union logic, E1; test/** counts as core, E6):
 #   docs/ | *.md | prompts/ .................. analyze
-#   lib/ | bin/ | test/ | pubspec.* .......... + test-core, coverage, crap, dup, dupx
+#   lib/ | bin/ | test/ | pubspec.* .......... + test-core, coverage, crap,
+#                                              dup, dupx (hook mode: no
+#                                              coverage, see --scope core)
 #   test/integration/** ...................... + integration-mock (no-key legs,
 #                                              MockLlmServer; issue #551)
 #   flutter_app/ | packages/ ................. + dup, dupx, flutter
@@ -89,6 +94,35 @@ DUP_THRESHOLD_XMOD=0.31
 
 ALL_STAGES="analyze test-core coverage crap dup dupx flutter integration-mock"
 
+# ── The coverage stage is CI-only in HOOK mode (owner directive, PR #2435) ──
+# The pre-commit hook drops `coverage`: CI computes its own (the ci.yml
+# test-core shards instrument `dart test --coverage` ×4, the coverage-gate
+# job merges them and owns the diff-coverage / main ratchet) and never
+# consumes the hook's coverage/ dir. The hook's instrumentation tax bought
+# nothing the CI does not re-pay, so hook runs select the core/integ/all
+# stage lists WITHOUT coverage and test-core instruments
+# (`--coverage=coverage`) only when the coverage stage is selected — the
+# uninstrumented dart test is the actual hook-speed win. Non-hook runs keep
+# coverage in every stage list (ci.yml's fallback invocations at the
+# test-core shards still pass it explicitly), and an explicit
+# `--stages coverage` still runs the ratchet standalone.
+hook_drops_coverage() { [ "$HOOK_MODE" -eq 1 ]; }
+core_stage_list() {
+  if hook_drops_coverage; then
+    echo "analyze test-core crap dup dupx"
+  else
+    echo "analyze test-core coverage crap dup dupx"
+  fi
+}
+integ_stage_list() { echo "$(core_stage_list) integration-mock"; }
+all_stage_list() {
+  if hook_drops_coverage; then
+    echo "analyze test-core crap dup dupx flutter integration-mock"
+  else
+    echo "$ALL_STAGES"
+  fi
+}
+
 # ── Load-aware test concurrency (copied from scripts/pre-commit) ───────────
 # A busy box (other agents, IDE builds) makes widget tests' runAsync() flake
 # and real-timer hub tests miss windows at full parallelism.
@@ -137,9 +171,9 @@ classify_path() {
 
 resolve_scope() {
   case "$SCOPE" in
-    all) add_stages "$ALL_STAGES"; APP_IN_SCOPE=1 ;;
-    core) add_stages "analyze test-core coverage crap dup dupx" ;;
-    integ) add_stages "analyze test-core coverage crap dup dupx integration-mock" ;;
+    all) add_stages "$(all_stage_list)"; APP_IN_SCOPE=1 ;;
+    core) add_stages "$(core_stage_list)" ;;
+    integ) add_stages "$(integ_stage_list)" ;;
     app) add_stages "analyze dup dupx flutter"; APP_IN_SCOPE=1 ;;
     docs) add_stages "analyze" ;;
     auto)
@@ -151,7 +185,7 @@ resolve_scope() {
       fi
       if [ -z "$files" ]; then
         # No diff source available: safe default.
-        add_stages "$ALL_STAGES"; APP_IN_SCOPE=1
+        add_stages "$(all_stage_list)"; APP_IN_SCOPE=1
         return
       fi
       local f g
@@ -159,10 +193,10 @@ resolve_scope() {
         [ -z "$f" ] && continue
         g=$(classify_path "$f")
         case "$g" in
-          all) add_stages "$ALL_STAGES"; APP_IN_SCOPE=1 ;;
-          core) add_stages "analyze test-core coverage crap dup dupx" ;;
+          all) add_stages "$(all_stage_list)"; APP_IN_SCOPE=1 ;;
+          core) add_stages "$(core_stage_list)" ;;
           app) add_stages "analyze dup dupx flutter"; APP_IN_SCOPE=1 ;;
-          integ) add_stages "analyze test-core coverage crap dup dupx integration-mock" ;;
+          integ) add_stages "$(integ_stage_list)" ;;
           docs) add_stages "analyze" ;;
         esac
       done <<EOF
@@ -225,11 +259,19 @@ stage_analyze() {
 }
 
 stage_test_core() {
-  echo "🧪 Running dart test --coverage (excluding integration tests)..."
-  rm -rf coverage
+  # The instrumentation rides ONLY a selected coverage stage (the hook
+  # drops it — see `hook_drops_coverage` above): an uninstrumented
+  # `dart test` is the hook-speed win; CI's shards and any explicit
+  # `--stages coverage` run keep it.
+  local cov_flags=""
+  if stage_selected coverage; then
+    cov_flags="--coverage=coverage"
+    rm -rf coverage
+  fi
+  echo "🧪 Running dart test${cov_flags:+ with --coverage} (excluding integration tests)..."
   local conc="${FA_DART_TEST_CONCURRENCY:-$(detect_test_concurrency)}"
   echo "   concurrency: ${conc:-default}"
-  dart test ${conc:+--concurrency=$conc} --coverage=coverage --exclude-tags integration
+  dart test ${conc:+--concurrency=$conc} $cov_flags --exclude-tags integration
   # gh-1033 (review thread 7 + gate wiring): the fa jsr delegate suites are
   # integration-tagged — the PTY leg's CLI coverage ratchet measures
   # lib/src/cli hits from them — so the unit run above skips them. Their
@@ -254,7 +296,7 @@ stage_test_core() {
     "build/test-results/cli-trio-lcov.retry.json" \
     -- \
     dart test ${conc:+--concurrency=$conc} --tags integration \
-    --coverage=coverage \
+    $cov_flags \
     --file-reporter="json:build/test-results/cli-trio-lcov.json" \
     "test/cli/jsr_cli_test.dart test/cli/cli_args_jsr_test.dart test/cli/agent_cli_jsr_test.dart"
 }
@@ -283,21 +325,47 @@ stage_integration_mock() {
   # green in isolation) — the budget turns one flaky PTY case from a full
   # leg rerun into a minutes-scoped file rerun, mirroring CI's
   # retrigger-recovery behaviour (ci.yml watchdog: ONE retrigger, never a
-  # blind rerun). 0 (the default) keeps the single-shot leg below
-  # byte-identical. Files come from scripts/gate_failed_targets.py over
+  # blind rerun). 0 (the default) keeps the single-shot leg
+  # single-shot — no rerun. Files come from scripts/gate_failed_targets.py over
   # the dart json file-reporter log; when the log yields no targets
   # (crash before the reporter flushed) the stage fails WITHOUT a rerun —
   # never rerun blind.
   local retries="${FA_GATE_PTY_RETRIES:-0}"
+  #
+  # Quarantine parity (gh-1199 AC6): a file listed in
+  # scripts/test_quarantine.json is REMOVED from every deterministic
+  # integration gate leg until its fix lands — nightly still runs it.
+  # CI's two legs (ci.yml jobs `integration-mock` and
+  # `pty-integration-linux`) pipe their target list through
+  # scripts/apply_quarantine.py; this stage ran the bare directory, so the
+  # hook ran files CI never runs and went red on them (#1422 AC1 and #1469
+  # are deterministic reds on macOS → every hook run that triggers the
+  # stage failed on pre-existing, already-quarantined tests). Same sorted
+  # explicit-file-list shape as ci.yml; the filter prints a `::warning::`
+  # per dropped file (E3: a quarantine never swallows a regression
+  # silently). Pinned by test/ci_integration_mock_quarantine_guard_test.dart.
+  local targets
+  targets=$(find test/integration -name '*_test.dart' | sort \
+    | python3 scripts/apply_quarantine.py) || {
+    echo "❌ quarantine filter failed — refusing to run an unfiltered leg" >&2
+    exit 1
+  }
+  # An empty selection must run NOTHING: a `dart test` without a path
+  # argument would silently run the whole default test tree instead.
+  if [ -z "$targets" ]; then
+    echo "   every integration file is quarantined — nothing to run" >&2
+    return 0
+  fi
+  echo "   targets after the quarantine filter: $(printf '%s\n' $targets | wc -l | tr -d ' ')"
   if [ "$retries" -le 0 ]; then
     TMPDIR="${FA_GATE_TMPDIR:-/tmp}" \
-      dart test ${conc:+--concurrency=$conc} test/integration \
+      dart test ${conc:+--concurrency=$conc} $targets \
       --exclude-tags llm,browser-ext,perf,pty
     return
   fi
   local log="build/test-results/gate-integration-mock.json"
   mkdir -p build/test-results
-  local targets="test/integration"
+  local attempt=0
   local attempt=0
   while true; do
     attempt=$((attempt + 1))

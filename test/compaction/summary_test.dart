@@ -829,10 +829,14 @@ void main() {
             timestamp: DateTime.utc(2026),
           ),
         ),
-        recordOf('m6', _assistant('b' * 400)),
+        recordOf('m6', _assistant('b' * 200)),
+        // gh-2411: a NEWER real user turn — a cut may split an OLDER turn,
+        // never the newest one (its user message must stay verbatim).
+        recordOf('m7', UserMessage.text('u9')),
       ];
-      // m6 (100), m5 (200 >= 150) -> budget exhausts at m5; cut moves to the
-      // next valid cut point m6 (assistant) -> split turn starting at m3.
+      // m7 (~0), m6 (50), m5 (50 + 200 >= 150) -> budget exhausts at m5;
+      // cut moves to the next valid cut point m6 (assistant) -> split turn
+      // starting at m3.
       final preparation = manager.prepareCompaction(
         path,
         tokensBefore: 2000,

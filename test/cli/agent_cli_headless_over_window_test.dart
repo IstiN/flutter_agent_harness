@@ -26,7 +26,11 @@ void main() {
     // full (short lines stay under its line cap; ~46k chars ≈ 11.5k
     // estimated tokens) — not a split assistant turn, so the classic
     // prefix compaction hides it cleanly.
-    env.writeFile('big.txt', List.filled(1000, 'x' * 45).join('\n'));
+    // #2416: ~12.15k tokens — the slim manifest shrank the seam's fixed
+    // overhead (~1.9k), so the result grew to keep the post-read request
+    // over the window (the guard refuses request 2) and over the
+    // post-run trigger after the deterministic relief frees nothing.
+    env.writeFile('big.txt', List.filled(1080, 'x' * 45).join('\n'));
   });
 
   tearDown(() {
@@ -36,22 +40,33 @@ void main() {
     io.close();
   });
 
-  // 12k window: the harness's system-prompt + tool-schema overhead (~8.5k
-  // estimated tokens) still fits request 1, while the 100k-char (~25k
-  // token) reply overflows request 2 — the guard fires MID-TURN, not
-  // before the first request.
+  // 12k window: with the gh-2411 fixture seam (`tinyPrompt` +
+  // `tinyTools`) the fixed request overhead is ~3.4k estimated tokens, so
+  // request 1 still fits while the ~11.5k-token tool result overflows
+  // request 2 — the guard fires MID-TURN, not before the first request.
+  // (With the real CLI prompt the overhead alone — ~14.4k tokens — is the
+  // soft-window regime: the guard stands down by design.)
   AgentCli buildCli(
     FakeStreamFunction stream, {
     CompactionEngine? engine,
     CompactionSettings? settings,
+    // Null = the 12k default grown by the gh-2423 working-set surface's
+    // measured footprint (gh2423ContextIncludesTokens — a non-const
+    // helper, so the adjustment lives here, not in the default value);
+    // an explicit window is the test's own exact arithmetic.
+    int? window,
   }) => AgentCli(
     config: AgentCliConfig(
-      model: const Model(
+      // gh-2411: overflow through messages, not overhead.
+      systemPrompt: tinyPrompt,
+      runtimeTools: tinyTools(const ['read', 'bash']),
+      // Non-const: the window is the test's (gh-241 follow-up).
+      model: Model(
         id: 'tiny-window',
         api: 'test-api',
         provider: 'test-provider',
         baseUrl: 'https://example.test',
-        contextWindow: 12000,
+        contextWindow: window ?? 12000 + gh2423ContextIncludesTokens,
         maxTokens: 4096,
       ),
       apiKey: '[REDACTED:Sensitive-Value]',
@@ -60,6 +75,14 @@ void main() {
       providerKind: 'openai-completions',
       compactionEngine: engine,
       compactionSettings: settings,
+      // gh-2411 follow-up #5 (F3/R6): the relief and the boot cap cut
+      // MEASURED sessions only — these fixtures pin those cuts, so they
+      // carry a measured calibration (ratio 1.0: the heuristic numbers
+      // stand unchanged).
+      initialOverheadCalibration: const OverheadCalibration(
+        1.0,
+        measured: true,
+      ),
     ),
     io: io,
     streamFunction: stream.call,
@@ -106,7 +129,6 @@ void main() {
       );
 
       final exitCode = await cli.runHeadless('count the words');
-
       // Guard stop → the deterministic relief (zero LM calls mid-turn) →
       // settle-path compaction (call 2, frees the window) → continuation
       // turn (call 3): the task DROVE TO COMPLETION.
@@ -121,8 +143,10 @@ void main() {
       );
       // The continuation is the notice prompt, not a bare retry of the
       // original user text.
+      // (A gh-2423 context notice may ride after it — machine content.)
       final lastPrompt = stream.contexts[2].messages
           .whereType<UserMessage>()
+          .where((m) => !isContextNoticeText(userMessageText(m.content)))
           .last;
       expect(
         lastPrompt.content as String,
@@ -171,6 +195,228 @@ void main() {
   );
 
   test(
+    'scope-2 B (gh-241 review): the guard stop prints ONE visible warning '
+    'per session, however many times the guard trips',
+    timeout: const Timeout(Duration(seconds: 180)),
+    () async {
+      // ONE run, TWO over-window stops — the first test's scenario
+      // twice: turn 1 reads big.txt (the result overflows the request →
+      // guard stop → settle compaction → continuation), and the
+      // continuation reads big.txt AGAIN (a second guard stop). The
+      // continuation retry is ONE per run, so the second stop is the
+      // terminal one (exit 1) — the latch is what keeps it from warning
+      // a second time.
+      final stream = FakeStreamFunction([
+        bigReadTurn(),
+        textTurn('summary of the compacted history'),
+        bigReadTurn(),
+        textTurn('summary of the second compaction'),
+        textTurn('task complete: all files counted'),
+        // The post-run fold's fire-and-forget memory extraction (the
+        // compaction manager's hook is UNAWAITED by contract — it must
+        // never block a compaction) may land inside this run window as a
+        // sixth call; give it a clean answer so the fold never errors.
+        textTurn('no durable facts — nothing worth remembering'),
+      ]);
+      final cli = buildCli(
+        stream,
+        engine: CompactionEngine.classic,
+        settings: const CompactionSettings(
+          enabled: true,
+          reserveTokens: 100,
+          keepRecentTokens: 100,
+        ),
+      );
+
+      final exitCode = await cli.runHeadless('count the words');
+
+      final output = io.out.toString();
+      final stops = output
+          .split('\n')
+          .where((line) => line.contains('Context window exhausted'))
+          .toList();
+      expect(
+        stops,
+        hasLength(2),
+        reason:
+            'precondition: the guard tripped TWICE in the session; '
+            'calls=${stream.calls} output:\n$output',
+      );
+      final warnings = output
+          .split('\n')
+          .where((line) => line.contains('request exceeded the window'))
+          .toList();
+      expect(
+        warnings,
+        hasLength(1),
+        reason:
+            'one visible warning per session — the second guard stop must '
+            'stay silent; calls=${stream.calls} output:\n$output',
+      );
+      expect(warnings.single, contains('auto-compacting'));
+      expect(
+        stream.calls,
+        anyOf(5, 6),
+        reason:
+            'both stops ran their relief: read, compaction, read, '
+            'compaction, then the terminal stop — plus, on the timing '
+            'where the fire-and-forget memory extraction of the last pass '
+            'lands inside the run window, that one unawaited call',
+      );
+      // The second stop exhausts the run's single continuation retry —
+      // the existing contract (never a masked 0).
+      expect(exitCode, 1);
+    },
+  );
+
+  test(
+    'gh-2411 + owner live test: in the soft-window regime the hide-only '
+    'pass runs at the window — the old tool result is hidden, the newest '
+    'user turn rides verbatim, and an under-window prompt is left alone',
+    timeout: const Timeout(Duration(seconds: 180)),
+    () async {
+      // Window 13k, reserve 3250 → trigger 9750. The ~1.9k fixed overhead
+      // (#2416: the slim manifest's seam footprint) plus a ~9.2k-token
+      // prompt is over the trigger (the regime — no trim could ever reach
+      // it) while request 1 (~11.1k) is still UNDER the window: nothing
+      // is trimmed, the request goes as is (ONE warning). Two tool
+      // results later the request is over the window: the LM-free
+      // emergency relief runs INSTEAD of a skip (the mid-turn hide pass
+      // keeps both recent reads; the settle relief's local trim valve
+      // then frees the window) — the prompt is carried verbatim and the
+      // turn completes under the window.
+      env.writeFile('old.txt', List.filled(120, 'o' * 40).join('\n'));
+      env.writeFile('new.txt', List.filled(120, 'n' * 40).join('\n'));
+      final prompt =
+          'Count the words in old.txt and new.txt, then answer. '
+          '${'question ' * 4100}';
+      final stream = FakeStreamFunction([
+        toolTurn([
+          const ToolCall(
+            id: 't1',
+            name: 'read',
+            arguments: {'path': 'old.txt'},
+          ),
+        ]),
+        toolTurn([
+          const ToolCall(
+            id: 't2',
+            name: 'read',
+            arguments: {'path': 'new.txt'},
+          ),
+        ]),
+        textTurn('done: both files counted'),
+      ]);
+      final cli = buildCli(
+        stream,
+        engine: CompactionEngine.classic,
+        window: 13000,
+        settings: const CompactionSettings(
+          enabled: true,
+          reserveTokens: 3250,
+          keepRecentTokens: 100,
+        ),
+      );
+
+      final exitCode = await cli.runHeadless(prompt);
+      expect(exitCode, 0, reason: 'calls=${stream.calls}\n${io.out}');
+      expect(
+        stream.calls,
+        3,
+        reason:
+            'read, read, final answer — the relief is LM-free; '
+            'output:\n${io.out}',
+      );
+      String textOf(Message message) => switch (message) {
+        UserMessage(:final content) =>
+          content is String
+              ? content
+              : (content as List<ContentBlock>)
+                    .whereType<TextContent>()
+                    .map((b) => b.text)
+                    .join('\n'),
+        AssistantMessage(:final content) || ToolResultMessage(:final content) =>
+          content.whereType<TextContent>().map((b) => b.text).join('\n'),
+        _ => '',
+      };
+      int estimate(Context context) => estimateRequestTokens(
+        context.messages,
+        systemPrompt: context.systemPrompt,
+        tools: context.tools ?? const [],
+      );
+      // Precondition: request 2 still carried the first tool result.
+      expect(
+        stream.contexts[1].messages.map(textOf).join('\n'),
+        contains('o' * 40),
+      );
+      final last = stream.contexts.last;
+      final lastText = last.messages.map(textOf).join('\n');
+      expect(
+        last.messages.map(textOf),
+        contains(prompt),
+        reason: 'the newest user turn rides verbatim (gh-2411 invariant)',
+      );
+      expect(
+        lastText,
+        isNot(contains('o' * 40)),
+        reason: 'the OLD tool result is gone — trimmed by the relief',
+      );
+      expect(
+        estimate(last),
+        lessThan(13000),
+        reason: 'the post-pass estimate is under the window',
+      );
+      // The relief's own receipt: the pass that freed the window ran
+      // exactly once.
+      Iterable<String> receipts() => io.out
+          .toString()
+          .split('\n')
+          .where(
+            (line) => line.contains('continuing the turn on the relieved'),
+          );
+      expect(
+        receipts(),
+        hasLength(1),
+        reason: 'the relief freed the window exactly once; output:\n${io.out}',
+      );
+      expect(
+        io.out.toString().split('\n').where((line) => line.contains('freed')),
+        isEmpty,
+        reason: 'no LM pass ran (hide + valve only); output:\n${io.out}',
+      );
+      const warning =
+          'context window 13000 cannot take a trim below its trigger';
+      expect(
+        warning.allMatches(io.out.toString()),
+        hasLength(1),
+        reason: 'ONE visible warning per session',
+      );
+
+      // A prompt whose request is UNDER the window (a fresh session in
+      // the same regime): no pass runs — nothing is trimmed, nothing is
+      // hidden; the skip is silent.
+      final idle = FakeStreamFunction([textTurn('done again: nothing to do')]);
+      final second = buildCli(
+        idle,
+        engine: CompactionEngine.classic,
+        window: 13000,
+        settings: const CompactionSettings(
+          enabled: true,
+          reserveTokens: 3250,
+          keepRecentTokens: 100,
+        ),
+      );
+      expect(await second.runHeadless(prompt), 0);
+      expect(idle.calls, 1, reason: 'one request, the final answer');
+      expect(
+        receipts(),
+        hasLength(1),
+        reason: 'no re-run under the window; output:\n${io.out}',
+      );
+    },
+  );
+
+  test(
     'the [net] retry notice reaches headless output (issue #1121)',
     timeout: const Timeout(Duration(seconds: 60)),
     () async {
@@ -184,18 +430,26 @@ void main() {
       // ladder with a transient wording, attempt 2 recovers.
       final cli = AgentCli(
         config: AgentCliConfig(
-          model: const Model(
+          model: Model(
             id: 'tiny-window',
             api: 'test-api',
             provider: 'test-provider',
             baseUrl: 'https://example.test',
-            contextWindow: 12000,
+            // + the gh-2423 working-set surface (see gh2423ContextIncludesTokens).
+            contextWindow: 12000 + gh2423ContextIncludesTokens,
             maxTokens: 4096,
           ),
           apiKey: '[REDACTED:Sensitive-Value]',
           env: env,
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
+          // gh-2411 follow-up: the REAL prompt's ~14.4k fixed overhead is
+          // over this 12k window by itself — the loop guard stops such a
+          // request now (a soft window stands down only UNDER it), which
+          // would end the run before the retry ladder ever fires. The
+          // seam keeps the scenario on the ladder: ~3.4k overhead.
+          systemPrompt: tinyPrompt,
+          runtimeTools: tinyTools(const ['read']),
           // gh-1380: structured sessions now carry the recall-hygiene
           // contract + the session_search schema; on this 12k window that
           // static overhead alone crosses the request-size compaction
@@ -216,14 +470,6 @@ void main() {
         }) {
           calls++;
           ctxSizes.add(context.messages.length);
-          // ignore: avoid_print
-          print('CALL $calls msgs=${context.messages.length}');
-          if (calls >= 3) {
-            // ignore: avoid_print
-            print(
-              'CALL$calls TRIGGER:\n${StackTrace.current.toString().split('\n').take(14).join('\n')}',
-            );
-          }
           if (calls == 1) {
             final stream = AssistantMessageEventStream();
             scheduleMicrotask(() {

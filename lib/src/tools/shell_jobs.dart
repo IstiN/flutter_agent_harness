@@ -29,6 +29,9 @@ import 'dart:math';
 import 'package:meta/meta.dart';
 
 import '../env/execution_env.dart';
+import '../env/fd_pressure.dart';
+import '../env/fd_pressure_stub.dart'
+    if (dart.library.io) '../env/fd_pressure_io.dart';
 import '../env/job_log_ceiling.dart';
 import '../env/job_log_redaction.dart';
 import 'job_id_resolution.dart';
@@ -193,11 +196,19 @@ final class ShellJobEntry {
     this.timeout,
     bool adopted = false,
     DateTime? startedAt,
+    this.adoptedFrom,
   }) : startedAt = startedAt ?? DateTime.now(),
        isAdopted = adopted;
 
   /// The backend handle.
   final ShellJob job;
+
+  /// Where an ADOPTED entry was adopted from (gh-2413): the clause the
+  /// settle notices carry so the model never mistakes a previous run's
+  /// re-adopted job for one it just launched — `unknown owner` for a
+  /// legacy manifest record written before owner tags existed. Null for
+  /// inline survivors (the detecting call named them) and started jobs.
+  final String? adoptedFrom;
 
   /// Whether this entry was ADOPTED (issue #2201) instead of spawned by
   /// the registry: a detached survivor of a foreground call, or a
@@ -263,6 +274,14 @@ final class ShellJobEntry {
   /// natural liveness-poll death signaled nothing.
   bool get stopAttempted => switch (job) {
     _AdoptedShellJob adopted => adopted.stopAttempted,
+    _ => false,
+  };
+
+  /// Whether [stop] REFUSED to signal (gh-2413, adopted jobs only): the
+  /// pid's identity was unverifiable, the job keeps running, and the tool
+  /// must say so instead of "Stopped".
+  bool get stopRefused => switch (job) {
+    _AdoptedShellJob adopted => adopted.stopRefused,
     _ => false,
   };
 
@@ -350,6 +369,7 @@ final class ShellJobRegistry {
     this.adoptedLivenessNoticeMinutes = 0,
     this.onAdopt,
     this.onAdoptedLiveness,
+    this.fdPressureProbe,
     @visibleForTesting this.livenessTableOverride,
     @visibleForTesting this.stopAdoptedOverride,
     DateTime? bootTime,
@@ -429,6 +449,13 @@ final class ShellJobRegistry {
   /// Cadence reminder for a still-running adopted job (issue #2201 AC4);
   /// default cadence 0 = never fires.
   final void Function(ShellJobEntry job, Duration elapsed)? onAdoptedLiveness;
+
+  /// The fd-table probe behind [guardFdPressure] (gh-2415): open
+  /// descriptors vs the soft limit, null when the host has no descriptor
+  /// table (web). Null falls back to the platform default probe
+  /// (`defaultFdPressureSnapshot`, itself null on web) — tests inject a
+  /// scripted sample. Mutable so a long-lived host can re-point it.
+  FdPressureSnapshot? Function()? fdPressureProbe;
 
   /// Test seam: the adoption poll's process table. Null restores the
   /// real `ps` probe. A null RETURN from the function models "probe
@@ -641,6 +668,7 @@ final class ShellJobRegistry {
     required int pid,
     String? pidStart,
     int? startedAtMs,
+    String? adoptedFrom,
   }) {
     // Idempotent (issue #2201 r3): captureLostJobs runs at every boot —
     // a wake/continuation loop re-boots the same CLI instance — and
@@ -659,6 +687,7 @@ final class ShellJobRegistry {
       startedAt: startedAtMs == null
           ? null
           : DateTime.fromMillisecondsSinceEpoch(startedAtMs),
+      adoptedFrom: adoptedFrom,
     );
   }
 
@@ -701,6 +730,7 @@ final class ShellJobRegistry {
     String? pidStart,
     String logPath = '',
     DateTime? startedAt,
+    String? adoptedFrom,
   }) {
     final entry = ShellJobEntry._(
       _AdoptedShellJob(
@@ -714,6 +744,7 @@ final class ShellJobRegistry {
       ),
       adopted: true,
       startedAt: startedAt,
+      adoptedFrom: adoptedFrom,
     );
     _jobs.add(entry);
     _listenSettle(entry);
@@ -788,6 +819,42 @@ final class ShellJobRegistry {
     } else {
       _adoptedLastNotice.clear();
     }
+  }
+
+  FdPressureSnapshot? _sampleFdPressure() =>
+      (fdPressureProbe ?? defaultFdPressureSnapshot)();
+
+  /// Gh-2415: the bash tool path's fd-pressure guard, run before every
+  /// `Process.start` (foreground exec or background job). Below
+  /// [fdPressureThreshold] of the soft limit: a no-op. Above it: first
+  /// release what SETTLED jobs still hold ([releaseSetledJobResources])
+  /// and re-sample; still above → the typed, visible
+  /// [FdPressureException] — never an uncaught
+  /// `ProcessException: Too many open files` ("the tool may be
+  /// unavailable in this environment"). Never throws on a null sample.
+  void guardFdPressure() {
+    var sample = _sampleFdPressure();
+    if (sample == null || !fdPressureExceeded(sample)) return;
+    releaseSettledJobResources();
+    sample = _sampleFdPressure();
+    if (sample == null || !fdPressureExceeded(sample)) return;
+    throw FdPressureException(open: sample.open, limit: sample.limit);
+  }
+
+  /// Drops what SETTLED jobs still hold (gh-2415): every exited entry
+  /// whose backend implements [ResourceReleaser] is asked to release.
+  /// Running jobs are never touched — their pipes are live. Returns how
+  /// many backends were asked.
+  int releaseSettledJobResources() {
+    var released = 0;
+    for (final entry in _jobs) {
+      if (entry.isRunning) continue;
+      if (entry.job case ResourceReleaser releaser) {
+        releaser.releaseResources();
+        released++;
+      }
+    }
+    return released;
   }
 
   /// The poll's process table from the real `ps` probe; null when the
@@ -960,11 +1027,15 @@ String _tailOfContent(String content, int maxLines) {
 /// a live group keyed by a DEAD pid can only be a leftover job group, never
 /// this process's own. Best-effort: any shell/platform failure yields a
 /// zero sweep, and [onWarn] fires at most once. Returns the counts.
+/// [candidatePids] are the caller's OWN previous-run pids (gh-2413: the
+/// boot reconcile never hands over a foreign-owned manifest entry — a
+/// peer's record is not this boot's to kill); [groupTableOverride]
+/// replaces the `ps` group read (tests inject a table).
 Future<({int groups, int processes})> reapOrphanJobGroups({
   required ExecutionEnv env,
   required Iterable<int> candidatePids,
   void Function(String message)? onWarn,
-  @visibleForTesting Future<String?> Function()? groupTableOverride,
+  Future<String?> Function()? groupTableOverride,
 }) async {
   const zero = (groups: 0, processes: 0);
   final pids = candidatePids.where((pid) => pid > 1).toSet();
@@ -1092,6 +1163,15 @@ final class _AdoptedShellJob implements ShellJob {
   /// See [_stopAttempted].
   bool get stopAttempted => _stopAttempted;
 
+  /// Set when [stop] refused to signal (gh-2413): the pid's identity could
+  /// not be verified — no start tag was ever recorded while the platform
+  /// reports one now — so a recycled pid would be a stranger's process.
+  /// Nothing was signaled; the job keeps running.
+  bool _stopRefused = false;
+
+  /// See [_stopRefused].
+  bool get stopRefused => _stopRefused;
+
   bool _running = true;
   String? _stopReason;
   final _settled = Completer<void>();
@@ -1152,6 +1232,15 @@ final class _AdoptedShellJob implements ShellJob {
     if (table != null) {
       if (!table.pids.contains(pid)) return _markGone();
       final actual = table.starts[pid];
+      if (actual != null && _startTag.isEmpty) {
+        // gh-2413: nothing was ever recorded to verify this pid against
+        // (a legacy manifest entry, a probe that reported no start time
+        // at adoption) while the platform CAN report one now — the live
+        // pid may be a recycled stranger. Nothing is signaled and the
+        // entry stays running; the tool surfaces [stopRefused].
+        _stopRefused = true;
+        return;
+      }
       if (actual != null && actual != _startTag) return _markGone();
     }
     _stopReason ??= 'stopped';
@@ -1185,11 +1274,14 @@ String adoptedSurvivorsNoticeText(
   List<ShellJobEntry> adopted, {
   required String source,
 }) {
+  // gh-2413: "near", never "left by" — the pid set comes from a process
+  // table sweep, not from parentage evidence, and the labeling call is
+  // merely the one whose exit triggered the scan.
   final lines = StringBuffer(
-    'Detected ${adopted.length} surviving background process'
-    '${adopted.length == 1 ? '' : 'es'} left by '
-    '`${shellJobCommandLabel(source)}` — adopted as tracked jobs; their '
-    'completion will be reported:\n',
+    'Detected ${adopted.length} orphaned process'
+    '${adopted.length == 1 ? '' : 'es'} in this session\'s process group '
+    'near `${shellJobCommandLabel(source)}` — adopted as tracked jobs; '
+    'their completion will be reported:\n',
   );
   for (final job in adopted) {
     lines.write(
@@ -1241,6 +1333,13 @@ String stopSurvivorNames(List<ShellSurvivor> survivors) => [
         '${survivor.command == null ? '' : ' (`${survivor.command}`)'}',
 ].join(', ');
 
+/// The `adopted from …` clause of an adopted job's notices (gh-2413):
+/// `, adopted from <origin>` for a boot re-adoption ([ShellJobEntry
+/// .adoptedFrom] — `unknown owner` for a legacy owner-less manifest
+/// record), empty for an inline survivor.
+String adoptedFromClause(ShellJobEntry job) =>
+    job.adoptedFrom == null ? '' : ', adopted from ${job.adoptedFrom}';
+
 /// The model-facing settle notice for an ADOPTED job (issue #2201 AC3):
 /// liveness-only honesty — no exit code — plus the output pointer:
 /// issue #2265 — a boot re-adopted native job names its real harness
@@ -1257,7 +1356,8 @@ String adoptedJobSettleNoticeText(ShellJobEntry job) {
             'run; check it with bash_job (action: output).';
   final head =
       'Adopted background process ${job.id} '
-      '(pid ${job.pid}, `${shellJobCommandLabel(job.command)}`) ';
+      '(pid ${job.pid}, `${shellJobCommandLabel(job.command)}`'
+      '${adoptedFromClause(job)}) ';
   if (job.stopAttempted) {
     final survivors = job.stopSurvivors;
     if (survivors == null) {

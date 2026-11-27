@@ -104,16 +104,29 @@ Set<String> hiddenRecordIds(List<SessionRecord> records) => {
     ...record.recordIds,
 };
 
+/// The concatenated text of a user/assistant [message] (the transcript
+/// fixtures store text blocks), or `null` for any other kind.
+String? _textOf(Message message) {
+  final Object content;
+  if (message is UserMessage) {
+    content = message.content;
+  } else if (message is AssistantMessage) {
+    content = message.content;
+  } else {
+    return null;
+  }
+  if (content is String) return content;
+  return (content as List<Object>)
+      .whereType<TextContent>()
+      .map((b) => b.text)
+      .join();
+}
+
 /// Whether [message] is the in-memory local-trim marker the valve
 /// prefixes (an in-memory-only construct: never in the session file).
 bool _isLocalTrimMarker(Message message) {
   if (message is! UserMessage) return false;
-  final content = message.content;
-  final text = content is String
-      ? content
-      : (content as List<Object>).whereType<TextContent>().map((b) {
-          return b.text;
-        }).join();
+  final text = _textOf(message) ?? '';
   return text.startsWith(localTrimMarkerPrefix);
 }
 
@@ -143,7 +156,13 @@ void main() {
   /// (12k chars ≈ 3k tok each) — hideable entries past the recency floor,
   /// closed by a small live tail (the trim valve's newest-message budget
   /// rule, gh-1077, needs a last message that fits keepRecentTokens).
-  Future<(Session, AgentState)> pairSession(int pairs) async {
+  /// [withNewestAsk] closes the pairs with a SECOND real user turn: the
+  /// trim valve's kept floor is the newest user turn (gh-2411), so only
+  /// this two-turn shape has a droppable prefix.
+  Future<(Session, AgentState)> pairSession(
+    int pairs, {
+    bool withNewestAsk = false,
+  }) async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
     await session.appendMessage(UserMessage.text('fix the login crash'));
     for (var i = 0; i < pairs; i++) {
@@ -155,6 +174,9 @@ void main() {
       );
       await session.appendMessage(_result('c$i', 'read', 'x' * 12000));
     }
+    if (withNewestAsk) {
+      await session.appendMessage(UserMessage.text('is the build green?'));
+    }
     await session.appendMessage(_assistant('done — the build is green'));
     final messages = await session.buildContextMessages();
     return (session, stateFor(messages));
@@ -165,7 +187,7 @@ void main() {
       'a judge hung past the 2s totalBudget: after factory.run() + the '
       'local trim, NO HiddenRangeRecord lands and the trimmed tail stays',
       () async {
-        final (session, state) = await pairSession(6);
+        final (session, state) = await pairSession(6, withNewestAsk: true);
         final hooks = _CapturingAutoHooks();
         AssistantMessage streamMessage(StopReason reason) => AssistantMessage(
           content: [TextContent(text: '')],
@@ -233,6 +255,13 @@ void main() {
           trimmedTail.map((m) => m.role),
           contains('user'),
           reason: 'the [context trimmed locally] marker leads the tail',
+        );
+        expect(
+          [for (final m in trimmedTail) _textOf(m)],
+          contains('is the build green?'),
+          reason:
+              'gh-2411: the newest real user turn is the valve kept '
+              'floor — it must stay in the trimmed tail',
         );
         final recordsAfterVerdict = await session.getEntries();
         final hiddenAfterVerdict = hiddenRecordIds(recordsAfterVerdict);

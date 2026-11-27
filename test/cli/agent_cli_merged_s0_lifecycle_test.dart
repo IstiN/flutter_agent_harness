@@ -21,9 +21,15 @@ import 'agent_cli_test_support.dart';
 /// One ~11k-token read pushes the transcript over the trigger (the
 /// post-run hard funnel fires) while staying under the window (no
 /// over-window relief noise).
-const _window = 12000;
+///
+/// gh-2423: the always-on working-set surface rides every request (see
+/// [gh2423ContextIncludesTokens]), so the window grows by that measured
+/// delta — the trigger moves with the overhead (the fixture's transcript
+/// crosses it at the same point) and the over-the-window distance is
+/// exactly what it was.
+final _window = 12000 + gh2423ContextIncludesTokens;
 
-Model get _tinyModel => const Model(
+Model get _tinyModel => Model(
   id: 'tiny-window',
   api: 'test-api',
   provider: 'test-provider',
@@ -54,19 +60,21 @@ void main() {
   setUp(() {
     env = MemoryExecutionEnv(cwd: '/work');
     io = FakeCliIO();
-    // ~700 lines x 40 chars = ~28700 chars = ~7175 tokens: with the slim
-    // manifest's ~3.9k request overhead the post-turn context lands in the
-    // (compaction trigger, window) band — the gross over-window guard
-    // stays out and the POST-RUN merged pass owns the scenario (issue
-    // #2416: the fat manifest's ~12.5k overhead used to push this into
-    // the guard band instead).
-    env.writeFile('big1.txt', List.filled(700, 'x' * 40).join('\n'));
+    // ~10.6k tokens: with the request overhead (~1.9k at the overhead
+    // density, gh-2411 — the #2416 slim manifest shrank the seam's fixed
+    // footprint, so the fixture grew to hold the same under-window band)
+    // the transcript crosses the post-run trigger and stays UNDER the 12k
+    // window — the post-run funnel fires, the over-window guard does not.
+    env.writeFile('big1.txt', List.filled(1060, 'x' * 40).join('\n'));
   });
 
   tearDown(() => io.close());
 
   AgentCli buildCli(StreamFunction stream) => AgentCli(
     config: AgentCliConfig(
+      // gh-2411: overflow through messages, not overhead.
+      systemPrompt: tinyPrompt,
+      runtimeTools: tinyTools(const ['read']),
       model: _tinyModel,
       apiKey: '[REDACTED:Sensitive-Value]',
       env: env,

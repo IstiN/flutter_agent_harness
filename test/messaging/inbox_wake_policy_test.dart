@@ -298,6 +298,12 @@ void main() {
       isNull,
       reason: 'an explicit null remains the visible unbounded opt-out',
     );
+    // PR #2435 owner directive: the default budget is OFF — a marathon
+    // autonomous spend must never budget-pause the default guard (the
+    // loop detector remains the evidence-based bound).
+    guard.recordSpend(50_000_000);
+    expect(guard.budgetExhausted, isFalse);
+    expect(guard.evaluate(const []), isNull);
     expect(
       InboxWakePolicy(maxStreak: 10).chainGuard,
       isNull,

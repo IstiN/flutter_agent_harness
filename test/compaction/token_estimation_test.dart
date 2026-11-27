@@ -303,7 +303,8 @@ void main() {
   });
 
   group('estimateRequestOverheadTokens', () {
-    test('counts the system prompt and tool schemas at chars/4', () {
+    test('counts the system prompt and tool schemas at the overhead '
+        'density (gh-2411: NOT the transcript chars/4)', () {
       final tool = Tool(
         name: 'read',
         description: 'd' * 20,
@@ -313,8 +314,13 @@ void main() {
           100 + 'read'.length + 20 + jsonEncode(tool.parameters).length;
       expect(
         estimateRequestOverheadTokens('s' * 100, [tool]),
-        (chars / 4).ceil(),
+        (chars / overheadCharsPerToken).ceil(),
       );
+      // The incident's density: 65,561 overhead chars cost 24,126 provider
+      // tokens (2.72 chars/token) where chars/4 read 16,407 — the
+      // heuristic sits on the over-reading side of the measurement.
+      expect(overheadCharsPerToken, 2.5);
+      expect(overheadCharsPerToken, lessThan(65561 / 24126));
     });
 
     test('a null prompt and no tools cost nothing', () {
@@ -739,6 +745,59 @@ void main() {
           'a' * 400,
         ),
     ];
+
+    MessageRecord reply(String id, String? parent) => MessageRecord(
+      id: id,
+      parentId: parent,
+      timestamp: DateTime.utc(2026),
+      message: AssistantMessage(
+        content: [TextContent(text: 'a' * 400)],
+        api: 'test-api',
+        provider: 'test-provider',
+        model: 'test-model',
+        usage: Usage.zero,
+        stopReason: StopReason.stop,
+        timestamp: DateTime.utc(2026),
+      ),
+    );
+
+    // gh-2411 follow-up #5c (C3 — owner live test round 4): the load-time
+    // tail cut used to open the context on an assistant reply (spill 22:
+    // first = assistant, 1092 chars). Same invariant as every in-memory
+    // cut: the kept tail opens on a user turn.
+    test('a cut that lands on an assistant reply moves forward to the next '
+        'user turn (the tail never opens mid-turn)', () {
+      // u0, a1, u2, a3, u4, a5 — 100 tokens each.
+      final branch = [
+        msg('e0', null, 'u' * 400),
+        reply('e1', 'e0'),
+        msg('e2', 'e1', 'u' * 400),
+        reply('e3', 'e2'),
+        msg('e4', 'e3', 'u' * 400),
+        reply('e5', 'e4'),
+      ];
+      // Walking backward: e5, e4 fit (200); e3 would cross → cut 3
+      // (a reply) → the tail must open on e4 instead.
+      expect(projectedBranchBudgetCut(branch, 250), 4);
+      // A cut that already lands on a user turn is untouched.
+      expect(projectedBranchBudgetCut(branch, 300), 4);
+      // Budget 200: e5 alone fits, e4 crosses → cut 4 (user) as is.
+      expect(projectedBranchBudgetCut(branch, 200), 4);
+    });
+
+    test('the newest record is always kept — even when only replies follow '
+        'the cut', () {
+      // u0, a1, a2, a3 — nothing to open on after the cut.
+      final branch = [
+        msg('e0', null, 'u' * 400),
+        reply('e1', 'e0'),
+        reply('e2', 'e1'),
+        reply('e3', 'e2'),
+      ];
+      // e3 fits (100), e2 crosses at 150 → cut 2 → advances to the
+      // newest record and stops there (never an empty window).
+      expect(projectedBranchBudgetCut(branch, 150), 3);
+    });
 
     test('whole branch fits the budget → null (nothing to trim)', () {
       final branch = msgs(10); // 1000 tokens
