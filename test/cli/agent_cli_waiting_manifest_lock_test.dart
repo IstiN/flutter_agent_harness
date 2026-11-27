@@ -35,10 +35,11 @@ Future<void> _deleteBestEffort(Directory dir) async {
     } on FileSystemException catch (error) {
       // Issue #2355 occ4: 3 x 50ms was thinner than the hostile-leg
       // straggler window (ENOTEMPTY 39 escaped the seam). A longer
-      // exponential ladder (7 tries, ~12.7s ceiling) still ends in the
-      // printed abandon: a disposable systemTemp artifact must never
-      // fail a green run, but a real straggler gets room to land.
-      if (attempt >= 7) {
+      // exponential ladder - 8 sleeps over 9 tries, 50+100+...+6400 =
+      // ~12.75s ceiling - still ends in the printed abandon: a
+      // disposable systemTemp artifact must never fail a green run,
+      // but a real straggler gets room to land.
+      if (attempt >= 9) {
         print('teardown left ${dir.path} behind: $error');
         return;
       }
@@ -273,11 +274,18 @@ void main() {
       error.code,
       FileErrorCode.exists,
       reason:
-          'the plain-FileSystemException EEXIST branch (linux '
-          'hostile legs) must code occupancy, not unknown',
+          'occupancy must arrive CODED regardless of which dart:io '
+          'branch produced the throw - current SDKs map EEXIST to '
+          'PathExistsException, so this pins the typed-branch '
+          'contract the lock coordinator reads',
     );
     expect(error.pathExistsAtFailure, isTrue);
-    expect(error.message, contains('errno 17'));
+    // The errno detail differs per host (17 POSIX, 183 Windows); the
+    // contract is the code + flag, the substring is the sanity echo.
+    expect(
+      error.message,
+      Platform.isWindows ? contains('errno 183') : contains('errno 17'),
+    );
   });
 
   test('AC1 REG: a coded-occupancy refusal over a vanished lock retries '

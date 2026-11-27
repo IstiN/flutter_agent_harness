@@ -37,10 +37,11 @@ Future<void> _deleteBestEffort(Directory dir) async {
     } on FileSystemException catch (error) {
       // Issue #2355 occ4: 3 x 50ms was thinner than the hostile-leg
       // straggler window (ENOTEMPTY 39 escaped the seam). A longer
-      // exponential ladder (7 tries, ~12.7s ceiling) still ends in the
-      // printed abandon: a disposable systemTemp artifact must never
-      // fail a green run, but a real straggler gets room to land.
-      if (attempt >= 7) {
+      // exponential ladder - 8 sleeps over 9 tries, 50+100+...+6400 =
+      // ~12.75s ceiling - still ends in the printed abandon: a
+      // disposable systemTemp artifact must never fail a green run,
+      // but a real straggler gets room to land.
+      if (attempt >= 9) {
         print('teardown left ${dir.path} behind: $error');
         return;
       }

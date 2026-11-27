@@ -88,11 +88,16 @@ FileError _fromFileSystemException(FileSystemException error, String path) {
       );
     }
     // EEXIST on POSIX (17); ERROR_ALREADY_EXISTS (183) on Windows.
-    // Issue #2355: `File.create(exclusive: true)` on some platforms
-    // throws the PLAIN FileSystemException (not PathExistsException),
-    // and the unmapped variant lost pathExistsAtFailure — the manifest
-    // lock coordinator then surfaced a rival's release-in-window as an
-    // fs failure (hostile-leg errno 17 reds) instead of retrying.
+    // Issue #2355: DEFENSIVE belt, per the captured hostile-leg
+    // evidence. Current dart:io SDKs map EEXIST 17 / 80·183 to
+    // PathExistsException in FileSystemException._fromOSError, so the
+    // typed branch above is the live path; this plain-variant branch
+    // exists so an SDK/platform variance that delivers the throw
+    // untyped can never again lose pathExistsAtFailure — the manifest
+    // lock coordinator would surface a rival's release-in-window as
+    // an fs failure instead of retrying. No test reaches it through
+    // dart:io by construction (the typed branch wins); the mapping
+    // pin pins the contract the coordinator needs, not this branch.
     if (osError.errorCode == 17 || osError.errorCode == 183) {
       return FileError(
         FileErrorCode.exists,
