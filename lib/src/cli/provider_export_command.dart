@@ -153,14 +153,22 @@ extension on AgentCli {
   /// fallback: the URL marker (`isCodeMieBaseUrl`) routes the switch, so a
   /// LEGACY entry saved before `authMethod` existed (parses as the
   /// `apiKey` default) round-trips as the SSO kind it actually is, while
-  /// an explicit `jwt` keeps the plain-secret kind. ChatGPT/Copilot are
-  /// OAuth blobs, everything else is a plain api-key/JWT secret.
+  /// an explicit `jwt` keeps the plain-secret kind. A JWT-shaped resolved
+  /// credential ([resolvedValue]) is the RULE-P shape tie-breaker: it
+  /// rides the Bearer path exactly like an explicit `jwt` entry — the
+  /// same rule `_switchToSavedCodeMieProvider` and `_findCodeMieSsoEntry`
+  /// apply. ChatGPT/Copilot are OAuth blobs, everything else is a plain
+  /// api-key/JWT secret.
   ProviderTransferKeyKind _transferKeyKind(
     ProviderSpec spec,
-    CustomProviderEntry? entry,
-  ) {
+    CustomProviderEntry? entry, {
+    String? resolvedValue,
+  }) {
     if (entry != null && isCodeMieBaseUrl(entry.baseUrl)) {
-      return entry.authMethod == CustomProviderAuthMethod.jwt
+      final ridesBearer =
+          entry.authMethod == CustomProviderAuthMethod.jwt ||
+          (resolvedValue != null && isCodeMieJwtToken(resolvedValue));
+      return ridesBearer
           ? ProviderTransferKeyKind.apiKey
           : ProviderTransferKeyKind.sso;
     }
@@ -190,7 +198,11 @@ extension on AgentCli {
         (baseUrl == spec.defaultBaseUrl
             ? spec.apiKeyEnvNames.first
             : CustomProviderRegistry.keyNameFor(baseUrl));
-    return (kind: _transferKeyKind(spec, entry), slot: slot, value: value);
+    return (
+      kind: _transferKeyKind(spec, entry, resolvedValue: value),
+      slot: slot,
+      value: value,
+    );
   }
 
   /// The refusal both export UCs print when the current provider has no

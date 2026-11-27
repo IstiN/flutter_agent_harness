@@ -961,6 +961,52 @@ void main() {
       expect(registryB.find('codmie'), isNotNull);
     });
 
+    test('legacy CodeMie entry with a JWT-shaped token exports as the '
+        'api-key kind (gh-2424 RULE-P shape tie-breaker)', () async {
+      final jwt = _makeJwtToken(exp: 9999999999);
+      // The legacy shape: NO authMethod on disk (parses as apiKey), but
+      // the stored credential is JWT-shaped — switch/boot route it as
+      // Bearer, so the exported label must say api-key too.
+      final entry = CustomProviderEntry(
+        name: 'codmie',
+        apiType: 'openai',
+        baseUrl: 'https://codmie.example.com/code-assistant-api/v1',
+        modelId: 'gpt-4o',
+        keyName: 'FA_KEY_CODMIE_EXAMPLE_COM',
+      );
+      final container = await exportContainer(
+        cliFor(
+          FakeStreamFunction([textTurn('ok')]).call,
+          model: _entryModel(entry),
+          secureKeys: await freshCache({'FA_KEY_CODMIE_EXAMPLE_COM': jwt}),
+          customProviders: CustomProviderRegistry([entry]),
+          activeCustomName: 'codmie',
+        ),
+      );
+      // The transfer manifest's auth.type agrees with the read-time
+      // classification sites (RULE-P parity).
+      expect(
+        _decodeContainer(container, 'pass-phrase-1').key!.kind,
+        ProviderTransferKeyKind.apiKey,
+      );
+
+      final registryB = CustomProviderRegistry([]);
+      final storeB = FakeSecureKeyStore();
+      final cacheB = SecureKeyCache(storeB);
+      await cacheB.probe();
+      await runImport(
+        secureKeys: cacheB,
+        registry: registryB,
+        answers: const [
+          ('/provider import', 'container passphrase'),
+          ('pass-phrase-1', 'imported provider codmie (api-key)'),
+          ('n', 'keeping the current provider'),
+        ],
+      );
+
+      expect(registryB.find('codmie'), isNotNull);
+    });
+
     test('wrong passphrase fails loudly with zero writes', () async {
       final entry = _acmeEntry();
       await exportContainer(
@@ -1486,4 +1532,10 @@ void main() {
       expect(clipboardBox, isNotNull);
     });
   });
+}
+
+String _makeJwtToken({required int exp}) {
+  final header = base64Url.encode(utf8.encode('{"alg":"none"}'));
+  final payload = base64Url.encode(utf8.encode('{"exp":$exp}'));
+  return '$header.$payload.signature';
 }
