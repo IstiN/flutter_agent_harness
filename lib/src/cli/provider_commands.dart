@@ -1900,16 +1900,14 @@ extension on AgentCli {
   Future<String?> _dialAskDeployment(String baseUrl, String key) async {
     List<String> deployments = const [];
     try {
-      // Candidates, not a literal: the wizard runs BEFORE the entry name
-      // exists, so the `providers:` binding may live under the re-run
-      // entry's saved name, the host-derived default name, or the catalog
-      // name — first bound wins (unbound = null → fetchDialModels keeps
-      // its own live client). Injection via AgentCliConfig.modelsHttpClient
-      // still wins over everything (test seam).
+      // Pure test seam: production passes null → fetchDialModels creates
+      // its own live client (byte-identical legacy behavior); tests inject
+      // modelsHttpClient so the DIAL setup stays off the network. The
+      // proxy-gate routing for this path is tracked in #249.
       deployments = await fetchDialModels(
         baseUrl,
         key,
-        client: dialWizardModelFetchClient(baseUrl),
+        client: config.modelsHttpClient,
       );
     } on Object {
       // Dead endpoint / bad key — the user can still type a deployment.
