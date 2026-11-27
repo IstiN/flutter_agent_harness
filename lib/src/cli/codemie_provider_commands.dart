@@ -409,8 +409,19 @@ extension on AgentCli {
       await _switchSavedCodeMieJwt(entry, token, keyName);
       return;
     }
-    // SSO cookie auth (default for legacy CodeMie entries).
-    if (token == null || token.isEmpty || codeMieCookieExpired(token)) {
+    // SSO cookie auth (default for legacy CodeMie entries — RULE-M: the
+    // `/code-assistant-api/` marker routed here, not `authMethod`). A raw
+    // non-cookie token on a non-explicit-so entry is not valid cookie
+    // auth: restart the login instead of sending it mis-shaped (gh-2424
+    // E4). An explicit `sso` entry keeps the stored value verbatim.
+    final legacyRawToken =
+        entry.authMethod != CustomProviderAuthMethod.sso &&
+        token != null &&
+        !_looksLikeCookieHeader(token);
+    if (token == null ||
+        token.isEmpty ||
+        legacyRawToken ||
+        codeMieCookieExpired(token)) {
       final orgUrl = codeMieOrgUrl(entry.baseUrl);
       io.writeln(
         'CodeMie session expired or missing — restarting SSO for $orgUrl...',
@@ -471,7 +482,12 @@ extension on AgentCli {
     final cookie = _resolveCodeMieCookie(entry.keyName);
     if (cookie == null || cookie.isEmpty) return;
 
-    if (codeMieCookieExpired(cookie)) {
+    // A legacy entry's raw non-cookie token is NOT valid cookie auth —
+    // re-run the SSO login instead of sending it mis-shaped (gh-2424 E4).
+    final legacyRawToken =
+        entry.authMethod != CustomProviderAuthMethod.sso &&
+        !_looksLikeCookieHeader(cookie);
+    if (legacyRawToken || codeMieCookieExpired(cookie)) {
       final orgUrl = codeMieOrgUrl(entry.baseUrl);
       io.writeln(
         tuiWarning(
@@ -485,18 +501,43 @@ extension on AgentCli {
     _applyCodeMieCookieAuth(entry, cookie);
   }
 
+  /// The saved entry serving [baseUrl] with SSO cookie auth — the boot
+  /// restore's classification function.
+  ///
+  /// RULE-M (gh-2424): CodeMie-ness is the `/code-assistant-api(/|$)` URL
+  /// marker (`isCodeMieBaseUrl`), NOT `authMethod` alone — entries saved
+  /// before the field existed parse as the `apiKey` default yet are SSO
+  /// entries, and the `/v1`-less spelling `codeMieApiBase` normalizes to
+  /// must match too. The `-proxy` marker-shaped twin stays out.
+  ///
+  /// RULE-P: an explicit `authMethod` always wins — `jwt` never matches
+  /// (its Bearer token must not be hijacked into a Cookie header). A
+  /// JWT-shaped resolved credential is the shape tie-breaker for the
+  /// ambiguous legacy case: a stored JWT rides the Bearer path even with
+  /// no recorded `authMethod`.
   CustomProviderEntry? _findCodeMieSsoEntry(
     CustomProviderRegistry registry,
     String baseUrl,
   ) {
+    bool isSsoEntry(CustomProviderEntry e) {
+      if (!isCodeMieBaseUrl(e.baseUrl)) return false;
+      if (e.authMethod == CustomProviderAuthMethod.jwt) return false;
+      final token = _resolveCodeMieCookie(e.keyName);
+      if (token != null && isCodeMieJwtToken(token)) return false;
+      return true;
+    }
+
     return registry.entries
-        .where(
-          (e) =>
-              e.baseUrl == baseUrl &&
-              e.authMethod == CustomProviderAuthMethod.sso,
-        )
+        .where((e) => e.baseUrl == baseUrl && isSsoEntry(e))
         .firstOrNull;
   }
+
+  /// True when [value] carries cookie-header shape (`k=v[;...]`) — the
+  /// one heuristic `_resolveCodeMieCookie`'s legacy apiKey fallback and
+  /// the gh-2424 raw-token guards share. A value without `=`/`;` is a raw
+  /// API key, never a cookie jar.
+  bool _looksLikeCookieHeader(String value) =>
+      value.contains('=') || value.contains(';');
 
   String? _resolveCodeMieCookie(String? keyName) {
     // The cookie lives in the secure store under the saved entry's keyName.
@@ -510,7 +551,7 @@ extension on AgentCli {
     // Back-compat for tests/old entries that have no keyName: accept the
     // apiKey only when it looks like a cookie (k=v[;...]), not a raw API key.
     final fallback = config.apiKey;
-    if (fallback.contains('=') || fallback.contains(';')) return fallback;
+    if (_looksLikeCookieHeader(fallback)) return fallback;
     return null;
   }
 

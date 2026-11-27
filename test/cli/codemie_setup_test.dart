@@ -948,6 +948,295 @@ void main() {
     expect(cli.agent.state.model.headers?['x-codemie-project'], 'demo-project');
     expect(cli.agent.state.model.headers?['cookie'], '_oauth2_proxy=abc123');
   });
+
+  // ── Legacy CodeMie entries classify as SSO (gh-2424) ──
+  //
+  // Entries saved before `authMethod` existed parse as the `apiKey`
+  // default. RULE-M: CodeMie-ness is the `/code-assistant-api(/|$)` URL
+  // marker, not the field; RULE-P: an explicit `sso`/`jwt` always wins and
+  // a JWT-shaped stored token rides the Bearer path. Every classification
+  // surface (boot restore, saved-entry select dispatch, export kind) must
+  // resolve a legacy entry exactly like a fresh `sso` one — read-time
+  // only, the stored entry is never rewritten.
+
+  /// Builds the boot fixture the gh-1809 startup-restore test uses: the
+  /// saved entry's baseUrl IS the boot model's baseUrl, the cookie sits in
+  /// the store under the entry's keyName.
+  Future<(AgentCli, CustomProviderRegistry)> bootCli(
+    Model model,
+    CustomProviderEntry entry,
+    String credential, {
+    Future<CodeMieSsoCredentials?> Function(
+      String codeMieUrl,
+      void Function(String) onStatus,
+    )?
+    codeMieSsoAuthenticateFn,
+  }) async {
+    final registry = CustomProviderRegistry([entry]);
+    final store = FakeSecureKeyStore();
+    if (entry.keyName != null) store.map[entry.keyName!] = credential;
+    final secureKeys = SecureKeyCache(store);
+    await secureKeys.preload([?entry.keyName]);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: model,
+        apiKey: '',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        customProviders: registry,
+        secureKeys: secureKeys,
+        codeMieSsoAuthenticateFn: codeMieSsoAuthenticateFn,
+      ),
+      io: io,
+    );
+    return (cli, registry);
+  }
+
+  CustomProviderEntry legacyEntry(String baseUrl, {String? keyName}) =>
+      CustomProviderEntry(
+        name: 'codemie.lab.epam.com',
+        apiType: 'openai',
+        baseUrl: baseUrl,
+        modelId: 'codemie-model-1',
+        keyName: keyName,
+      );
+
+  Model modelOn(String baseUrl) => Model(
+    id: 'codemie-model-1',
+    api: 'openai-completions',
+    provider: 'openai',
+    baseUrl: baseUrl,
+    contextWindow: 200000,
+    maxTokens: 4096,
+  );
+
+  group('legacy CodeMie entries classify as SSO (gh-2424)', () {
+    test('boot restore wires cookie auth for a legacy entry exactly like '
+        'a fresh sso entry (gh-2424 AC1/AC2)', () async {
+      const baseUrl = 'https://codemie.lab.epam.com/code-assistant-api/v1';
+      const cookie = '_oauth2_proxy=abc123';
+      final (freshCli, _) = await bootCli(
+        modelOn(baseUrl),
+        CustomProviderEntry(
+          name: 'codemie.lab.epam.com',
+          apiType: 'openai',
+          baseUrl: baseUrl,
+          modelId: 'codemie-model-1',
+          keyName: 'FA_KEY_CODEMIE_LAB_EPAM_COM',
+          authMethod: CustomProviderAuthMethod.sso,
+        ),
+        cookie,
+      );
+      final (legacyCli, legacyRegistry) = await bootCli(
+        modelOn(baseUrl),
+        // No authMethod on disk — the legacy shape (parses as apiKey).
+        legacyEntry(baseUrl, keyName: 'FA_KEY_CODEMIE_LAB_EPAM_COM'),
+        cookie,
+      );
+      // Same wiring, same headers — the on-disk yaml is the ONLY
+      // difference (semantic-drift property, IT-2).
+      expect(
+        legacyCli.agent.state.model.headers?['cookie'],
+        freshCli.agent.state.model.headers?['cookie'],
+      );
+      expect(legacyCli.agent.state.model.headers?['cookie'], cookie);
+      // Read-time classification: the stored entry is NOT rewritten.
+      expect(
+        legacyRegistry.find('codemie.lab.epam.com')!.authMethod,
+        CustomProviderAuthMethod.apiKey,
+      );
+    });
+
+    test('the /v1-less marker spelling boot-restores too '
+        '(gh-2424 UT-2 positive)', () async {
+      final (cli, _) = await bootCli(
+        modelOn('https://codemie.lab.epam.com/code-assistant-api'),
+        legacyEntry(
+          'https://codemie.lab.epam.com/code-assistant-api',
+          keyName: 'FA_KEY_CODEMIE_LAB_EPAM_COM',
+        ),
+        '_oauth2_proxy=abc123',
+      );
+      expect(cli.agent.state.model.headers?['cookie'], '_oauth2_proxy=abc123');
+    });
+
+    test('a -proxy marker-shaped twin is never wired as CodeMie '
+        '(gh-2424 UT-2 negative / INV-3)', () async {
+      final (cli, _) = await bootCli(
+        modelOn('https://codie.corp.example.com/code-assistant-api-proxy/v1'),
+        legacyEntry(
+          'https://codie.corp.example.com/code-assistant-api-proxy/v1',
+          keyName: 'FA_KEY_CODIE_CORP_EXAMPLE_COM',
+        ),
+        '_oauth2_proxy=abc123',
+      );
+      expect(cli.agent.state.model.headers?['cookie'], isNull);
+      expect(io.out.contains('opening browser'), isFalse);
+    });
+
+    test('an explicit jwt entry is never cookie-wired (gh-2424 AC3 '
+        'RULE-P)', () async {
+      final (cli, _) = await bootCli(
+        modelOn('https://codemie.lab.epam.com/code-assistant-api/v1'),
+        CustomProviderEntry(
+          name: 'codemie.lab.epam.com',
+          apiType: 'openai',
+          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+          modelId: 'codemie-model-1',
+          keyName: 'FA_KEY_CODEMIE_LAB_EPAM_COM',
+          authMethod: CustomProviderAuthMethod.jwt,
+        ),
+        _makeJwtToken(exp: 9999999999),
+      );
+      // JWT rides Bearer — a cookie header would mis-shape the request.
+      expect(cli.agent.state.model.headers?['cookie'], isNull);
+    });
+
+    test('boot on a legacy entry with an expired cookie restarts SSO '
+        '(gh-2424 AC1 / IT-1)', () async {
+      final expiredJwt = _makeJwtToken(exp: 1);
+      var ssoCalled = false;
+      final (cli, registry) = await bootCli(
+        modelOn('https://codemie.lab.epam.com/code-assistant-api/v1'),
+        legacyEntry(
+          'https://codemie.lab.epam.com/code-assistant-api/v1',
+          keyName: 'FA_KEY_CODEMIE_LAB_EPAM_COM',
+        ),
+        'codemie_access_token=$expiredJwt',
+        codeMieSsoAuthenticateFn: (url, onStatus) async {
+          ssoCalled = true;
+          expect(url, 'https://codemie.lab.epam.com');
+          return const CodeMieSsoCredentials(
+            cookies: {'_oauth2_proxy': 'refreshed'},
+            apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+            expiresAt: 9999999999999,
+          );
+        },
+      );
+      await io.out.waitUntilContains('opening browser to re-authorize');
+      await io.out.waitUntilContains('switched provider');
+      // Repair-on-write: the flow's own save stamps the entry sso —
+      // observed, never forced by the classification (INV-2).
+      expect(
+        registry.find('codemie.lab.epam.com')!.authMethod,
+        CustomProviderAuthMethod.sso,
+      );
+      expect(cli.agent.state.model.headers?['cookie'], contains('refreshed'));
+      final run = cli.run();
+      io.sendLine('/exit');
+      await run;
+      expect(ssoCalled, isTrue);
+    });
+
+    test(
+      'selecting a legacy entry with a raw non-cookie, non-JWT token '
+      'restarts SSO instead of sending it as a cookie (gh-2424 E4)',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final registry = CustomProviderRegistry([
+          legacyEntry(
+            'https://codemie.lab.epam.com/code-assistant-api/v1',
+            keyName: 'FA_KEY_CODEMIE_LAB_EPAM_COM',
+          ),
+        ]);
+        final store = FakeSecureKeyStore();
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        // A raw API key is neither a cookie jar nor a JWT — never valid
+        // cookie auth on a legacy entry (E4 pinned interim).
+        await cache.save('FA_KEY_CODEMIE_LAB_EPAM_COM', 'sk-raw-legacy-key');
+        var ssoCalled = false;
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          customProviders: registry,
+          codeMieSsoAuthenticateFn: (url, onStatus) async {
+            ssoCalled = true;
+            return const CodeMieSsoCredentials(
+              cookies: {'_oauth2_proxy': 'refreshed'},
+              apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+              expiresAt: 9999999999999,
+            );
+          },
+          codeMieGuidedSetupFn: (apiBase, cookie, pickOption, askLine) async =>
+              'codemie-model-1',
+        );
+        final run = cli.run();
+        io.sendLine('/provider codemie.lab.epam.com');
+        await io.out.waitUntilContains('restarting SSO');
+        io.sendLine('/exit');
+        await run;
+        expect(ssoCalled, isTrue);
+      },
+    );
+
+    test('a legacy entry with a JWT-shaped stored token keeps the JWT leg '
+        '(gh-2424 IT-4 shape tie-breaker)', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final registry = CustomProviderRegistry([
+        legacyEntry(
+          'https://codemie.lab.epam.com/code-assistant-api/v1',
+          keyName: 'FA_KEY_CODEMIE_LAB_EPAM_COM',
+        ),
+      ]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      await cache.save(
+        'FA_KEY_CODEMIE_LAB_EPAM_COM',
+        _makeJwtToken(exp: 9999999999),
+      );
+      var ssoCalled = false;
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        secureKeys: cache,
+        customProviders: registry,
+        codeMieSsoAuthenticateFn: (url, onStatus) async {
+          ssoCalled = true;
+          return const CodeMieSsoCredentials(
+            cookies: {'_oauth2_proxy': 'refreshed'},
+            apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+            expiresAt: 9999999999999,
+          );
+        },
+      );
+      final run = cli.run();
+      io.sendLine('/provider codemie.lab.epam.com');
+      await io.out.waitUntilContains('JWT Bearer token');
+      io.sendLine('/exit');
+      await run;
+      expect(ssoCalled, isFalse);
+    });
+
+    test('selecting a /v1-less legacy entry lands on the cookie switch '
+        '(gh-2424 dispatch RULE-M)', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      const baseUrl = 'https://codie.corp.example.com/code-assistant-api';
+      final registry = CustomProviderRegistry([
+        legacyEntry(baseUrl, keyName: 'FA_KEY_CODIE_CORP_EXAMPLE_COM'),
+      ]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      await cache.save('FA_KEY_CODIE_CORP_EXAMPLE_COM', '_o=valid-cookie');
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        secureKeys: cache,
+        customProviders: registry,
+        codeMieSsoAuthenticateFn: (url, onStatus) async => null,
+      );
+      final run = cli.run();
+      io.sendLine('/provider codemie.lab.epam.com');
+      await io.out.waitUntilContains('key: SSO cookie');
+      io.sendLine('/exit');
+      await run;
+      expect(cli.agent.state.model.headers?['cookie'], '_o=valid-cookie');
+    });
+  });
 }
 
 String _makeJwtToken({required int exp}) {

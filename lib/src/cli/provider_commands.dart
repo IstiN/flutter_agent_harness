@@ -488,11 +488,13 @@ extension on AgentCli {
 
   /// Switches to a saved registry entry (picker or typed `/provider <name>`):
   /// restores its last-used model and marks it active. CodeMie endpoints
-  /// (detected by the `/code-assistant-api/` URL marker) are routed to
+  /// (detected by the `/code-assistant-api(/|$)` URL marker — RULE-M,
+  /// gh-2424: the regex also admits the `/v1`-less spelling
+  /// `codeMieApiBase` normalizes to) are routed to
   /// [_switchToSavedCodeMieProvider], which distinguishes SSO cookie auth from
   /// JWT Bearer auth; other entries use the regular provider switch.
   Future<void> _switchToSavedProvider(CustomProviderEntry entry) async {
-    if (entry.baseUrl.contains('/code-assistant-api/')) {
+    if (isCodeMieBaseUrl(entry.baseUrl)) {
       await _switchToSavedCodeMieProvider(entry);
       return;
     }

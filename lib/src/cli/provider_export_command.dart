@@ -149,17 +149,28 @@ extension on AgentCli {
   }
 
   /// The credential kind the CURRENT provider carries: CodeMie entries are
-  /// SSO-cookie or JWT by their `authMethod` (the URL marker routes the
-  /// switch), ChatGPT/Copilot are OAuth blobs, everything else is a plain
+  /// SSO-cookie or JWT by their `authMethod` — with the gh-2424 RULE-M/P
+  /// fallback: the URL marker (`isCodeMieBaseUrl`) routes the switch, so a
+  /// LEGACY entry saved before `authMethod` existed (parses as the
+  /// `apiKey` default) round-trips as the SSO kind it actually is, while
+  /// an explicit `jwt` keeps the plain-secret kind. A JWT-shaped resolved
+  /// credential ([resolvedValue]) is the RULE-P shape tie-breaker: it
+  /// rides the Bearer path exactly like an explicit `jwt` entry — the
+  /// same rule `_switchToSavedCodeMieProvider` and `_findCodeMieSsoEntry`
+  /// apply. ChatGPT/Copilot are OAuth blobs, everything else is a plain
   /// api-key/JWT secret.
   ProviderTransferKeyKind _transferKeyKind(
     ProviderSpec spec,
-    CustomProviderEntry? entry,
-  ) {
-    if (entry != null && entry.baseUrl.contains('/code-assistant-api/')) {
-      return entry.authMethod == CustomProviderAuthMethod.sso
-          ? ProviderTransferKeyKind.sso
-          : ProviderTransferKeyKind.apiKey;
+    CustomProviderEntry? entry, {
+    String? resolvedValue,
+  }) {
+    if (entry != null && isCodeMieBaseUrl(entry.baseUrl)) {
+      final ridesBearer =
+          entry.authMethod == CustomProviderAuthMethod.jwt ||
+          (resolvedValue != null && isCodeMieJwtToken(resolvedValue));
+      return ridesBearer
+          ? ProviderTransferKeyKind.apiKey
+          : ProviderTransferKeyKind.sso;
     }
     switch (spec.name) {
       case 'chatgpt':
@@ -187,7 +198,11 @@ extension on AgentCli {
         (baseUrl == spec.defaultBaseUrl
             ? spec.apiKeyEnvNames.first
             : CustomProviderRegistry.keyNameFor(baseUrl));
-    return (kind: _transferKeyKind(spec, entry), slot: slot, value: value);
+    return (
+      kind: _transferKeyKind(spec, entry, resolvedValue: value),
+      slot: slot,
+      value: value,
+    );
   }
 
   /// The refusal both export UCs print when the current provider has no
