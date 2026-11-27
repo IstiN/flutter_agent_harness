@@ -1976,6 +1976,17 @@
       "requests": 62,
       "source": "",
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-27T14:28:45Z",
+      "prompt": 144065,
+      "completion": 29747,
+      "total": 173812,
+      "cacheRead": 2427136,
+      "requests": 41,
+      "source": "",
+      "model": "glm-5.3-flash"
     }
   ]
 }
