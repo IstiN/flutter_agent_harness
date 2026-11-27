@@ -624,14 +624,19 @@ bool _globPatternMatches(String pattern, String dir) {
 /// overrides, and the retry policy.
 final class ModelRolesConfig {
   /// Creates a config; [roles] maps role id to its ordered chain.
+  /// [runtimePinned] names the roles pinned by a LIVE session decision
+  /// (`/provider` / `/model`) — see the field docs; yaml parsing never
+  /// pins (a config file cannot pre-empt a runtime switch).
   ModelRolesConfig({
     required Map<String, List<ModelRef>> roles,
     this.pathOverrides = const [],
     this.retry = const ModelRolesRetryPolicy(),
+    Set<String> runtimePinned = const <String>{},
   }) : roles = Map.unmodifiable({
          for (final entry in roles.entries)
            entry.key: List<ModelRef>.unmodifiable(entry.value),
-       });
+       }),
+       runtimePinned = Set.unmodifiable(runtimePinned);
 
   /// Parses the `roles:` / `modelOverrides:` / `retry:` sections of the CLI
   /// config. Strict: any schema problem throws [ConfigException] (a corrupt
@@ -678,11 +683,22 @@ final class ModelRolesConfig {
   /// Retry/fallback knobs.
   final ModelRolesRetryPolicy retry;
 
+  /// Role ids pinned by a LIVE session decision — the runtime
+  /// `/provider` / `/model` switch (`ModelRolesResolver.setRoleChain`,
+  /// gh-2433). A pinned role's chain skips the [pathOverrides] step:
+  /// the switch must out-rank every path override, or the longest-match
+  /// entry silently resurrects the config chain over the user's decision
+  /// (the Copilot switch that kept running on Bedrock). Runtime state —
+  /// never parsed from, or serialized to, yaml.
+  final Set<String> runtimePinned;
+
   /// Resolves [role]'s chain for the working directory [cwd].
   ///
   /// Resolution order (mirroring omp):
   ///
-  /// 1. the longest matching [pathOverrides] pattern that pins [role];
+  /// 1. the longest matching [pathOverrides] pattern that pins [role] —
+  ///    SKIPPED for a [runtimePinned] role (gh-2433: the runtime switch
+  ///    wins over every path override);
   /// 2. the top-level [roles] chain for [role];
   /// 3. for non-default roles, the `default` role's chain (omp's
   ///    inherit-default-before-priority behavior);
@@ -695,7 +711,7 @@ final class ModelRolesConfig {
         '${modelRoleIds.join(', ')}',
       );
     }
-    if (cwd != null) {
+    if (cwd != null && !runtimePinned.contains(role)) {
       final matching =
           pathOverrides
               .where(
