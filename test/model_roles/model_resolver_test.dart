@@ -408,6 +408,195 @@ void main() {
       expect(resolver.chainFor('default')!.single.model.id, 'gemini-scoped');
     });
 
+    test('gh-2433 — a runtime /provider switch beats a matching path '
+        'override', () {
+      final resolver = ModelRolesResolver(
+        config: config,
+        secrets: const {'GOOGLE_API_KEY': 'g-key', 'OPENAI_API_KEY': 'o-key'},
+        cwd: '/special/project',
+        streamFactory: _neverStream,
+      );
+      // Precondition: the longest-match override pins the role here.
+      expect(resolver.chainFor('default')!.single.model.id, 'gemini-scoped');
+      // The runtime switch (setDefaultChain — the `/provider` and
+      // `/model` path) pins the default role: the override must NOT
+      // resurrect the config chain over the user's live decision.
+      resolver.setDefaultChain(const [
+        ModelRef(provider: 'openai', modelId: 'gpt-switched'),
+      ]);
+      expect(resolver.chainFor('default')!.single.model.id, 'gpt-switched');
+      // The per-turn main-model path re-enters chainFor via resolveRole —
+      // the same pinned resolution must hold there.
+      expect(resolver.resolveRole('default')!.model.id, 'gpt-switched');
+    });
+
+    test('gh-2433 — setRoleChain pins a non-default role; siblings keep '
+        'the override', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(provider: 'anthropic', modelId: 'claude-main'),
+            ],
+            'smol': [ModelRef(provider: 'anthropic', modelId: 'claude-smol')],
+            'plan': [ModelRef(provider: 'anthropic', modelId: 'claude-plan')],
+          },
+          pathOverrides: const [
+            PathRoleOverride(
+              pattern: '/special',
+              roles: {
+                'smol': [
+                  ModelRef(provider: 'google', modelId: 'gemini-smol-scoped'),
+                ],
+                'plan': [
+                  ModelRef(provider: 'google', modelId: 'gemini-plan-scoped'),
+                ],
+              },
+            ),
+          ],
+        ),
+        secrets: const {'GOOGLE_API_KEY': 'g-key', 'OPENAI_API_KEY': 'o-key'},
+        cwd: '/special/project',
+        streamFactory: _neverStream,
+      );
+      expect(resolver.resolveRole('smol')!.model.id, 'gemini-smol-scoped');
+      resolver.setRoleChain('smol', const [
+        ModelRef(provider: 'openai', modelId: 'gpt-smol-switched'),
+      ]);
+      // The switched role skips the override…
+      expect(resolver.resolveRole('smol')!.model.id, 'gpt-smol-switched');
+      // …its sibling, never switched at runtime, does not.
+      expect(resolver.resolveRole('plan')!.model.id, 'gemini-plan-scoped');
+    });
+
+    test('gh-2433 — the pin lives on the config: setRetryPolicy keeps it, '
+        'clearRoleChain drops it', () {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(provider: 'anthropic', modelId: 'claude-main'),
+            ],
+            'plan': [ModelRef(provider: 'anthropic', modelId: 'claude-plan')],
+          },
+          pathOverrides: const [
+            PathRoleOverride(
+              pattern: '/special',
+              roles: {
+                'plan': [
+                  ModelRef(provider: 'google', modelId: 'gemini-plan-scoped'),
+                ],
+              },
+            ),
+          ],
+        ),
+        secrets: const {'GOOGLE_API_KEY': 'g-key', 'OPENAI_API_KEY': 'o-key'},
+        cwd: '/special/project',
+        streamFactory: _neverStream,
+      );
+      // Precondition: the override wins before any runtime pin.
+      expect(resolver.resolveRole('plan')!.model.id, 'gemini-plan-scoped');
+      resolver.setRoleChain('plan', const [
+        ModelRef(provider: 'openai', modelId: 'gpt-plan-switched'),
+      ]);
+      expect(resolver.resolveRole('plan')!.model.id, 'gpt-plan-switched');
+      // An unrelated config rebuild (retry policy) must not un-pin.
+      resolver.setRetryPolicy(const ModelRolesRetryPolicy(retriesPerEntry: 3));
+      expect(resolver.config.runtimePinned, {'plan'});
+      expect(resolver.resolveRole('plan')!.model.id, 'gpt-plan-switched');
+      // Clearing the role's chain drops the pin too: the role reverts to
+      // config-driven resolution — the path override applies again.
+      resolver.clearRoleChain('plan');
+      expect(resolver.config.runtimePinned, isEmpty);
+      expect(resolver.resolveRole('plan')!.model.id, 'gemini-plan-scoped');
+    });
+
+    test('gh-2433 review — a default-chain switch rebuilds the '
+        'inherit-default sibling wrappers', () {
+      // The reviewer repro: a minimal config with only `default`
+      // configured — `smol` inherits the default chain, and a compaction
+      // or stall-takeover run builds its wrapper BEFORE any runtime
+      // switch.
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(provider: 'anthropic', modelId: 'claude-main'),
+            ],
+          },
+        ),
+        secrets: const {
+          'ANTHROPIC_API_KEY': 'a-key',
+          'OPENAI_API_KEY': 'o-key',
+        },
+        streamFactory: _neverStream,
+      );
+      // Pre-switch: the smol wrapper captures the inherited claude chain.
+      expect(resolver.resolveRole('smol')!.model.id, 'claude-main');
+      // Runtime /model switch on a catalog-default endpoint — no scoped
+      // key name, so no addSecret side effect clears the wrappers.
+      resolver.setDefaultChain(const [
+        ModelRef(provider: 'openai', modelId: 'gpt-switched'),
+      ]);
+      // The default role picks the switch up…
+      expect(resolver.resolveRole('default')!.model.id, 'gpt-switched');
+      // …and the inherit-default sibling must NOT keep streaming the
+      // pre-switch chain: every later compaction summary and smol
+      // takeover would run claude while the main agent runs gpt-switched.
+      expect(resolver.resolveRole('smol')!.model.id, 'gpt-switched');
+    });
+
+    test('gh-2433 review — a non-default switch keeps a sibling wrapper '
+        '(cooldown state survives)', () async {
+      final fake = _FactoryFake({
+        'claude-main': [
+          _rateLimitTurn(buildCatalogModel('anthropic', 'claude-main')),
+        ],
+        'gpt-backup': [
+          _okTurn(buildCatalogModel('openai', 'gpt-backup'), 'ok'),
+        ],
+      });
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          // `smol` is deliberately unset: it inherits the default chain.
+          roles: const {
+            'default': [
+              ModelRef(provider: 'anthropic', modelId: 'claude-main'),
+              ModelRef(provider: 'openai', modelId: 'gpt-backup'),
+            ],
+          },
+          retry: const ModelRolesRetryPolicy(retriesPerEntry: 0),
+        ),
+        secrets: const {
+          'ANTHROPIC_API_KEY': 'a-key',
+          'OPENAI_API_KEY': 'o-key',
+        },
+        streamFactory: fake.call,
+      );
+      // A smol run benches claude-main (429) and falls back — the smol
+      // wrapper now carries cooldown state.
+      final agent = Agent(
+        toolRegistry: ToolRegistry(const []),
+        streamFunction: _neverStream('unused', 'unused'),
+      );
+      resolver.applyToAgent(agent, role: 'smol');
+      await agent.prompt('hi');
+      expect(
+        resolver.describeRoles(),
+        contains('anthropic/claude-main (cooldown'),
+      );
+      // An unrelated non-default switch rebuilds only ITS wrapper — the
+      // inherit-default sibling keeps its cached cooldown state (the
+      // sibling clear is scoped to a switch of the default role).
+      resolver.setRoleChain('plan', const [
+        ModelRef(provider: 'openai', modelId: 'gpt-plan'),
+      ]);
+      expect(
+        resolver.describeRoles(),
+        contains('anthropic/claude-main (cooldown'),
+      );
+    });
+
     test('entries with missing keys are skipped, never silently', () {
       final resolver = ModelRolesResolver(
         config: config,
