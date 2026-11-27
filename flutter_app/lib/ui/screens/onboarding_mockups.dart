@@ -995,11 +995,7 @@ class _WhatYouGet extends StatelessWidget {
               width: 56,
               height: 32,
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF60A5FA), Color(0xFF3B82F6)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                gradient: _onbAccentGradient(context),
                 borderRadius: BorderRadius.circular(9),
               ),
               child: const Center(
@@ -1580,11 +1576,7 @@ class _WeatherWidget extends StatelessWidget {
       height: 120,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF60A5FA), Color(0xFF3B82F6)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        gradient: _onbAccentGradient(context),
         borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
