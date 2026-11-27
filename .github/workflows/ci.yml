@@ -5644,6 +5644,14 @@ jobs:
   #   publish path    integration (the #551 hard provider gate) → publish,
   #   siblings        js-ext-integration, watchdog, step-timings,
   #                   faui-coverage.
+  # Cancelled is a RED result here, not a skip (gh-2436, v1.0.782 tag run
+  # 45830131519: the hung binaries-macos-x64 leg hit timeout-minutes:45 and
+  # concluded CANCELLED — failure-only arms never saw it; the report fired
+  # only through the downstream fail-closed install-pin-bump symptom, and a
+  # mid-flight run cancel with zero failed legs would have left every
+  # in-flight leg cancelled with NO report at all). Tag runs are never
+  # concurrency-cancelled (cancel-in-progress is PR-only above), so a
+  # cancelled tag leg is always an incident, never queue churn.
   # NOT covered, deliberately: web-spa / build-extension carry job-level
   # continue-on-error (downstream needs see SUCCESS, so they cannot redden
   # a run); release / binaries-pr / binaries-smoke-gate are schedule-,
@@ -5659,18 +5667,31 @@ jobs:
       github.event_name == 'push' &&
       (
         needs.quality-gate.result == 'failure' ||
+        needs.quality-gate.result == 'cancelled' ||
         needs.binaries.result == 'failure' ||
+        needs.binaries.result == 'cancelled' ||
         needs.integration.result == 'failure' ||
+        needs.integration.result == 'cancelled' ||
         needs.js-ext-integration.result == 'failure' ||
+        needs.js-ext-integration.result == 'cancelled' ||
         needs.publish.result == 'failure' ||
+        needs.publish.result == 'cancelled' ||
         needs.watchdog.result == 'failure' ||
+        needs.watchdog.result == 'cancelled' ||
         needs.step-timings.result == 'failure' ||
+        needs.step-timings.result == 'cancelled' ||
         needs.faui-coverage.result == 'failure' ||
+        needs.faui-coverage.result == 'cancelled' ||
         needs.release-provenance.result == 'failure' ||
+        needs.release-provenance.result == 'cancelled' ||
         needs.release-asset-smoke.result == 'failure' ||
+        needs.release-asset-smoke.result == 'cancelled' ||
         needs.installer-smoke.result == 'failure' ||
+        needs.installer-smoke.result == 'cancelled' ||
         needs.install-pin-bump.result == 'failure' ||
-        needs.train-draft-guard.result == 'failure'
+        needs.install-pin-bump.result == 'cancelled' ||
+        needs.train-draft-guard.result == 'failure' ||
+        needs.train-draft-guard.result == 'cancelled'
       )
     permissions:
       issues: write
@@ -5684,11 +5705,16 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           REF: ${{ github.ref_name }}
         run: |
+          # gh-2436 (v1.0.782 run 45830131519): failure-only filtering hid
+          # the ROOT leg — the tracker item named the downstream fail-closed
+          # symptom ("Advance vpinned marker") while the actually-hung
+          # binaries-macos-x64 leg, cancelled at timeout-minutes, was
+          # dropped. List every red leg with its conclusion.
           failed=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" \
-            --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")')
+            --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled") | "\(.name) [\(.conclusion)]"] | join(", ")')
           title="[ci-red] $REF failed"
           url="https://github.com/$REPO/actions/runs/$RUN_ID"
-          body="**Failed jobs:** ${failed:-unknown}
+          body="**Failed/cancelled jobs:** ${failed:-unknown}
           **Run:** $url
 
           Auto-filed by the ci-red-report leg; assignee ai-teammate. Closes manually when the ref goes green."

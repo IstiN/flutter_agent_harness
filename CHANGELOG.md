@@ -79,6 +79,19 @@ block a release again.
   all-quarantined selection runs nothing. Guard:
   `test/ci_integration_mock_quarantine_guard_test.dart`.
 
+- fix(2356): tag-run CANCELLED legs now reach ci-red-report (gh-2436 /
+  v1.0.782 run 45830131519 class) — the hung binaries-macos-x64 leg
+  concluded CANCELLED at timeout-minutes:45 and the failure-only arming
+  arms never saw it; the report fired only through the downstream
+  fail-closed install-pin-bump symptom, and a mid-flight run cancel with
+  zero failed legs would have vanished silently. Every covered leg now
+  arms on `result == 'failure' || result == 'cancelled'` (13 legs × 2),
+  and the filed tracker item lists every red leg with its conclusion
+  (`name [failure|cancelled]`) instead of failure-only names, so the
+  ROOT leg is named. Guard AC3 extended to pin both arms + the script's
+  conclusion query (failing-first: 2 red → 7 green); tag runs are never
+  concurrency-cancelled (cancel-in-progress is PR-only), so a cancelled
+  tag leg is always an incident, never queue churn.
 - feat(2416): GOAL #28 slim tool manifest — the default load mode is the
   owner's partition: twelve always-visible tools (keep-12, name-level:
   `memory_add`/`memory_search` stay while `memory_list`/`memory_delete`
