@@ -4,4 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-zip = { version = "2", default-features = false, features = ["deflate"] }
+# 9.x: Dependabot critical/high/medium (gh-advisory 2/3/4) - zip <= 9.0.4 has
+# a parser-differential "zip cloaking" (arbitrary file overwrite -> RCE),
+# unbounded symlink-target memory exhaustion, and an AES-HMAC bypass on
+# premature EOF. 9.0.5 patches all three.
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
