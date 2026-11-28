@@ -491,7 +491,12 @@ class Agent {
   /// window — clamped down under the catalog value, raised above it when
   /// the endpoint serves more than the catalog reports. `null` = the raw
   /// model window.
-  final int? contextWindowCap;
+  ///
+  /// Mutable like the other late-wirable host knobs ([overWindowRelief],
+  /// [streamFunction]): a settings surface that re-caps live assigns it
+  /// between runs — the next run's loop config reads the new value
+  /// (gh-2479). Read per run in [_createLoopConfig], never cached.
+  int? contextWindowCap;
 
   /// Emergency relief for the loop's over-window guard (issue #387),
   /// threaded into every [AgentLoopConfig]. `null` = the guard keeps

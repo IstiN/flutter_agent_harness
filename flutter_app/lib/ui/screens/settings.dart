@@ -45,6 +45,7 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/ui/screens/settings_key_dialogs.dart';
+import 'package:fa/ui/screens/context_window_settings.dart';
 import 'package:fa/ui/screens/settings_navigation.dart';
 import 'package:fa/ui/screens/settings_tiles.dart';
 import 'package:fa/ui/screens/skills_toggles_section.dart';
@@ -1939,6 +1940,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           gap,
+          // The owner context-window cap (gh-2479): the SAME
+          // `agent.contextWindowCap` the CLI's context-cap flow writes;
+          // edits re-cap the live session through the service seam.
+          ContextWindowCapSection(
+            service: service,
+            projectDir: service.env.sessionCwd,
+          ),
+          gap,
         ],
         const CliOnlySettingsSection(),
       ],
@@ -1960,48 +1969,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const DebugLogsSection(),
       ],
     };
-  }
-
-  /// The connect-a-provider CTA shown only when there is no active
-  /// service AND no saved provider to fall back on — if the user already
-  /// configured one (just hasn't applied it yet) the hint is noise.
-  /// ProvidersSection below carries its own Add-provider row.
-  List<Widget> _noServiceHint(BuildContext context, AgentService? service) {
-    final registry = widget.registry;
-    if (service != null) return const [];
-    if (registry != null && registry.providers.isNotEmpty) return const [];
-    return [
-      _NoServiceSettings(onAddProvider: () => _addProviderFromCta(context)),
-      const SizedBox(height: 16),
-    ];
-  }
-
-  /// The add-provider flow behind the no-service CTA: opens the editor,
-  /// saves the provider, remembers a non-empty key, and reports to
-  /// analytics (issue #702: extracted from build for direct tests).
-  Future<void> _addProviderFromCta(BuildContext context) async {
-    final registry = widget.registry;
-    if (registry == null) return;
-    final result = await Navigator.of(context).push<ProviderEditorResult>(
-      MaterialPageRoute(
-        builder: (_) => ProviderEditorPage(
-          title: context.l10n.settingsAddProvider,
-          modelsFetcher: widget.modelsFetcher,
-        ),
-      ),
-    );
-    if (result == null || result.deleted) return;
-    final provider = await registry.add(
-      name: result.name,
-      baseUrl: result.baseUrl,
-      modelId: result.modelId,
-    );
-    if (result.apiKey.isNotEmpty) {
-      registry.rememberKey(provider.id, result.apiKey);
-      // gh-1378 AC3: the manual add probes the endpoint immediately.
-      QuotaStore.instance.confirmEndpoint(provider.baseUrl);
-    }
-    AppAnalytics.instance.providerSaved('add');
   }
 
   /// The shared fallback for connect flows when the host passed no

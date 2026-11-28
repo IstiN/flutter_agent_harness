@@ -2429,5 +2429,105 @@
   "hostSessionRestored": "Host session restored — try sending your message again.",
   "@hostSessionRestored": {
     "description": "The host one-shot 401 re-resolution succeeded — invite a retry"
+  },
+  "settingsContextWindowLabel": "Context window",
+  "@settingsContextWindowLabel": {
+    "description": "Title of the per-model context-window section (gh-2479)"
+  },
+  "settingsContextWindowOverrideLabel": "Override",
+  "@settingsContextWindowOverrideLabel": {
+    "description": "Label of the per-model context-window override field (gh-2479)"
+  },
+  "settingsContextWindowOverrideHelper": "Empty = inherit the chain: endpoint report → provider catalog → documented default.",
+  "@settingsContextWindowOverrideHelper": {
+    "description": "Helper under the override field (gh-2479)"
+  },
+  "settingsContextWindowSaved": "Saved to {file}.",
+  "@settingsContextWindowSaved": {
+    "description": "Snackbar after a context-window write (gh-2479)",
+    "placeholders": {
+      "file": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsContextWindowSaveFailed": "Could not save the context window: {error}",
+  "@settingsContextWindowSaveFailed": {
+    "description": "Snackbar after a refused context-window write (gh-2479)",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsContextWindowCleared": "Override cleared — the chain decides again.",
+  "@settingsContextWindowCleared": {
+    "description": "Snackbar after clearing the per-model override (gh-2479)"
+  },
+  "settingsContextWindowMinValue": "Minimum {min} tokens (the compaction reserve).",
+  "@settingsContextWindowMinValue": {
+    "description": "Validation message for a below-floor value (gh-2479)",
+    "placeholders": {
+      "min": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsContextWindowInvalid": "Enter a positive integer.",
+  "@settingsContextWindowInvalid": {
+    "description": "Validation message for a non-numeric value (gh-2479)"
+  },
+  "settingsContextWindowCapped": "owner cap {cap} applies last",
+  "@settingsContextWindowCapped": {
+    "description": "Caption when the owner cap replaces the chain value (gh-2479)",
+    "placeholders": {
+      "cap": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWindowSourceOverride": "override",
+  "@settingsWindowSourceOverride": {
+    "description": "Source-layer label: the models.overrides pin wins (gh-2479)"
+  },
+  "settingsWindowSourceEndpoint": "endpoint report",
+  "@settingsWindowSourceEndpoint": {
+    "description": "Source-layer label: the endpoint /models report (gh-2479)"
+  },
+  "settingsWindowSourceRemoteCatalog": "remote catalog",
+  "@settingsWindowSourceRemoteCatalog": {
+    "description": "Source-layer label: the remote fa1.dev catalog (gh-2479)"
+  },
+  "settingsWindowSourceRoleChain": "role chain",
+  "@settingsWindowSourceRoleChain": {
+    "description": "Source-layer label: a roles-chain entry (gh-2479)"
+  },
+  "settingsWindowSourceCatalog": "provider catalog",
+  "@settingsWindowSourceCatalog": {
+    "description": "Source-layer label: the provider spec default (gh-2479)"
+  },
+  "settingsWindowSourceDefault": "documented default",
+  "@settingsWindowSourceDefault": {
+    "description": "Source-layer label: no layer named a window (gh-2479)"
+  },
+  "settingsContextCapLabel": "Context window cap",
+  "@settingsContextCapLabel": {
+    "description": "Title of the owner cap section in Agent Config (gh-2479)"
+  },
+  "settingsContextCapHelper": "Clamps the effective window AFTER the per-model chain: compaction thresholds, the ctx meter and the over-window guard all measure against it.",
+  "@settingsContextCapHelper": {
+    "description": "Semantics helper under the cap section (gh-2479)"
+  },
+  "settingsContextCapUnset": "Not set — the model window rides uncapped.",
+  "@settingsContextCapUnset": {
+    "description": "Caption when no cap is configured (gh-2479)"
+  },
+  "settingsContextCapClear": "Clear cap",
+  "@settingsContextCapClear": {
+    "description": "Button: remove agent.contextWindowCap (gh-2479)"
+  },
+  "settingsContextCapWebNote": "Not configurable on this platform — there is no ~/.fah/config.yaml.",
+  "@settingsContextCapWebNote": {
+    "description": "Web-unsupported note (gh-2479)"
   }
 }

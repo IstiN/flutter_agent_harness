@@ -81,8 +81,7 @@ void main() {
       expect(caps.thinkingLevel, 'high');
     });
 
-    test('override raises the window above the cap (raise direction kept)',
-        () {
+    test('override raises the window above the cap (raise direction kept)', () {
       final caps = _resolve(
         override: const ModelCapabilityOverride(contextWindow: 1000000),
         contextWindowCap: 500000,
@@ -238,8 +237,7 @@ void main() {
   });
 
   group('resolveModelCapabilities — divergence notes (E1/E4)', () {
-    test('an override contradicting endpoint truth names the divergence',
-        () {
+    test('an override contradicting endpoint truth names the divergence', () {
       final caps = _resolve(
         override: const ModelCapabilityOverride(contextWindow: 400000),
         endpointContextWindow: 300000,
@@ -259,8 +257,7 @@ void main() {
       expect(caps.notes, isEmpty);
     });
 
-    test('an override for a model absent from every catalog is kept (E4)',
-        () {
+    test('an override for a model absent from every catalog is kept (E4)', () {
       final caps = _resolve(
         spec: null,
         remoteCatalogContextWindow: null,
@@ -273,8 +270,7 @@ void main() {
   });
 
   group('resolveModelCapabilities — boundary floors (UT-1)', () {
-    test('a programmatically small override window floors at the reserve',
-        () {
+    test('a programmatically small override window floors at the reserve', () {
       // Parse rejects values below the floor loudly; the resolver's floor
       // is the safety net for non-yaml construction paths.
       final caps = _resolve(
@@ -283,19 +279,25 @@ void main() {
       expect(caps.contextWindow, minOverrideContextWindow);
     });
 
-    test('a programmatically small override maxTokens floors at the answer',
-        () {
-      final caps = _resolve(
-        override: const ModelCapabilityOverride(maxTokens: 10),
-      );
-      expect(caps.maxTokens, minOverrideMaxTokens);
-    });
+    test(
+      'a programmatically small override maxTokens floors at the answer',
+      () {
+        final caps = _resolve(
+          override: const ModelCapabilityOverride(maxTokens: 10),
+        );
+        expect(caps.maxTokens, minOverrideMaxTokens);
+      },
+    );
 
     test('parse rejects an override window below the compaction reserve', () {
       expect(
-        () => ModelCapabilityOverride.fromYaml('zai', 'glm-5.3-flash', _yaml('''
+        () => ModelCapabilityOverride.fromYaml(
+          'zai',
+          'glm-5.3-flash',
+          _yaml('''
 contextWindow: 100
-''')),
+'''),
+        ),
         throwsA(
           isA<ConfigException>().having(
             (e) => e.message,
@@ -308,9 +310,13 @@ contextWindow: 100
 
     test('parse rejects an override maxTokens below the answer floor', () {
       expect(
-        () => ModelCapabilityOverride.fromYaml('zai', 'glm-5.3-flash', _yaml('''
+        () => ModelCapabilityOverride.fromYaml(
+          'zai',
+          'glm-5.3-flash',
+          _yaml('''
 maxTokens: 512
-''')),
+'''),
+        ),
         throwsA(
           isA<ConfigException>().having(
             (e) => e.message,
@@ -383,6 +389,78 @@ maxTokens: 512
       );
       expect(caps.maxTokens, 64000); // the ceiling table applied
       expect(caps.maxTokensField, 'max_tokens'); // the same effective api
+    });
+  });
+
+  group('resolveModelCapabilities — window provenance (gh-2479)', () {
+    test('no layer names a window → the documented unknown default', () {
+      final caps = _resolve(spec: null, api: null);
+      expect(caps.contextWindow, unknownModelContextWindow);
+      expect(caps.contextWindowSource, CapabilityWindowLayer.unknownDefault);
+      expect(caps.contextWindowUncapped, unknownModelContextWindow);
+    });
+
+    test('spec layer wins when nothing above names a window', () {
+      final caps = _resolve(endpointContextWindow: null);
+      expect(caps.contextWindow, 200000);
+      expect(caps.contextWindowSource, CapabilityWindowLayer.spec);
+      expect(caps.contextWindowUncapped, 200000);
+    });
+
+    test('remote catalog beats the spec', () {
+      final caps = _resolve(remoteCatalogContextWindow: 1048576);
+      expect(caps.contextWindow, 1048576);
+      expect(caps.contextWindowSource, CapabilityWindowLayer.remoteCatalog);
+    });
+
+    test('endpoint beats the remote catalog and the spec', () {
+      final caps = _resolve(
+        remoteCatalogContextWindow: 1048576,
+        endpointContextWindow: 200000,
+      );
+      expect(caps.contextWindow, 200000);
+      expect(caps.contextWindowSource, CapabilityWindowLayer.endpoint);
+    });
+
+    test('role slot beats the endpoint', () {
+      final caps = _resolve(
+        roleContextWindow: 131072,
+        endpointContextWindow: 200000,
+      );
+      expect(caps.contextWindow, 131072);
+      expect(caps.contextWindowSource, CapabilityWindowLayer.roleSlot);
+    });
+
+    test('override beats everything; the divergence note rides along', () {
+      final caps = _resolve(
+        override: const ModelCapabilityOverride(contextWindow: 128000),
+        roleContextWindow: 131072,
+        endpointContextWindow: 200000,
+      );
+      expect(caps.contextWindow, 128000);
+      expect(caps.contextWindowSource, CapabilityWindowLayer.override);
+      expect(caps.contextWindowUncapped, 128000);
+      expect(caps.notes, isNotEmpty);
+    });
+
+    test('the cap replaces the NUMBER, never the SOURCE (applied last)', () {
+      final caps = _resolve(
+        endpointContextWindow: 1048576,
+        contextWindowCap: 200000,
+      );
+      expect(caps.contextWindow, 200000);
+      expect(caps.contextWindowSource, CapabilityWindowLayer.endpoint);
+      expect(caps.contextWindowUncapped, 1048576);
+    });
+
+    test('a cap above the window RAISES the effective window (#729)', () {
+      final caps = _resolve(
+        endpointContextWindow: 200000,
+        contextWindowCap: 1048576,
+      );
+      expect(caps.contextWindow, 1048576);
+      expect(caps.contextWindowSource, CapabilityWindowLayer.endpoint);
+      expect(caps.contextWindowUncapped, 200000);
     });
   });
 }

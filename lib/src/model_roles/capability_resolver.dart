@@ -314,6 +314,32 @@ final class ModelCapabilityOverrides {
   }
 }
 
+/// Where the effective context window came from (gh-2479): the
+/// settings-surface provenance label. The order mirrors the precedence
+/// docs — the FIRST explicit layer wins, then the global cap replaces the
+/// number (the source keeps naming the layer the UNCAPPED value rode).
+enum CapabilityWindowLayer {
+  /// The `models.overrides` pin
+  /// (`models.overrides.<provider>.<modelId>.contextWindow`).
+  override,
+
+  /// The `roles:` chain entry's explicit `contextWindow`.
+  roleSlot,
+
+  /// The endpoint's `/v1/models` report.
+  endpoint,
+
+  /// The remote fa1.dev catalog entry.
+  remoteCatalog,
+
+  /// The provider spec's built-in default.
+  spec,
+
+  /// No layer named a window — the documented unknown default
+  /// ([unknownModelContextWindow]).
+  unknownDefault,
+}
+
 /// The resolved capability triple plus the compat surfels the adapters
 /// consume. Produced by [resolveModelCapabilities]; every consumer (the
 /// request build, the ctx meter, compaction thresholds) reads the SAME
@@ -325,11 +351,25 @@ final class EffectiveCaps {
     required this.thinkingLevel,
     required this.maxTokensField,
     required this.omitMaxOutputTokens,
+    this.contextWindowSource = CapabilityWindowLayer.unknownDefault,
+    this.contextWindowUncapped,
     this.notes = const [],
   });
 
   /// Effective total context window (the global cap already applied).
   final int contextWindow;
+
+  /// The layer the effective window came from (gh-2479): the provenance
+  /// the settings surfaces display next to the number. Computed by the
+  /// SAME precedence walk that produced [contextWindow] — hosts never
+  /// re-derive it.
+  final CapabilityWindowLayer contextWindowSource;
+
+  /// The window BEFORE the global cap replaced it ([contextWindowUncapped]
+  /// `null` when nothing is known about the constructor's vintage — the
+  /// field is informational). A settings surface shows "capped" when
+  /// [contextWindow] differs from this.
+  final int? contextWindowUncapped;
 
   /// Effective maximum output tokens.
   final int maxTokens;
@@ -371,9 +411,9 @@ int? _flooredOverrideValue(int? value, int floor) =>
 /// OVERRIDE layer only — role-slot and catalog values ride verbatim, so
 /// a chain entry's explicit small caps stay byte-identical to
 /// pre-resolver behavior (REG-1). Returns the effective window plus the
-/// E1 divergence notes (an override contradicting the endpoint report
-/// wins, loudly).
-(int, List<String>) _resolveCapabilityWindowLayer({
+/// winning layer ([CapabilityWindowLayer]) plus the E1 divergence notes
+/// (an override contradicting the endpoint report wins, loudly).
+(int, CapabilityWindowLayer, int, List<String>) _resolveCapabilityWindowLayer({
   required String provider,
   required String modelId,
   required ModelCapabilityOverride? override,
@@ -384,16 +424,13 @@ int? _flooredOverrideValue(int? value, int floor) =>
   required int? contextWindowCap,
 }) {
   final notes = <String>[];
-  final resolvedWindow =
-      _flooredOverrideValue(
-        override?.contextWindow,
-        minOverrideContextWindow,
-      ) ??
-      roleContextWindow ??
-      endpointContextWindow ??
-      remoteCatalogContextWindow ??
-      spec?.contextWindow ??
-      unknownModelContextWindow;
+  final (resolvedWindow, source) = _resolveWindowLayerValue(
+    override: override,
+    roleContextWindow: roleContextWindow,
+    endpointContextWindow: endpointContextWindow,
+    remoteCatalogContextWindow: remoteCatalogContextWindow,
+    spec: spec,
+  );
   if (override?.contextWindow != null &&
       endpointContextWindow != null &&
       endpointContextWindow != override!.contextWindow) {
@@ -404,7 +441,41 @@ int? _flooredOverrideValue(int? value, int floor) =>
     );
   }
   // Floor the safety net (parse already rejects small values loudly).
-  return (effectiveContextWindow(resolvedWindow, contextWindowCap), notes);
+  return (
+    effectiveContextWindow(resolvedWindow, contextWindowCap),
+    source,
+    resolvedWindow,
+    notes,
+  );
+}
+
+/// The pure layer walk of [_resolveCapabilityWindowLayer] (no cap): the
+/// winning value plus the layer it came from.
+(int, CapabilityWindowLayer) _resolveWindowLayerValue({
+  required ModelCapabilityOverride? override,
+  required int? roleContextWindow,
+  required int? endpointContextWindow,
+  required int? remoteCatalogContextWindow,
+  required ProviderSpec? spec,
+}) {
+  final floored = _flooredOverrideValue(
+    override?.contextWindow,
+    minOverrideContextWindow,
+  );
+  if (floored != null) return (floored, CapabilityWindowLayer.override);
+  if (roleContextWindow != null) {
+    return (roleContextWindow, CapabilityWindowLayer.roleSlot);
+  }
+  if (endpointContextWindow != null) {
+    return (endpointContextWindow, CapabilityWindowLayer.endpoint);
+  }
+  if (remoteCatalogContextWindow != null) {
+    return (remoteCatalogContextWindow, CapabilityWindowLayer.remoteCatalog);
+  }
+  if (spec?.contextWindow != null) {
+    return (spec!.contextWindow, CapabilityWindowLayer.spec);
+  }
+  return (unknownModelContextWindow, CapabilityWindowLayer.unknownDefault);
 }
 
 /// The max-output layer of [resolveModelCapabilities]: override > role
@@ -459,7 +530,12 @@ EffectiveCaps resolveModelCapabilities({
 }) {
   // ── context window: override > role slot > endpoint > remote catalog >
   //    spec > documented unknown default, then the global cap LAST.
-  final (window, windowNotes) = _resolveCapabilityWindowLayer(
+  final (
+    window,
+    windowSource,
+    uncappedWindow,
+    windowNotes,
+  ) = _resolveCapabilityWindowLayer(
     provider: provider,
     modelId: modelId,
     override: override,
@@ -511,6 +587,8 @@ EffectiveCaps resolveModelCapabilities({
 
   return EffectiveCaps(
     contextWindow: window,
+    contextWindowSource: windowSource,
+    contextWindowUncapped: uncappedWindow,
     maxTokens: maxTokens,
     thinkingLevel: thinkingLevel,
     maxTokensField: maxTokensFieldFor(effectiveApi),

@@ -31,6 +31,7 @@ import 'app_config_loader.dart';
 import 'image_registry_loader.dart';
 import 'memory_config_loader.dart';
 import 'compaction_engine_loader.dart';
+import 'context_window_config.dart';
 import 'agent_tool_availability.dart';
 import 'relay/ext_runtime.dart';
 import 'session_names_store.dart';
@@ -187,6 +188,12 @@ class AgentService extends ChangeNotifier
     /// drives the compaction wiring and the loop's over-window guard.
     @visibleForTesting int? contextWindowCap,
 
+    /// Test seam for the per-model capability override layer
+    /// (`models.overrides`, gh-2479): injected INSTEAD of the config-file
+    /// read so widget tests stay home-free. Null = the boot read (the
+    /// production `_withEnv` path) or the installed layer.
+    @visibleForTesting ModelCapabilityOverrides? capabilityOverrides,
+
     /// Test seam for the roles resolver's stream factory (gh-1077 IT-1):
     /// lets the IT suite fake the smol summarizer's provider adapter
     /// instead of building a real HTTP one. Null = the default.
@@ -234,6 +241,8 @@ class AgentService extends ChangeNotifier
        _toolsAvailabilityStore = null,
        // ignore: prefer_initializing_formals
        _contextWindowCap = contextWindowCap,
+       // ignore: prefer_initializing_formals
+       _capabilityOverrides = capabilityOverrides,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
        ) {
@@ -241,6 +250,11 @@ class AgentService extends ChangeNotifier
     // Issue #2226: the wake-gating knobs (test seam — production boots
     // read the section inside [_withEnv]).
     _inboxWakePolicy = _policyFor(messagingConfig);
+    // gh-2479: an injected override layer installs immediately (test
+    // constructors boot no [_withEnv] body); null keeps the installed
+    // layer untouched (REG-1).
+    final overrides = capabilityOverrides;
+    if (overrides != null) modelCapabilityOverrides = overrides;
     // Issue #522: the deletion gate reads the shared live-session
     // heartbeats — the app must not delete a session a CLI owns.
     _repo =
@@ -411,6 +425,10 @@ class AgentService extends ChangeNotifier
     /// knobs. Null = the config file read inside [_withEnv] (absent
     /// section = the defaults).
     @visibleForTesting MessagingConfig? messagingConfig,
+
+    /// Overrides the `models.overrides` layer (gh-2479) — the per-model
+    /// capability pins. Null = the config file read inside [_withEnv].
+    @visibleForTesting ModelCapabilityOverrides? capabilityOverrides,
   }) async {
     final resolvedEnv =
         env ?? await createPlatformEnv(httpClient: createPlatformHttpClient());
@@ -501,6 +519,7 @@ class AgentService extends ChangeNotifier
           secrets[name],
       promptSuffix: promptSuffix,
       configHomeDir: configHomeDir,
+      capabilityOverridesOverride: capabilityOverrides,
     );
   }
 
@@ -535,6 +554,11 @@ class AgentService extends ChangeNotifier
     /// wake-gate knobs are deterministic; production leaves it null and
     /// the config-file read inside the body wins.
     @visibleForTesting MessagingConfig? messagingConfigOverride,
+
+    /// The override-layer test seam (gh-2479, the `messagingConfig`
+    /// pattern): IT tests inject it so the boot never reads a real home's
+    /// `models.overrides`. Null = the config-file read inside the body.
+    ModelCapabilityOverrides? capabilityOverridesOverride,
     SecretRedactor? redactor,
     WebSearchConfig? webSearchConfig,
     StreamFunction? streamFunction,
@@ -574,6 +598,8 @@ class AgentService extends ChangeNotifier
   }) // ignore: prefer_initializing_formals — private fields, public params
     // ignore: prefer_initializing_formals
     : _skillsHomeDir = skillsHomeDir,
+       // ignore: prefer_initializing_formals
+       _capabilityOverrides = capabilityOverridesOverride,
        // ignore: prefer_initializing_formals
        _watchExternalSessions = watchExternalSessions,
        // ignore: prefer_initializing_formals
@@ -889,6 +915,12 @@ class AgentService extends ChangeNotifier
     // Owner context-window cap (gh-1077): `agent.contextWindowCap`, the
     // same project < user config chain the CLI honors. Null = uncapped.
     _contextWindowCap = loadAppContextWindowCap(env.sessionCwd);
+    // Per-model capability overrides (`models.overrides`, gh-2479): the
+    // SAME process-wide layer the CLI installs at boot — roles chains and
+    // the active model resolve the pins. A test seam wins (home-free
+    // suites); null keeps every build byte-identical (REG-1).
+    modelCapabilityOverrides =
+        _capabilityOverrides ?? loadAppCapabilityOverrides();
     // Registry + agent: assembled by the shared builder (issue #1079
     // slice 5) — core tools, then the app-platform extension, then the
     // gated task surface, the canonical composition. The shell passes the
@@ -897,7 +929,7 @@ class AgentService extends ChangeNotifier
     final stack = wired.buildAgentStack(
       streamFunction: streamFunction ?? _streamFunctionFor(config),
       spec: AgentWiringSpec(
-        model: config.toModel(),
+        model: _resolveWindowModel(config),
         systemPrompt: _composeSystemPrompt(config),
         // The loop's over-window guard measures against the effective
         // (capped) window, and issue #387 relief gives a hard overflow ONE
@@ -1147,6 +1179,16 @@ class AgentService extends ChangeNotifier
   /// uncapped.
   int? _contextWindowCap;
 
+  /// The config-carried window of the ACTIVE connection
+  /// (endpoint-reported / picker-stored / catalog, resolved by
+  /// [resolveAppContextWindow] at config build) — the base the per-model
+  /// override and the owner cap adjust (gh-2479 provenance input).
+  int? _activeConfigWindow;
+
+  /// The test seam for the override layer (see the [capabilityOverrides]
+  /// constructor parameter).
+  final ModelCapabilityOverrides? _capabilityOverrides;
+
   /// How many times the loop's over-window relief fired (gh-1077 AC4) —
   /// observability seam for the IT suite ("exactly ONE relief attempt").
   @visibleForTesting
@@ -1395,6 +1437,104 @@ class AgentService extends ChangeNotifier
   /// Model id of the active backend, read live from the agent's model state;
   /// the settings Task models section uses it as the editor's placeholder.
   String get agentModelId => _agent.state.model.id;
+
+  /// The ACTIVE model — its resolved window and caps ride on it (gh-2479
+  /// provenance source); the context-window settings section summarizes
+  /// against it.
+  Model get agentModel => _agent.state.model;
+
+  /// The ACTIVE model's context window resolved through the chain
+  /// (gh-2479): a `models.overrides` pin wins over the config-carried
+  /// value (endpoint-reported / picker-stored / catalog), then the owner
+  /// cap replaces the number LAST (#729 semantics). No pin keeps
+  /// [AgentConfig.toModel]'s model byte-identical.
+  Model _resolveWindowModel(AgentConfig config) {
+    final model = config.toModel();
+    _activeConfigWindow = config.contextWindow;
+    final pinned = modelCapabilityOverrides
+        ?.lookup(config.providerKind, config.modelId)
+        ?.contextWindow;
+    if (pinned == null) return model;
+    return model.copyWith(
+      contextWindow: effectiveContextWindow(pinned, _contextWindowCap),
+    );
+  }
+
+  /// The ACTIVE model's context-window provenance (gh-2479): the
+  /// effective (cap-applied) window, the layer it came from, the pre-cap
+  /// value and the owner cap. The resolution rides the SDK resolver
+  /// ([resolveModelCapabilities]) — the same precedence the request
+  /// build and the compaction math use, never a re-derived copy. Null
+  /// when no connection has been resolved yet.
+  ({int window, CapabilityWindowLayer source, int uncapped, int? cap})?
+  get modelContextWindow {
+    final base = _activeConfigWindow;
+    if (base == null) return null;
+    final model = _agent.state.model;
+    final spec = catalogProvider(model.provider);
+    // The endpoint layer contributes only when the carried value carries
+    // NEW information: equal to the spec default (or the documented
+    // fallback when no spec resolves) it stays on the layer that named it.
+    final namedByFallback = spec == null && base == fallbackContextWindow;
+    final endpoint = (base == spec?.contextWindow || namedByFallback)
+        ? null
+        : base;
+    final caps = resolveModelCapabilities(
+      provider: model.provider,
+      modelId: model.id,
+      override: modelCapabilityOverrides?.lookup(model.provider, model.id),
+      endpointContextWindow: endpoint,
+      spec: spec,
+      api: spec?.api,
+      reasoning: spec?.reasoning ?? true,
+      contextWindowCap: _contextWindowCap,
+    );
+    return (
+      window: caps.contextWindow,
+      source: caps.contextWindowSource,
+      uncapped: caps.contextWindowUncapped ?? base,
+      cap: _contextWindowCap,
+    );
+  }
+
+  /// Applies the owner cap live (gh-2479): the compaction wiring re-reads
+  /// the field on the next build and the loop's over-window guard picks
+  /// the new cap up on the next run ([Agent.contextWindowCap] is a
+  /// late-wirable knob). The caller persists the value through
+  /// [writeAppContextWindowCap] first — this seam is the in-memory apply.
+  void applyContextWindowCap(int? cap) {
+    _contextWindowCap = cap;
+    _agent.contextWindowCap = cap;
+    _notify();
+  }
+
+  /// Re-applies the per-model override layer after a config write
+  /// (gh-2479): reinstalls the process-wide layer from the user config
+  /// and rebuilds the ACTIVE model's window when its identity is the
+  /// edited one — the same reload-after-write semantics as the CLI's
+  /// model-caps flow (last writer wins; no stale resolved capabilities).
+  /// [layer] overrides the re-read (tests inject the persisted layer; the
+  /// production caller omits it — the fresh config read wins).
+  void applyModelWindowOverride(
+    String provider,
+    String modelId, {
+    ModelCapabilityOverrides? layer,
+  }) {
+    modelCapabilityOverrides =
+        layer ?? _capabilityOverrides ?? loadAppCapabilityOverrides();
+    final model = _agent.state.model;
+    final pinned = modelCapabilityOverrides
+        ?.lookup(provider, modelId)
+        ?.contextWindow;
+    if (model.provider == provider && model.id == modelId) {
+      final base = pinned ?? _activeConfigWindow ?? model.contextWindow;
+      final window = effectiveContextWindow(base, _contextWindowCap);
+      if (window != model.contextWindow) {
+        _agent.state.model = model.copyWith(contextWindow: window);
+      }
+    }
+    _notify();
+  }
 
   /// Reads the last [tail] messages of subagent [id]'s session as
   /// `(role, text)` pairs (settings Agents section → observe). Empty when
@@ -2313,7 +2453,7 @@ class AgentService extends ChangeNotifier
     }
     abort();
     await waitForIdle();
-    final newModel = config.toModel();
+    final newModel = _resolveWindowModel(config);
     debugPrint(
       '[Fa] reconfigure: baseUrl=${config.baseUrl}, '
       'apiKey.len=${config.apiKey.length}, '
