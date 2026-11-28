@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-28T18:43:40.237Z",
+  "ticketKey": "pr-2477",
+  "headSha": "d5ede8bcf5eea012147e614ddf829b09d80f842d",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_classification.json": {
+      "hash": "fnv1a64:f2f9742c45686aef",
+      "size": 93
+    },
+    "ci_failures.md": {
+      "hash": "fnv1a64:a64d6971e5547c42",
+      "size": 105254
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:ec7620259bc27823",
+      "size": 2700182
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:fd7f86c060a0930d",
+      "size": 312
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:77a5c617e70a5508",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:b737e72cd7817b08",
+      "size": 733
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:e9f0d5c8bd8042ca",
+      "size": 711
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:878513e5a921cefc",
+      "size": 3388
+    },
+    "request.md": {
+      "hash": "fnv1a64:047521790f4cd9f2",
+      "size": 3050
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:f73ca41bb4b4bbcd",
+      "size": 376
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:557d0fecc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:bd0bc1baeac5df8f",
+      "size": 3129
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:047521790f4cd9f2",
+      "size": 3050
+    }
+  },
+  "comments": [
+    {
+      "id": "thread-1",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "",
+      "resolved": false,
+      "body": "🛑 rework arm withheld on head 5cce2ec371c95d7734c02c25d16d2721e2d0f9e9 — 3/3 red arming attempts left the head unchanged (gh-917). The rework leg keeps closing without a fix (a violation class the agent cannot repair without the local toolchain) — the machine stops retrying here. A human owns this PR: push a fix (a NEW head restarts the budget and validation) or resolve the violation at its source."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-28:e067405c",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 rework arm withheld on head 5cce2ec371c95d7734c02c25d16d2721e2d0f9e9 — 3/3 red arming attempts left the head unchanged (gh-917). The rework leg keeps closing without a fix (a violation class the agent cannot repair without the local toolchain) — the machine stops retrying here. A human owns this PR: push a fix (a NEW head restarts the budget and validation) or resolve the violation at its source."
+    }
+  ]
+}
