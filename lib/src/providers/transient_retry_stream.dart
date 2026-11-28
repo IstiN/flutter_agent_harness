@@ -38,8 +38,15 @@ import '../context.dart';
 import '../event_stream.dart';
 import '../model.dart';
 import '../overflow.dart' show isContextOverflow;
+import '../probable_overflow.dart'
+    show
+        estimateProbableOverflowRequestTokens,
+        isProbableOverflowLargeRequest,
+        probableOverflowMarker;
 import '../types.dart';
-import 'provider_common.dart' show providerStreamIdleTimeout;
+import 'copilot_oauth.dart' show CopilotTokenManager;
+import 'provider_common.dart'
+    show providerStreamIdleTimeout, recycleProviderHttpClientAfterHeal;
 import 'payload_stall.dart' show lastOutboundEstimateBytes, payloadStallLatch;
 import 'provider_tuning.dart'
     show
@@ -244,6 +251,42 @@ Duration transientRetryWrapUpMargin = const Duration(seconds: 120);
 /// The jitter source for [rateLimitBackoffFor]. Injectable for
 /// deterministic tests; defaults to [Random.nextDouble].
 double Function() transientRetryJitter = Random().nextDouble;
+
+/// The stale-connection recovery the ladder fires on the 2nd consecutive
+/// IDENTICAL pre-commit failure (gh-2470 review): drops the cached shared
+/// provider client so the next attempt re-dials a fresh keep-alive pool,
+/// and invalidates every cached Copilot token so the next request
+/// re-exchanges. The issue's restart-cures evidence — the identical
+/// history succeeds after a plain process restart — points at a stale
+/// pooled connection or a stale short-lived token, and every ladder
+/// attempt used to ride the SAME cached client, so a dead pool (or dead
+/// token) burned the whole budget before the exhaustion terminal ever
+/// read it. Injectable so tests fake the pool.
+void _defaultConnectionRecovery() {
+  recycleProviderHttpClientAfterHeal();
+  CopilotTokenManager.invalidateAllForConnectionRecovery();
+}
+
+void Function() transientConnectionRecovery = _defaultConnectionRecovery;
+
+/// The per-chain recovery trigger (see [transientConnectionRecovery]):
+/// fires at most ONCE per retry chain, only when the ladder will
+/// actually run the next attempt (never on an exhaustion, zero-byte or
+/// rate-limit exit — those paths end the call before this runs), and
+/// only for a DETERMINISTIC chain — the identical error text on every
+/// attempt so far. The re-dial cannot cure a poisonous history: a chain
+/// that fails identically even after the fresh dial still exhausts into
+/// the probable-overflow terminal, verdict unchanged. Returns the
+/// re-dial story for the retry notice, or null when nothing fired.
+String? _maybeRecoverConnection(_DriveState state) {
+  if (state.connectionRecovered) return null;
+  final identical = deterministicFailureText(state.failureTexts);
+  if (identical == null) return null;
+  state.connectionRecovered = true;
+  transientConnectionRecovery();
+  return 'identical failure ×${state.failureTexts.length} — dropped the '
+      'pooled connection and cached token; re-dialing fresh';
+}
 
 /// Whether [message] is a transient failure worth replaying: socket-level
 /// drops and gateway 5xx. Rate limits stay with the roles layer (the
@@ -601,6 +644,18 @@ final class _DriveState {
   /// the transport budget in a mixed chain).
   var transportAttempts = 0;
 
+  /// The raw provider error text of every pre-commit failure in this
+  /// chain (gh-2470): the probable-overflow classification needs the
+  /// DETERMINISM evidence — the identical text on every failed attempt —
+  /// which the display-truncated [attemptLog] cannot prove.
+  final failureTexts = <String>[];
+
+  /// Whether the stale-connection recovery already fired in this chain
+  /// (gh-2470 review): one fresh-dial chance per chain, on the 2nd
+  /// identical failure — never re-fired (a poisoned history would churn
+  /// pool recycles for nothing).
+  var connectionRecovered = false;
+
   /// The context the NEXT attempt runs with — the resume anchor after a
   /// mid-stream abort (issue #1126); the caller's token stays THE token.
   Context context;
@@ -711,6 +766,7 @@ Future<bool> _afterTransientFailure(
 ) async {
   final error = failure.error;
   state.lastFailure = error;
+  state.failureTexts.add(error.errorMessage ?? '');
   // A machine-cancelled latch re-arms IN PLACE (the issue #1132
   // discipline): the run-idle watchdog fired over a request that never
   // received a byte, and the replay re-opens the SAME token so the loop,
@@ -793,13 +849,40 @@ Future<bool> _afterTransientFailure(
   }
   state.transportAttempts++;
   if (state.transportAttempts >= maxAttempts) {
+    // gh-2470: a DETERMINISTIC per-history failure — the identical
+    // opaque error on every attempt of a large request — gets the
+    // probable-overflow terminal instead of the generic exhaustion
+    // story: retrying the unchanged history cannot succeed, so the
+    // remediation is compact/switch, never "try again later".
+    final probableOverflow = _probableOverflowVerdict(state, model);
     _pushTerminal(
       out,
-      _transientExhaustedTerminal(model, state.attemptLog, state.startedAt),
+      probableOverflow == null
+          ? _transientExhaustedTerminal(
+              model,
+              state.attemptLog,
+              state.startedAt,
+            )
+          : _probableOverflowTerminal(
+              model,
+              state.attemptLog,
+              state.startedAt,
+              probableOverflow,
+            ),
       resume,
     );
     return false;
   }
+  // gh-2470 review: the exhaustion gates all passed — this chain WILL
+  // dial again. A 2nd consecutive identical failure is the stale pooled
+  // keep-alive / stale Copilot token signature (the issue's
+  // restart-cures evidence): drop the cached pool + cached token once so
+  // the next attempt re-dials fresh, instead of failing every attempt on
+  // the same dead connection. The notice reason carries the re-dial
+  // story (appended AFTER the provider line — the face classifier
+  // matches patterns anywhere in the text).
+  final redialStory = _maybeRecoverConnection(state);
+  final reasonSuffix = redialStory == null ? '' : ' — $redialStory';
   return _pauseBetweenAttempts(
     out,
     model,
@@ -814,7 +897,7 @@ Future<bool> _afterTransientFailure(
     // full text and truncates display-only, so "429" late in a long
     // structured render still reads as rate limited and records. gh-1617
     // AC5: the watchdog replay names the governing window + its source.
-    _noticeReason(watchdogReplay, error, windowStory),
+    '${_noticeReason(watchdogReplay, error, windowStory)}$reasonSuffix',
   );
 }
 
@@ -1083,6 +1166,111 @@ AssistantMessage _exhausted(
   'Attempts: ${_storyLog(attemptLog)}. '
   'Check the provider status or try again later.',
 );
+
+/// The gh-2470 probable-overflow verdict: non-null when the chain's
+/// pre-commit failures are the DETERMINISTIC per-history class on a large
+/// request. Null keeps the generic exhaustion story: a small request, a
+/// non-deterministic chain, or a transient wording is honestly a "try
+/// again later" case.
+///
+/// The definite classes need no guard here: a definite overflow pattern,
+/// a budget exhaustion, or an auth failure never REPLAYS (`isTransientNetworkError`
+/// / `finishReasonRetryClass` stand it on attempt 1), so it can never
+/// exhaust this ladder's budget and never enters [recordedFailureTexts].
+ProbableOverflowTokens? _probableOverflowVerdict(
+  _DriveState state,
+  Model model,
+) {
+  final text = deterministicFailureText(state.failureTexts);
+  if (text == null) return null;
+  if (matchesTransientNetworkWording(text)) return null;
+  if (matchesRateLimitWording(text)) return null;
+  final requestTokens = estimateProbableOverflowRequestTokens(state.context);
+  if (!isProbableOverflowLargeRequest(
+    requestTokens: requestTokens,
+    contextWindow: model.contextWindow,
+  )) {
+    return null;
+  }
+  return ProbableOverflowTokens(
+    requestTokens: requestTokens,
+    contextWindow: model.contextWindow,
+  );
+}
+
+/// The DETERMINISM gate (gh-2470): the one error text every pre-commit
+/// failure in the chain carried, or null when the chain is too short to
+/// prove determinism (fewer than two attempts) or the texts differ (a
+/// non-deterministic chain — each failure may heal on its own replay).
+String? deterministicFailureText(List<String> failureTexts) {
+  if (failureTexts.length < 2) return null;
+  final first = failureTexts.first;
+  if (first.isEmpty) return null;
+  if (failureTexts.any((text) => text != first)) return null;
+  return first;
+}
+
+/// The measured numbers a probable-overflow terminal reports (gh-2470):
+/// the estimated request size and the catalog window it was judged
+/// against (≤ 0 = unknown — the terminal then reports the size only).
+final class ProbableOverflowTokens {
+  const ProbableOverflowTokens({
+    required this.requestTokens,
+    required this.contextWindow,
+  });
+
+  /// The estimated request tokens (the chars-per-token heuristic).
+  final int requestTokens;
+
+  /// The model's catalog window (may be ≤ 0 = unknown).
+  final int contextWindow;
+}
+
+/// The probable-overflow terminal (gh-2470): the deterministic
+/// per-history failure story — the identical opaque error on every
+/// attempt of a large request — with the COMPACT/SWITCH remediation. The
+/// [probableOverflowMarker] rides so hosts recognize the class and arm
+/// their relief funnels (the over-window continuation), and the transient
+/// advice is pointedly ABSENT: "check the provider status / try again
+/// later" sends this failure's user into a loop that never helps.
+ErrorEvent _probableOverflowTerminal(
+  Model model,
+  List<String> attemptLog,
+  DateTime startedAt,
+  ProbableOverflowTokens tokens,
+) => ErrorEvent(
+  reason: StopReason.error,
+  error: _probableOverflowStory(model, attemptLog, startedAt, tokens),
+);
+
+/// The probable-overflow story (see [_probableOverflowTerminal]).
+AssistantMessage _probableOverflowStory(
+  Model model,
+  List<String> attemptLog,
+  DateTime startedAt,
+  ProbableOverflowTokens tokens,
+) {
+  final window = tokens.contextWindow;
+  final windowClause = window > 0
+      ? ' against the ${model.id} catalog window of $window'
+      : '';
+  return _terminalStory(
+    model,
+    attemptLog,
+    startedAt,
+    'Provider call failed after ${attemptLog.length} attempt(s) '
+    'over ${_storyElapsed(startedAt)} — every attempt failed with the '
+    'SAME error on this exact request (~${tokens.requestTokens} estimated '
+    'tokens$windowClause), so the history itself is the likely poison: '
+    'retrying it unchanged cannot succeed ($probableOverflowMarker — '
+    'probable context overflow / poisonous payload; the endpoint serves '
+    'this model below its advertised window, or the payload carries '
+    'something it refuses). Attempts: ${_storyLog(attemptLog)}. This is '
+    'not a transient endpoint failure — the usual retry advice does not '
+    'apply. Compact this session (/compact) or switch model/session '
+    'instead of retrying the unchanged request.',
+  );
+}
 
 /// The gh-1602 deadline terminal: the provider is still rate limited and
 /// the armed session deadline has no retry budget left past the wrap-up
