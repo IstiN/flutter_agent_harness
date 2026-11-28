@@ -1596,6 +1596,18 @@
       "file": "test/integration/provider_openrouter_test.dart",
       "line": null,
       "message": "similar to test/integration/provider_ollama_test.dart \u2014 near-duplicate content (jaccard 0.57, containment 0.73); reuse the shared source, generate one of them, or delete the stale copy"
+    },
+    {
+      "gate": "similarity",
+      "file": "test/ci_2462_app_loc_ceiling_guard_test.dart",
+      "line": null,
+      "message": "similar to test/ci_2472_core_loc_ceiling_guard_test.dart \u2014 near-duplicate content (jaccard 0.24, containment 0.94); reuse the shared source, generate one of them, or delete the stale copy"
+    },
+    {
+      "gate": "similarity",
+      "file": "test/ci_2472_core_loc_ceiling_guard_test.dart",
+      "line": null,
+      "message": "similar to test/ci_2462_app_loc_ceiling_guard_test.dart \u2014 near-duplicate content (jaccard 0.24, containment 0.94); reuse the shared source, generate one of them, or delete the stale copy"
     }
   ]
 }

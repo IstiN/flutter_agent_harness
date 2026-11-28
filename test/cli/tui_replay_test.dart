@@ -912,4 +912,43 @@ void main() {
       expect(rendered, file.readAsStringSync());
     });
   });
+
+  group('gh-2472: echoed record tags strip from the replayed history', () {
+    test('TUI replay: an echoed tag prefix never renders', () {
+      final rows = replayLinesTui(
+        assistant([TextContent(text: 'm1482 Принято. Ставлю ватч на PR')]),
+        width: 80,
+        dim: dim,
+      );
+      expect(rows, ['${assistantStreamPrefix()}Принято. Ставлю ватч на PR']);
+    });
+
+    test('TUI replay: multi-line echoes strip per line', () {
+      final rows = replayLinesTui(
+        assistant([TextContent(text: 'm1482 Один\nm1494\nm1510 Жду PR')]),
+        width: 80,
+        dim: dim,
+      );
+      expect(rows, ['${assistantStreamPrefix()}Один', 'm1494', 'Жду PR']);
+    });
+
+    test('TUI replay: a user-typed m2 quote is not touched', () {
+      final rows = replayLinesTui(
+        UserMessage.text('m2 what does this alias mean?'),
+        width: 80,
+        dim: dim,
+      );
+      expect(rows.join('\n'), contains('m2 what does this alias mean?'));
+    });
+
+    test('line-mode replay: the fa: body strips echoes, keeps prose', () {
+      final rows = replayLines(
+        assistant([
+          TextContent(text: 'm1482 Принято\ninline m143 stays\nm9 done'),
+        ]),
+        maxRows: 0,
+      );
+      expect(rows, ['fa:  Принято', '     inline m143 stays', '     done']);
+    });
+  });
 }
