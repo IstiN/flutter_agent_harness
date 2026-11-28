@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-28T17:26:57.704Z",
+  "ticketKey": "pr-2473",
+  "headSha": "7adefde8b5042a842772447d767d0b8bd702bc3c",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_classification.json": {
+      "hash": "fnv1a64:dfc12da31522948d",
+      "size": 184
+    },
+    "ci_failures.md": {
+      "hash": "fnv1a64:f1a85d7e2373c374",
+      "size": 90601
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:ef9613fd6f3db8f2",
+      "size": 113707
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:d72dfc467a43732f",
+      "size": 509
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:e900da3f21af5d8a",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:d988cf16937ad40e",
+      "size": 11350
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:aad2e504be69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:6b46d96d8084e846",
+      "size": 3526
+    },
+    "request.md": {
+      "hash": "fnv1a64:0229b54a1473f87a",
+      "size": 3188
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:457c2d80c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:8e773f8bfe884980",
+      "size": 3261
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:0229b54a1473f87a",
+      "size": 3188
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:dc0fa4c0",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "**Missing: connection/credential recovery before exhaustion.** Per the issue's restart-cures evidence (identical history succeeds after a plain process restart), repeated deterministic `finish_reason: error` failures are most likely a stale pooled keep-alive connection or a stale copilot token — yet every attempt in this ladder still rides the SAME cached shared client (`provider_common.dart:1146-1180` already exposes the drop-cache seam). On the 2nd consecutive identical failure, drop the cached shared client and re-dial (and attempt a token refresh on the copilot path) before declaring exhaustion. Add the issue's fake-transport test: pooled connection always errors, a fresh connection succeeds — the retry logic must recover by re-dialing instead of failing 3× on the dead connection. The probable-overflow terminal stays correct for the genuine large-request case; it just must not mask the recoverable connection case."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:866e48b3",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the forensics/settlement log was not extended to the new stop class — the gh-241 #5e invariant breaks for probable-overflow stops**\n\nThis PR extends `_contextStopContinuationArmed` so a probable-overflow stop arms the persist → auto-compact → continue funnel. That predicate's doc contract (and gh-241 follow-up #5e, E2) is that it is **shared with the forensics log \"so the forensics log and the settlement can never disagree\"** — but only the funnel side was extended; the stash side was not.\n\n`lib/src/cli/approval_commands.dart:1210-1216` stashes `_pendingContextStop` only on\n`isContextWindowExhaustedError(...)` — the probable-overflow story carries the `probable context overflow` marker, not `Context window exhausted`, so for this class:\n\n1. `TurnEndEvent` falls to the else branch and logs `turn end … stop=error` immediately;\n2. `AgentEndEvent` sees `_pendingContextStop == null` and logs `run end` — while `_maybeOverWindowContinue` is about to compact and continue;\n3. `_settleContextStopLog(ContextStopOutcome.compacting)` (agent_cli_compaction.dart:1809) then no-ops because the stash is empty — the settlement and the forensics log disagree, exactly the shape gh-241 #5e exists to prevent.\n\nThe trail for every probable-overflow stop therefore reads `turn end … stop=error` + `run end` + a second full run's logs, where the pinned guard-class contract is **`stop=compacting (continuation pending)`, no `stop=error`, `run end` exactly once** (test/cli/agent_cli_over_window_continuation_retry_test.dart:281-293). Post-mortem analysis of the very incident class this ticket targets (the 14:52 / 15:37 failures) will misread the run boundary.\n\n**Fix**: stash on the same armed predicate the funnel uses — e.g. at `approval_commands.dart:1212` match `isContextWindowExhaustedError(...) || isProbableOverflowError(...)` (the `_contextStopIsProbableOverflow` flag then keeps picking the notice class). Add an e2e log assertion for the probable-overflow stop mirroring the guard-class one, so the shared-predicate contract stays pinned for both classes."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:764139b3",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "**Fixed — connection/credential recovery now fires before exhaustion.**\n\nAdded to the ladder (`lib/src/providers/transient_retry_stream.dart`):\n\n- **Trigger**: the 2nd consecutive IDENTICAL pre-commit failure — the same `deterministicFailureText` gate the probable-overflow verdict uses, so only a deterministic chain (every attempt failed with the byte-identical error) re-dials; differing texts are independent failures and keep the plain replay.\n- **Action**: `transientConnectionRecovery()` — the fresh-dial half recycles the cached shared client generation (`recycleProviderHttpClientAfterHeal()`, the issue #2327 seam you pointed at), the credential half invalidates every cached Copilot token (`CopilotTokenManager.invalidateAllForConnectionRecovery()`, new — the next `get()` re-exchanges immediately). Injectable global, like `transientRetrySleeper`.\n- **Placement**: strictly between the exhaustion gates and the next dial — never on an exhaustion, zero-byte-bound or rate-limit exit (those paths end the call before the recovery runs), and at most once per chain (`_DriveState.connectionRecovered`), so a genuinely poisonous history cannot churn pool recycles.\n- **Verdict unchanged**: a chain that fails identically even after the fresh dial still exhausts into the probable-overflow terminal — the re-dial rescues the recoverable connection case instead of masking it. The re-dial story also rides the retry notice (`… — identical failure ×2 — dropped the pooled connection and cached token; re-dialing fresh`).\n\nThe issue's fake-transport test is in `test/providers/probable_overflow_ladder_test.dart` (`connection/credential recovery before exhaustion` group): a pooled connection that errors identically on every dial and succeeds only once the recovery fired now completes inside the same chain (2 dead dials + the re-dialed success, no exhaustion terminal); plus discriminations — identical transport wording re-dials too, non-deterministic chains never re-dial, the genuine large-request case keeps its probable-overflow verdict with the recovery spent exactly once, and the default action provably swaps the shared client generation."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:432b7f12",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "**Fixed — the forensics stash gate now matches the armed predicate; the gh-241 #5e invariant holds for probable-overflow stops.**\n\n- `lib/src/cli/approval_commands.dart` (`_logEventForensics`, `TurnEndEvent`): the stash gate now matches `isContextWindowExhaustedError(...) || isProbableOverflowError(...)` — the same error-classification half of `_contextStopContinuationArmed` that arms the funnel. The stash predicate and the armed predicate are shared again, so the trail and the settlement can never disagree (the `_contextStopIsProbableOverflow` flag keeps picking the notice class, unchanged).\n- The e2e log assertion now pins the guard-class contract for the probable-overflow class too, in `test/cli/agent_cli_probable_overflow_continuation_test.dart` (mirroring `agent_cli_over_window_continuation_retry_test.dart`): `stop=compacting (continuation pending)` present, NO `turn end … stop=error` line, `run end sid=` exactly once across the persisted-then-continued run.\n\nThe failing-first shape: before the fix the trail read `turn end … stop=error` + `run end` + a second full run's logs (the exact disagreement the thread describes — the settlement no-oped on an empty stash); the new assertions fail on that log and pass after the one-line gate extension. No settlement-side code needed changing: `_settleAfterPrompt` already settles `compacting`/`ended`/`failed` from the shared armed predicate, so the now-non-empty stash settles correctly on every path (the `CodeMie` early return and the continuation-failure path included)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:e438d62c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-2470 fix is sound — the determinism + size-gated probable-overflow classification, the compact/switch remediation, and the CLI relief funnel satisfy the acceptance (failing-first ladder test, e2e proves the poisonous history never re-sends; analyzer/format clean, touched suites green). One important gap: the forensics/settlement trail was not extended to the new stop class, breaking the gh-241 #5e \"log and settlement never disagree\" invariant on every probable-overflow run.\n\n**Key Issues**:\n- ⚠️ `lib/src/cli/agent_cli_compaction.dart:1801` — `_pendingContextStop` is stashed only for the guard's `Context window exhausted` marker, so a probable-overflow stop logs `turn end … stop=error` + `run end` and then a second run's logs, while the pinned guard-class contract is `stop=compacting (continuation pending)` / `run end` exactly once (details in the inline thread).\n- Open thread reminder: the previously raised connection/credential-recovery finding (re-dial on the 2nd identical failure) remains unaddressed by this diff; the new terminal's compact/switch advice covers the payload case, but a stale keep-alive/token refusal on a large request would still be classified probable-overflow without a re-dial attempt.\n\n**Next Steps**:\n1. Extend the forensics stash gate (`approval_commands.dart:1212`) to the same armed predicate and pin it with an e2e log assertion for the probable-overflow stop.\n2. Digest (no thread): `lib/src/probable_overflow.dart:86` — the estimator prices only the system-prompt overhead; tool schemas (host-side, not in `Context`) stay unpriced, so the ≥50%-of-window gate fires late for hosts with large tool sets (conservative direction only — under-classification keeps the old generic terminal; the 200k floor still covers the ticket's family)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:e120a2c9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Follow-up verification of the review threads:\n\n✅ **Thread 1 (process-state recovery) — RESOLVED**: the ladder now calls `recycleProviderHttpClientAfterHeal()` + `CopilotTokenManager.invalidateAllForConnectionRecovery()` on the 2nd consecutive identical pre-commit failure, with the recovery-path tests. Exactly what the restart-cures evidence required.\n\n⚠️ **Thread 2 (provider error detail at source) — still open**: `lib/src/providers/openai_completions.dart` is untouched in the current head (6967ac88cb). `_applyFinishReason`/`_mapStopReason` still discard the final chunk's `error`/`message`/`details` payload; the ladder's `failureTexts` therefore still records the same literal N times. Capture the full final chunk / SSE error payload (truncated + redacted) into `errorMessage` and the session error record — the issue's logging comment requires it, and the probable-overflow classifier would also gain real evidence to key on.\n\n⚠️ **Thread 3 (trajectory observability) — still open**: no trajectory-ledger or `trajectory_tui.dart` changes in the head. Required per the issue's observability acceptance: per-attempt trajectory records (HTTP status, provider payload, elapsed, transport facts — pooled reuse / re-dial / token-refresh), expandable in the trajectory TUI, always-on (not FA_CONN_DEBUG-gated). The new forensics-stash work in approval_commands.dart is useful but is not the trajectory surface the issue asks for.\n\nIf 2 and/or 3 are deliberately descoped, please say so explicitly in the PR and in #2470 (owner sign-off), rather than letting the PR close the issue silently."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:dfe0a33f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "Threads 2 and 3 from my review are still unaddressed in the typed commits (dae931e3d9, 7adefde8b5). To avoid #2470 silently closing its full scope, I have split them into a dedicated follow-up: **#2476** (provider error-detail capture at source + per-attempt trajectory observability with TUI display).\n\nPlease either (a) implement threads 2/3 here before merge, or (b) change the PR body's `Closes #2470` to `Refs #2470` and note that the remaining scope lives in #2476. Option (b) is fine by default — the landed parts (probable-overflow classification, auto-compact continuation, re-dial + token invalidation) are valuable on their own and should not be held up."
+    }
+  ]
+}
