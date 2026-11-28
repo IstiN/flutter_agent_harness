@@ -1,4 +1,4 @@
-# setup.ps1 — interactive configuration wizard for the Fa CLI on Windows.
+# setup.ps1 - interactive configuration wizard for the Fa CLI on Windows.
 #             Run this after `install.ps1` to pick a provider, model, API key,
 #             mode and approval policy.
 #
@@ -25,25 +25,25 @@ try {
 $FahConfigDir = Join-Path $env:USERPROFILE ".fah"
 $FahConfigFile = Join-Path $FahConfigDir "config.yaml"
 
-# ── Output helpers ───────────────────────────────────────────────────────────
-function Write-Info($msg) { Write-Host "→ $msg" -ForegroundColor Cyan }
-function Write-Ok($msg) { Write-Host "✔ $msg" -ForegroundColor Green }
+# -- Output helpers -----------------------------------------------------------
+function Write-Info($msg) { Write-Host "-> $msg" -ForegroundColor Cyan }
+function Write-Ok($msg) { Write-Host "[ok] $msg" -ForegroundColor Green }
 function Write-Warn($msg) { Write-Host "! $msg" -ForegroundColor Yellow }
-function Write-Err($msg) { Write-Host "✘ $msg" -ForegroundColor Red }
+function Write-Err($msg) { Write-Host "[x] $msg" -ForegroundColor Red }
 
-# ── Banner ───────────────────────────────────────────────────────────────────
+# -- Banner -------------------------------------------------------------------
 Write-Host ""
-Write-Host "  ███████╗ █████╗       ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ██╗"
-Write-Host "  ██╔════╝██╔══██╗      ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║██║████╗  ██║██╔══██╗██║"
-Write-Host "  █████╗  ███████║█████╗   ██║   █████╗  ██████╔╝██╔████╔██║██║██╔██╗ ██║███████║██║"
-Write-Host "  ██╔══╝  ██╔══██║╚════╝   ██║   ╚════╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║██║"
-Write-Host "  ██║     ██║  ██║         ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║███████╗"
-Write-Host "  ╚═╝     ╚═╝  ╚═╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝"
+Write-Host " ########  ########"
+Write-Host " ##        ##  ##"
+Write-Host " ##        ##  ##"
+Write-Host " ####    ########"
+Write-Host " ##        ##  ##"
+Write-Host " ##        ##  ##"
 Write-Host ""
-Write-Host "  Fa setup wizard — flutter_agent_harness CLI (Windows)"
+Write-Host "  Fa setup wizard - flutter_agent_harness CLI (Windows)"
 Write-Host ""
 
-# ── 1. Verify CLI is installed ───────────────────────────────────────────────
+# -- 1. Verify CLI is installed -----------------------------------------------
 $faCmd = Get-Command fa -ErrorAction SilentlyContinue
 if (-not $faCmd) { $faCmd = Get-Command fah -ErrorAction SilentlyContinue }
 # The installer updates the *user* PATH, which only new logons pick up: run
@@ -76,8 +76,8 @@ if (-not $faCmd) {
 }
 Write-Ok "Found 'fa' on PATH ($($faCmd.Source))."
 
-# ── 2. Interactive configuration ─────────────────────────────────────────────
-# When invoked as `irm ... | iex`, stdin is the script text — skip prompts.
+# -- 2. Interactive configuration ---------------------------------------------
+# When invoked as `irm ... | iex`, stdin is the script text - skip prompts.
 if ([System.Console]::IsInputRedirected) {
     Write-Info "Non-interactive environment detected."
     Write-Host ""
@@ -169,7 +169,7 @@ if ($apiKey) {
     }
 }
 
-# ── 3. Done ──────────────────────────────────────────────────────────────────
+# -- 3. Done ------------------------------------------------------------------
 Write-Host ""
 Write-Ok "Configuration complete."
 Write-Host ""
