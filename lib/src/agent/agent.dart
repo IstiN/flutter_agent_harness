@@ -277,6 +277,7 @@ class Agent {
     this.messageCapRelief,
     this.toolMisuseBreaker,
     this.stuckTool,
+    this.identicalCallExemptTools = const <String>{},
     this.foregroundCall,
     this.finalizeGate = false,
     this.operativeSkills = const [],
@@ -536,6 +537,12 @@ class Agent {
   /// plus the autonomous cancel/retry/convert follow-up. `null` =
   /// unsupervised.
   final StuckToolConfig? stuckTool;
+
+  /// Tools exempt from the identical-call loop guard (gh-2461,
+  /// `agent.identicalCallExemptTools`): intentional watch or polling call
+  /// sites whose byte-identical repetition is the tool's own contract.
+  /// Threaded into every [AgentLoopConfig]; empty by default.
+  final Set<String> identicalCallExemptTools;
 
   /// Foreground tool-call budget (issue #1786), threaded into every
   /// [AgentLoopConfig]: bounds how long a running foreground tool call can
@@ -931,6 +938,7 @@ class Agent {
       windowReserveTokens: windowReserveTokens,
       onTruncatedToolCall: onTruncatedToolCall,
       stuckTool: stuckTool,
+      identicalCallExemptTools: identicalCallExemptTools,
       foregroundCallBudget: foregroundCall,
       foregroundBudgetControls: foregroundBudgetControls,
       pendingSteeringCount: () => _steeringQueue.pendingCount,

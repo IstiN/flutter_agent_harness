@@ -94,6 +94,7 @@ final class TaskExecutor {
     this.contextWindowRegistry,
     this.contextWindowCap,
     this.misuseBreaker = true,
+    this.identicalCallExemptTools = const <String>{},
     this.deliverableRedactor,
     this.resultPublisher,
     this.replyAutoSpill,
@@ -152,6 +153,11 @@ final class TaskExecutor {
   /// The tool-misuse circuit breaker switch (issue #862, default true):
   /// every spawned child agent gets a breaker wired into its loop.
   final bool misuseBreaker;
+
+  /// Tools exempt from the identical-call loop guard (gh-2461,
+  /// `agent.identicalCallExemptTools`): wired into every spawned child —
+  /// a child running a watch command needs the same escape hatch.
+  final Set<String> identicalCallExemptTools;
 
   /// The parent tool pool (already minus any host-hidden tools).
   final List<AgentTool> childTools;
@@ -1311,6 +1317,7 @@ final class TaskExecutor {
       // Issue #862: children get the same misuse circuit breaker as the
       // parent loop — the luna death was a child.
       toolMisuseBreaker: misuseBreaker ? ToolMisuseBreaker() : null,
+      identicalCallExemptTools: identicalCallExemptTools,
     );
     final agent = child;
     // gh-2423 C1: a resumed child keeps its working set (re-read from its
@@ -1613,6 +1620,7 @@ final class TaskExecutor {
       // Issue #862: children get the same misuse circuit breaker as the
       // parent loop — the luna death was a child.
       toolMisuseBreaker: misuseBreaker ? ToolMisuseBreaker() : null,
+      identicalCallExemptTools: identicalCallExemptTools,
     );
     // gh-2423 C1: the child's working set lives in the child's own session.
     child.workingSetStore = _childWorkingSetStore(id);

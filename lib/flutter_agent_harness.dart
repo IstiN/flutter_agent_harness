@@ -11,6 +11,7 @@ export 'src/agent/agent_loop.dart';
 export 'src/agent/agent_tool.dart';
 export 'src/agent/empty_completion.dart';
 export 'src/agent/misuse_breaker.dart';
+export 'src/agent/loop_guard.dart';
 export 'src/agent/image_registry.dart';
 export 'src/agent/image_drop_ux.dart';
 export 'src/agent/image_recovery.dart';
