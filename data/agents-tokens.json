@@ -2854,6 +2854,17 @@
       "requests": 310,
       "source": "",
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "dev",
+      "at": "2026-11-28T20:11:54Z",
+      "prompt": 552910,
+      "completion": 17397,
+      "total": 570307,
+      "cacheRead": 11186624,
+      "requests": 148,
+      "source": "",
+      "model": "glm-5.3-flash"
     }
   ]
 }
