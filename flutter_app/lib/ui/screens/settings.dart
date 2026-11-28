@@ -82,6 +82,7 @@ export 'package:fa_ui/fa_ui.dart'
     show ProviderPreset, ModelIdAutocompleteField, OpenRouterOAuthButton;
 part 'settings_sections.dart';
 part 'settings_flows.dart';
+part 'settings_web_llm.dart';
 
 /// Shared Fa dialog chrome for the few confirmations that remain Material
 /// dialogs. The layout, actions, focus and route results stay unchanged.
@@ -241,6 +242,14 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   /// debounce + stale guard) — extracted into its own controller.
   late EndpointModelsController _models;
 
+  /// Whether [_models] exists yet: initState registers [_onModelIdChanged]
+  /// on the model field BEFORE the controller is constructed (the
+  /// last-connection prefill at the top of initState edits the field and
+  /// fires the listener synchronously), so the listener must not touch the
+  /// late field until construction — a raw read crashes with a
+  /// LateInitializationError mid-prefill (CI: setup_prefill/setup_golden).
+  bool _modelsReady = false;
+
   /// The model field's focus node (drives the quick-select overlay).
   final FocusNode _modelFocusNode = FocusNode();
 
@@ -308,6 +317,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     _urlController.addListener(_models.schedule);
     _keyController.addListener(_models.schedule);
     _models.schedule();
+    _modelsReady = true;
     _oauthCallbackUrl = OpenRouterOAuthCoordinator.instance.platformCallbackUrl;
   }
 
@@ -319,6 +329,20 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
 
   void _onModelIdChanged() {
     if (_visionOverridden) return;
+    // The endpoint's reported modalities win over every heuristic (gh-2466):
+    // the AIN gateway lists ids the name matcher cannot see
+    // (`mistralai/mistral-large-4-0` is text+image), and custom providers
+    // (the AIIN connect flow saves one) previously got NO auto-derive at
+    // all. A reported image modality checks the box; a reported text-only
+    // list unchecks it; an unreported id keeps the hosted-preset heuristic.
+    final reported = _modelsReady
+        ? _models.inputModalities[_modelController.text]
+        : null;
+    if (reported != null) {
+      final endpointSays = reported.contains('image');
+      if (endpointSays != _vision) setState(() => _vision = endpointSays);
+      return;
+    }
     // Only auto-check vision for hosted presets (OpenRouter, Ollama, Gemini)
     // — custom providers like CodeMie have their own models that may not
     // support vision, and the heuristic would falsely enable it.
@@ -447,59 +471,6 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
       default:
         _applyHostedLastConnection(connection);
     }
-  }
-
-  /// Falls the pre-selected WebLLM model back to the default preset when its
-  /// weights were deleted from the cache meanwhile. An engine that cannot
-  /// answer (unavailable platform, blocked storage) leaves the selection
-  /// untouched — "unknown" must not cry "removed".
-  Future<void> _verifyWebLlmCache(WebLlmModelPreset preset) async {
-    final engine = widget.webLlmEngine ?? createWebLlmService();
-    if (!engine.isAvailable) return;
-    WebLlmCacheInfo? info;
-    try {
-      info = await engine.modelCacheInfo(preset.id);
-    } on Object {
-      return;
-    }
-    if (info == null || info.cached) return;
-    if (!mounted) return;
-    // The user moved on while the query ran — don't yank their selection.
-    if (_selection != ProviderPreset.webllm || _webllmModel.id != preset.id) {
-      return;
-    }
-    setState(() {
-      _webllmModel = webLlmModelPresets.first;
-      _staleModelNote = context.l10n.settingsStaleModelCache(
-        preset.displayName,
-      );
-    });
-  }
-
-  /// The transformers.js variant of [_verifyWebLlmCache].
-  Future<void> _verifyTransformersJsCache(
-    TransformersJsModelPreset preset,
-  ) async {
-    final engine = widget.transformersJsEngine ?? createTransformersJsService();
-    if (!engine.isAvailable) return;
-    TransformersJsCacheInfo? info;
-    try {
-      info = await engine.modelCacheInfo(preset.id);
-    } on Object {
-      return;
-    }
-    if (info == null || info.cached) return;
-    if (!mounted) return;
-    if (_selection != ProviderPreset.transformersJs ||
-        _transformersJsModel.id != preset.id) {
-      return;
-    }
-    setState(() {
-      _transformersJsModel = transformersJsModelPresets.first;
-      _staleModelNote = context.l10n.settingsStaleModelCache(
-        preset.displayName,
-      );
-    });
   }
 
   void _selectProvider(Object value) {

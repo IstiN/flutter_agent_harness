@@ -141,7 +141,11 @@ String _textOf(MessageRecord record) {
 /// The executor + manager + JSONL session wiring, mirroring how
 /// `AgentCli` wires `TaskToolConfig`.
 final class _Wiring {
-  _Wiring({int toolTurns = 0, List<String> steerTexts = const []}) {
+  _Wiring({
+    int toolTurns = 0,
+    List<String> steerTexts = const [],
+    int failPinAppends = 0,
+  }) {
     manager = SubagentManager(
       parentSessionId: 'parent-session',
       clock: () => _fakeTime,
@@ -163,17 +167,25 @@ final class _Wiring {
       semaphore: Semaphore(4),
       store: AgentOutputStore(),
       subagentManager: manager,
-      childSessionFactory: (parentId, childId) => repo.create(
-        JsonlSessionCreateOptions(
-          cwd: '/work',
-          metadata: {
-            'agent': 'subagent',
-            'id': childId,
-            'parent': parentId,
-            'model': _model.id,
-          },
-        ),
-      ),
+      childSessionFactory: (parentId, childId) async {
+        final session = await repo.create(
+          JsonlSessionCreateOptions(
+            cwd: '/work',
+            metadata: {
+              'agent': 'subagent',
+              'id': childId,
+              'parent': parentId,
+              'model': _model.id,
+            },
+          ),
+        );
+        return failPinAppends > 0
+            ? session.decorateStorage(
+                (storage) =>
+                    _FlakyPinStorage(storage, failures: failPinAppends),
+              )
+            : session;
+      },
       childSessionOpener: jsonlChildSessionOpener(env),
     );
   }
@@ -213,6 +225,54 @@ final class _Wiring {
     await executor.settleChildFlushForTest(id);
     return sessionRecords(id);
   }
+}
+
+/// A [SessionStorage] that fails the first [failures] `segment_pin`
+/// appends (the disk-full shape: the MESSAGE records landed, the pin did
+/// not) and succeeds after — the pin-flush retry contract's fixture.
+final class _FlakyPinStorage implements SessionStorage {
+  _FlakyPinStorage(this._inner, {required this.failures});
+
+  final SessionStorage _inner;
+  int failures;
+
+  @override
+  Future<void> appendEntry(SessionRecord record) async {
+    if (record is SegmentPinRecord && failures > 0) {
+      failures--;
+      throw Exception('injected disk-full on the segment_pin append');
+    }
+    return _inner.appendEntry(record);
+  }
+
+  @override
+  Future<SessionMetadata> getMetadata() => _inner.getMetadata();
+
+  @override
+  Future<String?> getLeafId() => _inner.getLeafId();
+
+  @override
+  Future<void> setLeafId(String? leafId) => _inner.setLeafId(leafId);
+
+  @override
+  Future<String> createEntryId() => _inner.createEntryId();
+
+  @override
+  Future<SessionRecord?> getEntry(String id) => _inner.getEntry(id);
+
+  @override
+  Future<List<SessionRecord>> findEntries(String type) =>
+      _inner.findEntries(type);
+
+  @override
+  Future<String?> getLabel(String id) => _inner.getLabel(id);
+
+  @override
+  Future<List<SessionRecord>> getPathToRoot(String? leafId) =>
+      _inner.getPathToRoot(leafId);
+
+  @override
+  Future<List<SessionRecord>> getEntries() => _inner.getEntries();
 }
 
 /// N scripted tool turns followed by a final text turn.
@@ -406,6 +466,93 @@ void main() {
       'deterministic hide pass never buries the pinned records',
       () => _itPinsSurviveDeterministicHide(),
     );
+  });
+
+  group('C2 pin-flush failure: commit-on-success, silent '
+      '(gh-2492 review round 1)', () {
+    test('a failed pin append leaves the ids pending — the next flush '
+        'genuinely retries and no release names an unpinned id', () async {
+      final w = _Wiring(
+        toolTurns: 3,
+        steerTexts: ['steer one'],
+        failPinAppends: 1,
+      );
+      final result = await w.spawn('retry', 'grow across a failed pin');
+      expect(result.status, TaskSpawnStatus.completed, reason: result.error);
+      await w.settle('retry');
+      final records = await w.settledRecords('retry');
+      final messages = _messageRecords(records);
+      final promptRecord = messages.firstWhere(
+        (record) =>
+            record.message is UserMessage &&
+            !_textOf(record).startsWith('from '),
+      );
+      final steeringRecords = messages
+          .where((record) => _textOf(record).startsWith('from parent-main:'))
+          .toList();
+      expect(
+        steeringRecords.length,
+        greaterThanOrEqualTo(2),
+        reason: 'the fixture needs a delivery AFTER the failed flush cycle',
+      );
+      final pinned = _pinnedIds(records);
+      expect(
+        pinned,
+        contains(promptRecord.id),
+        reason:
+            'the prompt pin survives the failed cycle via the retry — '
+            'the resolved ids must not be consumed by a failed flush',
+      );
+      expect(pinned, contains(steeringRecords.last.id));
+      // Release integrity: every `pinned: false` event in the file names
+      // ids a PRIOR pin event actually pinned. A release for ids whose
+      // pin append never landed is the failed-flush bug's signature.
+      final pinnedSoFar = <String>{};
+      for (final record in records) {
+        if (record is! SegmentPinRecord) continue;
+        if (record.pinned) {
+          pinnedSoFar.addAll(record.recordIds);
+        } else {
+          for (final id in record.recordIds) {
+            expect(
+              pinnedSoFar,
+              contains(id),
+              reason: 'a release must only ever name pinned ids',
+            );
+          }
+        }
+      }
+    });
+
+    test('the pin-flush failure path stays silent — no bare print '
+        '(gh-1510 precedent)', () async {
+      final printed = <String>[];
+      await runZoned(
+        () async {
+          final w = _Wiring(toolTurns: 1, failPinAppends: 1);
+          final result = await w.spawn('silent', 'grow behind a failed pin');
+          expect(
+            result.status,
+            TaskSpawnStatus.completed,
+            reason: result.error,
+          );
+          await w.settle('silent');
+          await w.settledRecords('silent');
+        },
+        zoneSpecification: ZoneSpecification(
+          print: (self, parent, zone, line) {
+            printed.add(line);
+          },
+        ),
+      );
+      expect(
+        printed,
+        isEmpty,
+        reason:
+            'the pin-flush failure path must not print raw to stdout '
+            '(TUI mode: stdout IS the terminal, gh-1510)',
+      );
+    });
   });
 }
 

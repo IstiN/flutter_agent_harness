@@ -29,6 +29,7 @@ final class LastConnection {
     this.baseUrl,
     this.webllmPresetId,
     this.transformersJsPresetId,
+    this.supportsImages,
   });
 
   /// Restores a record from its JSON form (see [toJson]). Unknown fields
@@ -40,6 +41,7 @@ final class LastConnection {
     baseUrl: json['baseUrl'] as String?,
     webllmPresetId: json['webllmPresetId'] as String?,
     transformersJsPresetId: json['transformersJsPresetId'] as String?,
+    supportsImages: json['supportsImages'] as bool?,
   );
 
   /// Captures a successful [AgentConfig]. The API key is dropped here — it
@@ -54,6 +56,7 @@ final class LastConnection {
     transformersJsPresetId: config.providerKind == transformersJsProviderKind
         ? config.modelId
         : null,
+    supportsImages: config.supportsImages,
   );
 
   /// [AgentConfig.providerKind] of the connection (`openai-completions`,
@@ -73,6 +76,15 @@ final class LastConnection {
   /// Selected transformers.js preset (only for [transformersJsProviderKind]).
   final String? transformersJsPresetId;
 
+  /// The endpoint's persisted vision verdict (gh-2466 review): what the
+  /// `/models` input modalities said about [modelId] when the connection
+  /// was saved — true *or* false, so the boot restore never re-derives a
+  /// heuristic-only answer for an id the name matcher cannot see
+  /// (`mistralai/mistral-large-4-0` is text+image). `null` for legacy
+  /// records (the field predates persistence) — the boot heuristic keeps
+  /// owning those. Non-secret: a capability bit, not a credential.
+  final bool? supportsImages;
+
   /// JSON form persisted in the store file; absent fields stay absent (no
   /// explicit nulls).
   Map<String, dynamic> toJson() => {
@@ -82,6 +94,7 @@ final class LastConnection {
     if (webllmPresetId != null) 'webllmPresetId': webllmPresetId,
     if (transformersJsPresetId != null)
       'transformersJsPresetId': transformersJsPresetId,
+    if (supportsImages != null) 'supportsImages': supportsImages,
   };
 }
 

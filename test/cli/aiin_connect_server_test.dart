@@ -111,6 +111,26 @@ void main() {
     expect(statussJoined(statuses), isNot(contains('sk-aiin-')));
   });
 
+  test('runAiinConnectCliFlow threads the provider hint into the login URL '
+      '(gh-2466)', () async {
+    final client = mockAiinBackend();
+    Uri? loginUrl;
+    final redirect = fakeBrowser(code: 'c-hint');
+    final result = await runAiinConnectCliFlow(
+      onStatus: (_) {},
+      shouldOpenBrowserFn: () => true,
+      openBrowserFn: (url) async {
+        loginUrl = Uri.parse(url);
+        return redirect(url);
+      },
+      client: client,
+      provider: 'github',
+    );
+    expect(result, isNotNull);
+    expect(loginUrl!.host, 'auth.aiin.by');
+    expect(loginUrl!.queryParameters['provider'], 'github');
+  });
+
   test('onCallback fires when the callback lands (the mobile auth-session '
       'sheet dismisses here)', () async {
     var dismissed = false;

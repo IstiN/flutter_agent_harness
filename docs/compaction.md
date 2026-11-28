@@ -719,9 +719,17 @@ cycles × ~280 records).
   model text, no injection surface. The projection renders the batch as
   ONE marker at its carrier — `<label> [expand a-b]` — instead of a
   per-record marker run. The engine-marker predicate's label budget
-  grows to the engine's own shapes (96 chars / 16 words); model-written
-  hide labels stay at the tight `sanitizeHideLabel` budget (48 chars /
-  6 words) — a sanitizer output always fits the predicate.
+  grows to the engine's own shapes (96 chars / 20 words — the shared
+  `markerLabelMaxChars` / `markerLabelMaxWords` constants in
+  `structured/markers.dart`); model-written hide labels stay at the
+  tight `sanitizeHideLabel` budget (48 chars / 6 words) — a sanitizer
+  output always fits the predicate. The histogram label caps AT that
+  budget at build time: `toolHistogramLabel` drops histogram entries —
+  least significant first — then the time span, minus the room the
+  collapsed pointer's count line (`999 records hidden · `) reserves, so
+  BOTH persisted shapes always resolve as markers (gh-2492 review
+  round 1; an uncapped label stopped resolving and escaped the ledger
+  budget).
 - **C4 — render time.** Still, five passes leave five pointers. The
   dedicated ledger budget (`hiddenLedgerBudgetTokens` = 1000, over ALL
   hidden markers of ONE request) collapses OLDEST-FIRST: each merge

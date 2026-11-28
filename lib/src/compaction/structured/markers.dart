@@ -179,8 +179,13 @@ final RegExp _expandPointerPattern = RegExp(r'\[expand \d+(?:-\d+)?\]\s*$');
 /// `sanitizeHideLabel` budget (48 chars / 6 words); a sanitizer output
 /// always fits this predicate (a subset), so tool-pairing repair and the
 /// operative-pin detector keep resolving every label the engine renders.
-const int _markerLabelMaxChars = 96;
-const int _markerLabelMaxWords = 20;
+///
+/// Public since gh-2492 review round 1: the label builders
+/// (`toolHistogramLabel` / `hideBatchLabels` in `ledger_budget.dart`)
+/// cap against the SAME figures at build time — one source of truth, so
+/// the builder cannot drift out of the predicate.
+const int markerLabelMaxChars = 96;
+const int markerLabelMaxWords = 20;
 
 bool _isEngineExpandPointer(String body) {
   final match = _expandPointerPattern.firstMatch(body);
@@ -193,8 +198,8 @@ bool _isEngineExpandPointer(String body) {
   final label = head.trim();
   if (label.isEmpty) return true;
   if (label.contains('[') || label.contains(']')) return false;
-  return label.length <= _markerLabelMaxChars &&
-      label.split(RegExp(r'\s+')).length <= _markerLabelMaxWords;
+  return label.length <= markerLabelMaxChars &&
+      label.split(RegExp(r'\s+')).length <= markerLabelMaxWords;
 }
 
 /// Tool-pairing repair, the operative-pin detector and the image registry

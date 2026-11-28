@@ -2016,6 +2016,8 @@ class AgentCli {
   /// (same source as [_modelContextWindows]); drives automatic `maxTokens`
   /// correction so the conservative catalog floor stops truncating answers.
   Map<String, int> _modelMaxTokens = const {};
+  // Endpoint-reported input modalities (gh-2466; see _switchInputModalities).
+  Map<String, List<String>> _modelInputModalities = const {};
 
   /// Whether a run is currently in flight. True from the moment a run is
   /// STARTED (pre-flight compaction runs before the first streamed byte) —

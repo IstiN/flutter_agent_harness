@@ -96,6 +96,30 @@ LedgerMarkerRef? ledgerMarkerRef(int index, Message message) {
   if (!isCompactionMarkerText(text)) return null;
   if (text.contains('·ckpt·') || text.contains(':ckpt·')) return null;
   final tokens = estimateTokens(message);
+  // A per-record hidden marker: `[seq:hidden·kind·…]` (record tag
+  // prefix tolerated). Checked BEFORE the expand branch: the marker's
+  // bounded preview carries the record's raw first line, and genuine
+  // content quotes `[expand a-b]` pointers (markers.dart) — matching
+  // the pointer first would plan the marker as covering the QUOTED span
+  // instead of the record it names. A consolidated/fold marker never
+  // starts with a per-record prefix, so the fall-through stays safe
+  // (gh-2492 review round 1).
+  final hidden = RegExp(
+    r'(?:^m\d+ )\[(\d+):hidden·|^\[(\d+):hidden·',
+  ).firstMatch(text);
+  final seq = hidden == null
+      ? null
+      : int.parse(hidden.group(1) ?? hidden.group(2)!);
+  if (seq != null) {
+    return LedgerMarkerRef(
+      index: index,
+      message: message,
+      firstSeq: seq,
+      lastSeq: seq,
+      hiddenCount: 1,
+      tokens: tokens,
+    );
+  }
   // A consolidated range pointer: `<label> [expand a-b]` — the whole
   // span is the marker's unit.
   final expand = RegExp(r'\[expand (\d+)(?:-(\d+))?\]').firstMatch(text);
@@ -111,23 +135,7 @@ LedgerMarkerRef? ledgerMarkerRef(int index, Message message) {
       tokens: tokens,
     );
   }
-  // A per-record hidden marker: `[seq:hidden·kind·…]` (record tag
-  // prefix tolerated).
-  final hidden = RegExp(
-    r'(?:^m\d+ )\[(\d+):hidden·|^\[(\d+):hidden·',
-  ).firstMatch(text);
-  final seq = hidden == null
-      ? null
-      : int.parse(hidden.group(1) ?? hidden.group(2)!);
-  if (seq == null) return null;
-  return LedgerMarkerRef(
-    index: index,
-    message: message,
-    firstSeq: seq,
-    lastSeq: seq,
-    hiddenCount: 1,
-    tokens: tokens,
-  );
+  return null;
 }
 
 /// Plans the oldest-first collapse of [markers] (the request's ledger
@@ -136,6 +144,14 @@ LedgerMarkerRef? ledgerMarkerRef(int index, Message message) {
 /// collapsed pointer at the first marker's position; repeat until under
 /// budget or no adjacent pair remains (a request whose markers all sit
 /// alone keeps its detail — the budget is best-effort bounded).
+///
+/// Adjacency is REAL (gh-2492 review round 1): markers merge only
+/// within a contiguous EMISSION run — `ref[i+1].index == ref[i].index +
+/// 1`. A visible record, a checkpoint marker or a dropped-fold note
+/// between two markers ends the run (a run of one never merges), so a
+/// collapsed door never spans content it does not stand for — the
+/// "no visible record between" invariant the docstring and
+/// `docs/compaction.md` (C4) promise.
 LedgerCollapsePlan planLedgerBudget(
   List<LedgerMarkerRef> markers, {
   int budget = hiddenLedgerBudgetTokens,
@@ -143,56 +159,64 @@ LedgerCollapsePlan planLedgerBudget(
 }) {
   final replace = <int, Message>{};
   final remove = <int>{};
-  // Working copy: the plan mutates spans locally before committing.
-  final spans = [
-    for (final marker in markers)
-      _Span(
-        firstSeq: marker.firstSeq,
-        lastSeq: marker.lastSeq,
-        hiddenCount: marker.hiddenCount,
-        tokens: marker.tokens,
-        index: marker.index,
-        message: marker.message,
-      ),
-  ];
-  int total() => spans.fold(0, (sum, span) => sum + span.tokens);
-  while (total() > budget) {
-    // The oldest adjacent pair: first two spans that sit next to each
-    // other in the request (their original positions are consecutive
-    // among the SURVIVING markers — no visible record between).
-    final merged = spans.isEmpty;
-    if (merged) break;
-    var pairStart = -1;
-    for (var i = 0; i + 1 < spans.length; i++) {
-      if (spans[i].mergeable && spans[i + 1].mergeable) {
-        pairStart = i;
-        break;
-      }
-    }
-    if (pairStart < 0) break;
-    final first = spans[pairStart];
-    final second = spans[pairStart + 1];
-    final label = labelFor?.call(first.firstSeq, second.lastSeq) ?? '';
-    replace[first.index] = UserMessage.text(
-      collapsedLedgerMarkerText(
-        hiddenCount: first.hiddenCount + second.hiddenCount,
-        fromSeq: first.firstSeq,
-        toSeq: second.lastSeq,
-        label: label,
-      ),
-      timestamp: _timestampOf(first.message),
+  // Contiguous emission runs, planned separately (adjacency above).
+  final runs = <List<_Span>>[];
+  for (final marker in markers) {
+    final span = _Span(
+      firstSeq: marker.firstSeq,
+      lastSeq: marker.lastSeq,
+      hiddenCount: marker.hiddenCount,
+      tokens: marker.tokens,
+      index: marker.index,
+      message: marker.message,
     );
-    remove.add(second.index);
-    spans
-      ..[pairStart] = _Span(
-        firstSeq: first.firstSeq,
-        lastSeq: second.lastSeq,
-        hiddenCount: first.hiddenCount + second.hiddenCount,
-        tokens: estimateTokens(replace[first.index]!),
-        index: first.index,
-        message: replace[first.index],
-      )
-      ..removeAt(pairStart + 1);
+    if (runs.isNotEmpty && marker.index == runs.last.last.index + 1) {
+      runs.last.add(span);
+    } else {
+      runs.add([span]);
+    }
+  }
+  int total(List<_Span> spans) =>
+      spans.fold(0, (sum, span) => sum + span.tokens);
+  for (final spans in runs) {
+    while (total(spans) > budget) {
+      // The oldest adjacent pair: first two spans that sit next to each
+      // other in the request (their original positions are consecutive
+      // among the SURVIVING markers — no visible record between).
+      final merged = spans.isEmpty;
+      if (merged) break;
+      var pairStart = -1;
+      for (var i = 0; i + 1 < spans.length; i++) {
+        if (spans[i].mergeable && spans[i + 1].mergeable) {
+          pairStart = i;
+          break;
+        }
+      }
+      if (pairStart < 0) break;
+      final first = spans[pairStart];
+      final second = spans[pairStart + 1];
+      final label = labelFor?.call(first.firstSeq, second.lastSeq) ?? '';
+      replace[first.index] = UserMessage.text(
+        collapsedLedgerMarkerText(
+          hiddenCount: first.hiddenCount + second.hiddenCount,
+          fromSeq: first.firstSeq,
+          toSeq: second.lastSeq,
+          label: label,
+        ),
+        timestamp: _timestampOf(first.message),
+      );
+      remove.add(second.index);
+      spans
+        ..[pairStart] = _Span(
+          firstSeq: first.firstSeq,
+          lastSeq: second.lastSeq,
+          hiddenCount: first.hiddenCount + second.hiddenCount,
+          tokens: estimateTokens(replace[first.index]!),
+          index: first.index,
+          message: replace[first.index],
+        )
+        ..removeAt(pairStart + 1);
+    }
   }
   return LedgerCollapsePlan(replace: replace, remove: remove);
 }
@@ -241,9 +265,13 @@ String collapsedLedgerMarkerText({
 
 /// The C5 per-range label over [records] (the covered session records):
 /// the tool-name histogram (`bash ×61 · read ×40`) capped at
-/// [toolHistogramMaxEntries], then the time span (`12:41–13:44`).
-/// Engine-generated only — no model text, no injection surface. Empty
-/// when there is nothing to name (the caller renders the bare pointer).
+/// [toolHistogramMaxEntries], then the time span (`12:41–13:44`), all
+/// inside the marker-predicate label budget
+/// ([markerLabelMaxChars]/[markerLabelMaxWords] — long tool names drop
+/// histogram entries, then the span, so the engine's own markers always
+/// resolve; gh-2492 review round 1). Engine-generated only — no model
+/// text, no injection surface. Empty when there is nothing to name (the
+/// caller renders the bare pointer).
 String toolHistogramLabel(List<SessionRecord?> records) {
   final counts = <String, int>{};
   DateTime? first;
@@ -277,10 +305,44 @@ String toolHistogramLabel(List<SessionRecord?> records) {
   for (final name in names.take(toolHistogramMaxEntries)) {
     parts.add('$name ×${counts[name]}');
   }
-  if (first != null && last != null) {
-    parts.add('${_hhmm(first)}–${_hhmm(last)}');
+  final span = (first != null && last != null)
+      ? '${_hhmm(first)}–${_hhmm(last)}'
+      : null;
+  return _capEngineLabel(parts, span);
+}
+
+/// The room the collapsed ledger marker's count line reserves before the
+/// label: the marker predicate must accept the FULL head, and
+/// `999 records hidden · ` (21 chars / 4 words) is the worst case the
+/// count can add. Capping the label under this reserve keeps BOTH
+/// persisted shapes — `<label> [expand a-b]` and
+/// `N records hidden · <label> [expand a-b]` — resolving as markers
+/// (gh-2492 review round 1).
+const int _collapsedHeadReserveChars = '999 records hidden · '.length;
+const int _collapsedHeadReserveWords = 4;
+
+/// Caps the built label at the marker-predicate budget
+/// ([markerLabelMaxChars]/[markerLabelMaxWords] in `markers.dart`, minus
+/// the collapsed count-line reserve): drops histogram entries — least
+/// significant first — then the time span, until the head both persisted
+/// shapes render fits. The share of entries a label keeps shrinks with
+/// the names' length; the expandable set never depends on the label. An
+/// empty result renders the bare pointer (the caller's documented
+/// no-label shape).
+String _capEngineLabel(List<String> entries, String? span) {
+  bool fits(List<String> candidate) {
+    final label = candidate.join(' · ');
+    return label.length <= markerLabelMaxChars - _collapsedHeadReserveChars &&
+        label.split(RegExp(r'\s+')).length <=
+            markerLabelMaxWords - _collapsedHeadReserveWords;
   }
-  return parts.join(' · ');
+
+  List<String> shaped() => [...entries, ?span];
+  while (entries.isNotEmpty && !fits(shaped())) {
+    entries.removeLast();
+  }
+  if (fits(shaped())) return shaped().join(' · ');
+  return '';
 }
 
 String _hhmm(DateTime at) {

@@ -245,4 +245,221 @@ void main() {
       expect(result.messages.length, 1);
     });
   });
+
+  group('ledgerMarkerRef: per-record prefix vs a preview-quoted pointer '
+      '(gh-2492 review round 1)', () {
+    test('a per-record marker whose preview quotes an expand pointer '
+        'parses as its OWN seq', () {
+      // The preview quotes a genuine pointer literal (markers.dart: docs
+      // and skill texts quote `[expand 3-140]`) — the per-record prefix
+      // must win over the expand branch, or the marker plans as
+      // covering 3–140 while it actually stands for seq 142.
+      final text = hiddenMarker(
+        seq: 142,
+        kind: 'user',
+        tokens: 1200,
+        preview: 'see the fold quoted as [expand 3-140] above',
+      );
+      expect(text, startsWith('[142:hidden·user·'));
+      expect(text, contains('[expand 3-140]'));
+      final ref = ledgerMarkerRef(0, UserMessage.text(text));
+      expect(ref, isNotNull);
+      expect(ref!.firstSeq, 142, reason: 'the marker names seq 142');
+      expect(ref.lastSeq, 142);
+      expect(ref.hiddenCount, 1);
+    });
+
+    test('a merged pair that includes the preview-quoted marker emits a '
+        'door for the TRUE span', () {
+      final quoted = UserMessage.text(
+        hiddenMarker(
+          seq: 142,
+          kind: 'user',
+          tokens: 1200,
+          preview: 'see the fold quoted as [expand 3-140] above',
+        ),
+      );
+      final plain = UserMessage.text(
+        hiddenMarker(seq: 143, kind: 'user', tokens: 100),
+      );
+      final plan = planLedgerBudget([
+        ledgerMarkerRef(0, quoted)!,
+        ledgerMarkerRef(1, plain)!,
+      ], budget: 1);
+      expect(plan.isEmpty, isFalse);
+      final merged = plan.replace[0] as UserMessage;
+      expect(
+        merged.content as String,
+        contains('[expand 142-143]'),
+        reason: 'the door must name the records the markers stand for',
+      );
+      expect(merged.content as String, isNot(contains('[expand 3-')));
+    });
+
+    test('a consolidated pointer still parses through the expand branch', () {
+      final ref = ledgerMarkerRef(
+        0,
+        UserMessage.text('fold note [expand 9-12]'),
+      );
+      expect(ref, isNotNull);
+      expect(ref!.firstSeq, 9);
+      expect(ref.lastSeq, 12);
+      expect(ref.hiddenCount, 4);
+    });
+  });
+
+  group('collapse merges only true emission-adjacent markers '
+      '(gh-2492 review round 1)', () {
+    test('a visible record between two markers blocks the merge across '
+        'the gap', () {
+      final markers = [
+        UserMessage.text(hiddenMarker(seq: 5, kind: 'user', tokens: 100)),
+        UserMessage.text('a visible user record sits here (never hidden)'),
+        UserMessage.text(hiddenMarker(seq: 7, kind: 'user', tokens: 100)),
+        UserMessage.text(
+          checkpointMarkerHeader(
+            startSeq: 9,
+            endSeq: 10,
+            coveredTokens: 100,
+            textTokens: 40,
+            coversRanges: '9,10',
+          ),
+        ),
+        UserMessage.text(hiddenMarker(seq: 12, kind: 'user', tokens: 100)),
+      ];
+      final result = collapseLedgerMarkers(
+        markers,
+        budget: 10,
+        labelFor: (from, to) => '',
+      );
+      expect(
+        result.replacementCount,
+        0,
+        reason: 'every marker sits in a run of one — runs of one never merge',
+      );
+      expect(result.messages.length, markers.length);
+      expect(
+        result.messages.map((m) => m.toJson()),
+        markers.map((m) => m.toJson()),
+        reason: 'byte-identical markers — nothing collapsed across the gap',
+      );
+    });
+
+    test('markers inside ONE contiguous run still merge oldest-first', () {
+      final markers = [
+        UserMessage.text(hiddenMarker(seq: 5, kind: 'user', tokens: 100)),
+        UserMessage.text(hiddenMarker(seq: 7, kind: 'user', tokens: 100)),
+        UserMessage.text(hiddenMarker(seq: 9, kind: 'user', tokens: 100)),
+      ];
+      final result = collapseLedgerMarkers(
+        markers,
+        budget: 10,
+        labelFor: (from, to) => '',
+      );
+      // The whole run folds (the loop merges until under budget): ONE
+      // working pointer naming only the run's own span.
+      expect(result.replacementCount, greaterThanOrEqualTo(1));
+      expect(result.messages, hasLength(1));
+      final head = result.messages.first as UserMessage;
+      expect((head.content as String), contains('[expand 5-9]'));
+    });
+  });
+
+  group('the engine label stays inside the marker-predicate budget '
+      '(gh-2492 review round 1)', () {
+    // This repo's own MCP-style names: three histogram entries blow
+    // past the 96-char predicate budget, and the engine's own markers
+    // stop resolving as markers (the ledger budget under-counts; the
+    // pin/image renumbering boundaries are missed).
+    const longNames = [
+      'mcp__flutter_agent_harness__codegraph_callers',
+      'mcp__flutter_agent_harness__codegraph_impact_analysis',
+      'mcp__flutter_agent_harness__session_search_tool',
+    ];
+
+    List<SessionRecord> recordsWithLongNames() => [
+      for (var i = 0; i < longNames.length; i++)
+        _msgRecord(
+          'r$i',
+          _assistantWithTools(id: 'c$i', tools: [longNames[i]]),
+          at: DateTime.utc(2026, 11, 28, 12, 41 + i),
+        ),
+    ];
+
+    test('toolHistogramLabel caps at the marker-predicate budget', () {
+      final label = toolHistogramLabel(recordsWithLongNames());
+      expect(label.length, lessThanOrEqualTo(markerLabelMaxChars));
+      expect(
+        label.split(RegExp(r'\s+')).length,
+        lessThanOrEqualTo(markerLabelMaxWords),
+      );
+    });
+
+    test('the label cap leaves room for the collapsed count line — BOTH '
+        'persisted shapes resolve as markers', () {
+      final label = toolHistogramLabel(recordsWithLongNames());
+      // The persisted consolidated marker (head = the label alone).
+      expect(
+        isCompactionMarkerText(
+          consolidatedHideMarker(from: 3, to: 5, label: label),
+        ),
+        isTrue,
+        reason: 'the engine-consolidated marker itself must resolve',
+      );
+      // The collapsed ledger pointer (worst-case `999 records hidden · `
+      // head rides the same budget).
+      expect(
+        isCompactionMarkerText(
+          collapsedLedgerMarkerText(
+            hiddenCount: 999,
+            fromSeq: 3,
+            toSeq: 5,
+            label: label,
+          ),
+        ),
+        isTrue,
+        reason: 'the engine-collapsed pointer itself must resolve',
+      );
+    });
+
+    test('the capped marker parses — the ledger budget counts it', () {
+      final label = toolHistogramLabel(recordsWithLongNames());
+      final ref = ledgerMarkerRef(
+        0,
+        UserMessage.text(consolidatedHideMarker(from: 3, to: 5, label: label)),
+      );
+      expect(ref, isNotNull, reason: 'an unparsable marker escapes the cap');
+      expect(ref!.firstSeq, 3);
+      expect(ref.lastSeq, 5);
+    });
+
+    test('hideBatchLabels rides the same cap', () {
+      final labels = hideBatchLabels([
+        'a',
+        'b',
+      ], recordAt: (id) => recordsWithLongNames()[id == 'a' ? 0 : 1]);
+      expect(labels, isNotEmpty);
+      for (final label in labels.values) {
+        expect(label.length, lessThanOrEqualTo(markerLabelMaxChars));
+      }
+    });
+
+    test('a tight label renders unchanged (the cap is a no-op under it)', () {
+      final label = toolHistogramLabel([
+        _msgRecord(
+          'r1',
+          _assistantWithTools(id: 'c1', tools: ['bash']),
+          at: DateTime.utc(2026, 11, 28, 12, 41),
+        ),
+        _msgRecord(
+          'r2',
+          _assistantWithTools(id: 'c2', tools: ['bash', 'read']),
+          at: DateTime.utc(2026, 11, 28, 13, 44),
+        ),
+      ]);
+      expect(label, contains('bash ×2'));
+      expect(label, contains('read ×1'));
+      expect(label, contains('12:41–13:44'));
+    });
+  });
 }

@@ -2513,9 +2513,14 @@ final class TaskExecutor {
 
   /// gh-2492 C2: the pin writes a completed flush cycle owes — release
   /// the previous steering delivery's records, then pin the prompt (once)
-  /// and the newest delivery's records. Best-effort: a failed pin append
-  /// leaves the pins pending (the next flush retries; the session is
-  /// untouched).
+  /// and the newest delivery's records. Commit-on-success (gh-2492
+  /// review round 1): the resolved ids and [pinnedSteeringRecordIds]
+  /// advance ONLY after both appends landed — a failed append leaves
+  /// everything pending, so the next flush genuinely retries (the
+  /// docstring's retry promise is real), and no release ever rides
+  /// ahead of the pins it pairs with. Silent like the transcript catch
+  /// above: a failed flush must not affect the child's result, and in
+  /// TUI mode stdout IS the terminal (gh-1510 — no bare print here).
   Future<void> _flushChildSteeringPins(String id, Session session) async {
     final pins = _childSteeringPins[id];
     if (pins == null) return;
@@ -2527,10 +2532,10 @@ final class TaskExecutor {
       if (pin.isNotEmpty) {
         await session.appendSegmentPin(recordIds: pin, pinned: true);
       }
-    } on Object catch (error) {
-      // Best-effort by contract.
-      // ignore: avoid_print
-      print('PIN FLUSH FAILED: release=$release pin=$pin error=$error');
+      pins.commitFlush();
+    } on Object {
+      // Best-effort by contract — the retry promise is kept by leaving
+      // the resolved ids pending (commit-on-success).
     }
   }
 
@@ -2642,23 +2647,39 @@ final class _ChildSteeringPinState {
   /// readability of the file — correctness rides the release-before-pin
   /// pair staying adjacent). Unresolved pending targets stay pending —
   /// they resolve on a later flush cycle, never expire.
+  ///
+  /// Read-only (gh-2492 review round 1): the resolved lists and
+  /// [pinnedSteeringRecordIds] advance ONLY in [commitFlush], which the
+  /// flush calls after BOTH appends landed — a failed append leaves
+  /// everything pending, so the next flush genuinely retries and the
+  /// resolved ids are never consumed by a failed cycle.
   ({List<String> release, List<String> pin}) takeForFlush() {
-    // Copy BEFORE reset(): the resolved lists are mutated in place, and an
-    // aliased return would spread an already-cleared list (the steering
-    // pins would silently vanish between cycles).
+    // Copy: the caller's result must not alias the live lists (they keep
+    // growing until commitFlush clears them).
     final steeringPin = List.of(_pinOnSteering.recordIds);
     final promptPin = List.of(_pinOnFlush.recordIds);
-    _pinOnFlush.reset();
-    _pinOnSteering.reset();
     // A release rides a new steering pin only — the release-then-pin pair
     // swaps one pinned steering delivery for the next. A standalone
     // release would unpin the newest steering with nothing replacing it.
     if (steeringPin.isEmpty) {
       return (release: const [], pin: promptPin);
     }
-    final release = pinnedSteeringRecordIds;
-    pinnedSteeringRecordIds = steeringPin;
-    return (release: release, pin: [...promptPin, ...steeringPin]);
+    return (
+      release: List.of(pinnedSteeringRecordIds),
+      pin: [...promptPin, ...steeringPin],
+    );
+  }
+
+  /// Consumes a SUCCESSFUL flush cycle: swaps the pinned steering
+  /// delivery to the one just written and clears the resolved lists. The
+  /// flush calls this only after both pin appends succeeded — a failed
+  /// append leaves the resolved ids pending (the next flush retries).
+  void commitFlush() {
+    if (_pinOnSteering.recordIds.isNotEmpty) {
+      pinnedSteeringRecordIds = List.of(_pinOnSteering.recordIds);
+    }
+    _pinOnFlush.reset();
+    _pinOnSteering.reset();
   }
 }
 

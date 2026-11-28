@@ -16,5 +16,7 @@ issue: 2492
   the newest run keeps its per-record detail, the expandable set never
   changes, and a rebuild derives the identical view from the file (no
   rewrite). The engine-marker predicate's label budget grows to the engine's
-  own shapes (96 chars / 16 words); model-written labels stay at the tight
-  sanitizer budget.
+  own shapes (96 chars / 20 words), and the histogram label caps AT that
+  budget at build time (long tool names drop histogram entries, then the
+  span, so the engine's own markers always resolve); model-written labels
+  stay at the tight sanitizer budget.
