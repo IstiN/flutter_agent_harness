@@ -35,7 +35,9 @@ class FaBrandTile extends StatelessWidget {
 
   final double size;
 
-  /// Forces the dark/light form; null follows the theme brightness.
+  /// Forces the dark/light form of the stock mark; null follows the theme
+  /// brightness. A branded profile's host mark ignores it — the declared
+  /// asset decides its own form.
   final bool? dark;
 
   /// Stock-only: places the accent dot after the `a` (the collapsed

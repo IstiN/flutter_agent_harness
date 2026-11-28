@@ -5,8 +5,8 @@
 import 'dart:math' as math;
 
 import 'package:fa/l10n/l10n_ext.dart';
-import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa/ui/widgets/fa_mark.dart' show FaBrandTile;
+import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';

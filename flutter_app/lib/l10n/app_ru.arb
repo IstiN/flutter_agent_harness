@@ -99,7 +99,7 @@
   "chatNoConversationsTitle": "Чатов пока нет",
   "chatNoConversationsBody": "Начните локальный чат. Вход в сеть необязателен.",
   "chatNoConversationsBodyHostOnly": "Начните локальный чат.",
-  "modelPresetHostDescription": "Входит ваш вход в {name}.",
+  "modelPresetHostDescription": "Доступно после входа в {name}.",
   "@modelPresetHostDescription": {
     "placeholders": {
       "name": {

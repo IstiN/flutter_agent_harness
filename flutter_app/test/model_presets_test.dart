@@ -549,6 +549,41 @@ void main() {
       expect(find.byType(PageView), findsOneWidget);
     });
 
+    testWidgets('Apply on the host card carries the bridged key through', (
+      tester,
+    ) async {
+      final service = _fakeService();
+      final store = MediaModelsStore.inMemory();
+      final lastConnection = LastConnectionStore.inMemory();
+      final registry = await bridgedRegistry()
+        ..rememberSessionKey('host', 'bridged-secret');
+      await _pumpSection(
+        tester,
+        service: service,
+        store: store,
+        lastConnectionStore: lastConnection,
+        registry: registry,
+        productConfig: FaProductConfig(
+          productId: 'ain',
+          displayName: 'AIIN Agent',
+          apiEndpoint: Uri.parse(ainOrigin),
+          featureFlags: const {},
+          hostConnection: section(),
+          providerCatalog: 'host-only',
+        ),
+      );
+
+      await tester.tap(find.text('Apply').first);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Applied'), findsOneWidget);
+      expect(service.modelId, 'ain/ain_flash');
+      expect(service.activeBaseUrl, ainOrigin);
+      // The apply must ride the same registry seam keyAvailable consulted —
+      // dropping it here reconfigures the live connection with an empty key.
+      expect(service.activeApiKeyForTest, 'bridged-secret');
+    });
+
     testWidgets('stock keeps the two-card carousel (REG)', (tester) async {
       await _pumpSection(
         tester,

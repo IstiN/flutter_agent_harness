@@ -671,6 +671,7 @@ class _PresetCard extends StatelessWidget {
                       keysStore: keysStore,
                       lastConnectionStore: lastConnectionStore,
                       taskStore: taskStore,
+                      registry: registry,
                     )
                   : null,
             ),

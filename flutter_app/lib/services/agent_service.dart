@@ -1387,6 +1387,11 @@ class AgentService extends ChangeNotifier
   @override
   String get activeBaseUrl => _activeBaseUrl;
 
+  /// API key resolved into the active backend by [reconfigure] (test-only:
+  /// no production reader — the key never surfaces in the UI). Exposes the
+  /// preset-apply seam so widget tests can pin the bridged-key wiring.
+  String get activeApiKeyForTest => _activeApiKey;
+
   /// Model id of the active backend, read live from the agent's model state;
   /// the settings Task models section uses it as the editor's placeholder.
   String get agentModelId => _agent.state.model.id;

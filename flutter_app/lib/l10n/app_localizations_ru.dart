@@ -284,7 +284,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String modelPresetHostDescription(String name) {
-    return 'Входит ваш вход в $name.';
+    return 'Доступно после входа в $name.';
   }
 
   @override

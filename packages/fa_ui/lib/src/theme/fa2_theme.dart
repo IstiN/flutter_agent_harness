@@ -123,8 +123,6 @@ ThemeData buildFaTheme({
   );
 }
 
-/// The disabled wash shared by every control family: the enabled color at
-/// 55% alpha keeps a disabled row visible but inert on all surfaces.
 /// The locked-pack design tokens (gh-2391 addendum 8 item 2): the accent,
 /// the ink on it, the soft accent wash and info follow the active palette
 /// — exactly the values the Material scheme already uses — so the token
@@ -145,6 +143,8 @@ FaDesignTokens _lockedPackTokens(
   info: palette.teal,
 );
 
+/// The disabled wash shared by every control family: the enabled color at
+/// 55% alpha keeps a disabled row visible but inert on all surfaces.
 Color _faControlDisabledWash(Color color) => color.withValues(alpha: .55);
 
 SwitchThemeData _faSwitchTheme(FaDesignTokens tokens) => SwitchThemeData(
