@@ -308,6 +308,27 @@ void main() {
       },
     );
 
+    test('rosterSettled: false within the warm-up after a welcome, true '
+        'after it (gh-2471)', () async {
+      final repo = HubMessagingRepository(
+        url: hub.url,
+        transport: const IoHubTransport(),
+        backoff: testBackoff,
+        rosterWarmup: const Duration(milliseconds: 200),
+      );
+      addTearDown(repo.dispose);
+      expect(repo.rosterSettled, isFalse, reason: 'never welcomed — untrust');
+      await repo.start();
+      await waitUntil(() => repo.isConnected);
+      expect(
+        repo.rosterSettled,
+        isFalse,
+        reason: 'just welcomed — the roster cannot confirm a miss yet',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      expect(repo.rosterSettled, isTrue);
+    }, timeout: timeout);
+
     test('inbound dedup by frame id: a redelivered frame lands once', () async {
       final repo = await joinedRepo(hub);
       final sender = await cliPeer(hub);

@@ -369,4 +369,100 @@ void main() {
     expect(delivered.toId, 'display-name');
     expect(delivered.fromId, 'main');
   });
+
+  test('a roster miss from an UNSETTLED primary keeps the queue tracked '
+      '(hub-restart warm-up, gh-2471)', () async {
+    // The hostile-env red (v1.0.794, run 46147543769): after a hub
+    // restart the peer re-hellos on its OWN reconnect backoff, so the
+    // first connected roster snapshot can answer WITHOUT it. Today the
+    // flush reads that snapshot as a confirmed roster miss and untracks
+    // the queued mail — stranded forever (a pure hub peer never polls
+    // the file inbox it landed in). An unsettled primary must not be
+    // able to flip ownership.
+    final primary = _WarmupPrimary();
+    final warmFabric = FallbackMessagingRepository(
+      primary: primary,
+      fallback: files,
+    )..primaryMailbox = () => 'main';
+
+    // Queued while the hub is down.
+    primary.connected = false;
+    await warmFabric.send(_msg('m1'));
+    expect(files.inboxes['hub-peer'], hasLength(1));
+
+    // The hub is back and OUR client re-welcomed seconds ago, but the
+    // roster is still warming up: the peer is mid-reconnect and the
+    // snapshot answers without it.
+    primary.connected = true;
+    primary.settled = false;
+    await warmFabric.peek('main'); // flush probe #1 — warm-up miss
+    expect(
+      primary.sent,
+      isEmpty,
+      reason: 'no hub-ward delivery off an unsettled roster',
+    );
+    expect(
+      files.inboxes['hub-peer'],
+      hasLength(1),
+      reason: 'an unsettled miss is not ownership evidence — keep tracking',
+    );
+
+    // The peer re-hellos; the roster settles and answers.
+    primary.settled = true;
+    primary.resolvable.add('hub-peer');
+    await warmFabric.peek('main'); // flush probe #2 — forwards
+    expect(primary.sent.map((m) => m.id), ['m1']);
+    expect(files.inboxes['hub-peer'], isNull);
+
+    // Exactly once — the forwarded id is no longer tracked.
+    await warmFabric.peek('main');
+    expect(primary.sent.map((m) => m.id), ['m1']);
+  });
+}
+
+/// A scriptable routing primary that also advertises
+/// [RosterSettleness] — the warm-up shape of a real hub primary after a
+/// hub restart (peers re-hello on their own backoff while OUR client is
+/// already welcomed and answering).
+final class _WarmupPrimary
+    implements
+        MessagingRepository,
+        RoutingMessagingRepository,
+        RosterSettleness {
+  final sent = <AgentMessage>[];
+  final resolvable = <String>{};
+  bool connected = true;
+  bool settled = true;
+
+  @override
+  bool get isConnected => connected;
+
+  @override
+  bool get rosterSettled => settled;
+
+  @override
+  Future<String?> resolveTarget(String toId) async =>
+      resolvable.contains(toId) ? toId : null;
+
+  @override
+  Future<void> send(AgentMessage message) async => sent.add(message);
+
+  @override
+  Future<void> register(
+    String agentId, {
+    String? sessionName,
+    List<AgentCapability> capabilities = const [],
+  }) async {}
+
+  @override
+  Future<void> touch(String agentId, {bool busy = false}) async {}
+
+  @override
+  Future<List<AgentMessage>> peek(String agentId) async => const [];
+
+  @override
+  Future<List<AgentMessage>> drain(String agentId) async => const [];
+
+  @override
+  Future<List<MailboxEntry>> directory() async => const [];
 }

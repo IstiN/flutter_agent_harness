@@ -228,17 +228,23 @@ void main() {
       // the judge ladder honestly (and latch), then — judge
       // healthy-latched — take the designed skip.
       final realTurns = <List<AssistantMessageEvent>>[
+        // gh-2461: the rounds carry DISTINCT bash arguments — the
+        // identical-call loop guard (same name + same normalized args,
+        // notice at 5, abort at 8) owns byte-identical repeat runs, and
+        // this fixture models compaction fodder, not a loop. `seq N 2000`
+        // keeps every round's output weight identical while the key
+        // differs.
         for (var round = 0; round < 8; round++)
           toolTurn([
             ToolCall(
               id: 'c${round}a',
               name: 'bash',
-              arguments: {'command': 'seq 1 2000'},
+              arguments: {'command': 'seq ${round + 1} 2000'},
             ),
             ToolCall(
               id: 'c${round}b',
               name: 'bash',
-              arguments: {'command': 'seq 1 2000'},
+              arguments: {'command': 'seq ${round + 11} 2000'},
             ),
           ]),
         textTurn('all reads done'),

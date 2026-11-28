@@ -63,6 +63,7 @@ AgentCli _bootCli({
   required String homeDir,
   required StreamFunction stream,
   String? sessionName,
+  Set<String> identicalCallExemptTools = const <String>{},
 }) => AgentCli(
   config: AgentCliConfig(
     model: _model,
@@ -72,6 +73,7 @@ AgentCli _bootCli({
     sessionRoot: '/sessions',
     sessionName: sessionName,
     providerKind: 'openai-completions',
+    identicalCallExemptTools: identicalCallExemptTools,
     compactionEngine: CompactionEngine.classic,
     compactionSettings: const CompactionSettings(
       enabled: true,
@@ -125,6 +127,16 @@ void main() {
           io: io,
           homeDir: tempHome.path,
           stream: fake.call,
+          // gh-2461: the 8 scripted reads are BYTE-IDENTICAL (same name +
+          // same args; only the call id differs, which the guard's turn
+          // key excludes) — a count-mass builder for the cap math, not a
+          // degenerate loop. The per-call-site opt-out (`agent.
+          // identicalCallExemptTools`, wired by this PR through
+          // AgentCliConfig → Agent → loop) keeps the guard transparent
+          // for this fixture; without it the honest abort lands at the
+          // 8th identical exchange and the run exits 1 before the cap
+          // refusal is ever served.
+          identicalCallExemptTools: {'read'},
         );
 
         final exitCode = await cli.runHeadless('read the notes');
