@@ -100,10 +100,22 @@ String stripRecordTags(String text) => text.replaceAll(_recordTagEchoLines, '');
 /// the classification, so every line of a multi-line reply is judged
 /// independently — the same semantics as [stripRecordTags]'s `^m\d+ +`
 /// (the gh-2412 contract; a tab is not a tag terminator, `m3u8 ` is not
-/// an alias). [flush] emits an undecided tail verbatim — a text ending
-/// `m2` with no trailing space never matched the rule, so the bytes are
-/// the model's own words — and resets, so the next message classifies
-/// from a fresh line.
+/// an alias).
+///
+/// The gh-2412 contract has a second rule the filter also implements:
+/// `_leadingAlias` (`^m\d+(?=\s|$)`, `record_tag_echo.dart`) strips a
+/// MESSAGE-OPENING alias even without a trailing space — `m3208` is a
+/// reply that is ONLY its tag (the tagging machinery emits tag-only text
+/// blocks for pure tool-call carriers), and `m3208\nответ` loses the
+/// alias plus the `trimLeft()` whitespace run that followed it. Only the
+/// message's FIRST line-start candidate is judged by that rule; after it
+/// strips, the per-line rule re-arms at an original line boundary (the
+/// seam strips per-line BEFORE the alias + trim, so the order is
+/// preserved). [flush] emits a MID-message undecided tail verbatim — a
+/// text ending `m2` with no trailing space never matched either rule, so
+/// the bytes are the model's own words — while a message-initial tail is
+/// the leading alias and strips. [flush] resets, so the next message
+/// classifies from a fresh line.
 enum _TagScan {
   /// At a line start: the next byte decides between a candidate alias and
   /// ordinary text.
@@ -115,12 +127,28 @@ enum _TagScan {
   /// Tag confirmed: swallowing the rule's trailing ` +` run.
   spaces,
 
+  /// Leading alias confirmed (the message-initial `^m\d+(?=\s|$)` rule):
+  /// skipping the `trimLeft()` whitespace run that followed it.
+  trim,
+
   /// Past the line start: pass-through until the next newline.
   text,
 }
 
 final class RecordTagEchoStreamFilter {
   _TagScan _scan = _TagScan.lineStart;
+
+  /// Whether the pending line-start candidate sits at MESSAGE offset 0 —
+  /// the only position the leading-alias rule judges. False from the
+  /// first emitted byte or resolved candidate on; [flush] re-arms it for
+  /// the next message.
+  bool _atMessageStart = true;
+
+  /// In [_TagScan.trim]: whether the last skipped whitespace byte ended a
+  /// line. The next KEPT byte then sits at an ORIGINAL line boundary,
+  /// where the per-line rule re-arms (the seam strips per-line before the
+  /// alias + trim, so only original line starts re-arm).
+  bool _trimHitLineBreak = false;
 
   /// The undecided `m` + digits prefix of the current line.
   final StringBuffer _aliasBuffer = StringBuffer();
@@ -130,50 +158,131 @@ final class RecordTagEchoStreamFilter {
   String push(String delta) {
     final out = StringBuffer();
     for (final ch in delta.codeUnits) {
-      switch (_scan) {
-        case _TagScan.lineStart when ch == 0x6D /* m */ :
-          _scan = _TagScan.alias;
-          _aliasBuffer
-            ..clear()
-            ..writeCharCode(ch);
-        case _TagScan.lineStart:
-          out.writeCharCode(ch);
-          _scan = ch == 0x0A /* \n */ ? _TagScan.lineStart : _TagScan.text;
-        case _TagScan.alias when _isDigit(ch):
-          _aliasBuffer.writeCharCode(ch);
-        case _TagScan.alias when ch == 0x20 /* space */ :
-          _scan = _TagScan.spaces;
-        case _TagScan.alias:
-          // Not a tag (`m3u8`, `m42x`, a bare `m` line): release the
-          // held bytes and continue as text.
-          out.write(_aliasBuffer.toString());
-          out.writeCharCode(ch);
-          _scan = ch == 0x0A ? _TagScan.lineStart : _TagScan.text;
-        case _TagScan.spaces when ch == 0x20:
-          break; // the rule strips the whole ` +` run
-        case _TagScan.spaces:
-          out.writeCharCode(ch);
-          _scan = ch == 0x0A ? _TagScan.lineStart : _TagScan.text;
-        case _TagScan.text:
-          out.writeCharCode(ch);
-          if (ch == 0x0A) _scan = _TagScan.lineStart;
-      }
+      _step(ch, out);
     }
     return out.toString();
   }
 
-  /// End of the message: emits whatever stayed undecided verbatim and
-  /// resets the filter for the next message.
+  /// Classifies one byte in the current state — the per-byte dispatch of
+  /// [push]; each per-state step stays under the CRAP ratchet.
+  void _step(int ch, StringBuffer out) => switch (_scan) {
+    _TagScan.lineStart => _stepLineStart(ch, out),
+    _TagScan.alias => _stepAlias(ch, out),
+    _TagScan.spaces => _stepSpaces(ch, out),
+    _TagScan.trim => _stepTrim(ch, out),
+    _TagScan.text => _stepText(ch, out),
+  };
+
+  void _stepLineStart(int ch, StringBuffer out) {
+    if (ch == 0x6D /* m */ ) {
+      _scan = _TagScan.alias;
+      _aliasBuffer
+        ..clear()
+        ..writeCharCode(ch);
+      return;
+    }
+    _emit(ch, out);
+    _scan = ch == 0x0A /* \n */ ? _TagScan.lineStart : _TagScan.text;
+  }
+
+  void _stepAlias(int ch, StringBuffer out) {
+    if (_isDigit(ch)) {
+      _aliasBuffer.writeCharCode(ch);
+    } else if (ch == 0x20 /* space */ ) {
+      _scan = _TagScan.spaces; // the rule strips the whole ` +` run
+    } else if (_atMessageStart &&
+        _aliasBuffer.length > 1 &&
+        _isRegexSpace(ch)) {
+      // The leading-alias rule: a message-opening alias may END at a
+      // non-space whitespace (`(?=\s)` — newline, tab, CR) — strip it,
+      // then the seam's trimLeft run.
+      _beginTrim(ch);
+    } else {
+      // Not a tag (`m3u8`, `m42x`, a bare `m` line): release the
+      // held bytes and continue as text.
+      _releaseAlias(ch, out);
+    }
+  }
+
+  void _stepSpaces(int ch, StringBuffer out) {
+    if (ch == 0x20) return; // the rule strips the whole ` +` run
+    _emit(ch, out);
+    _scan = ch == 0x0A ? _TagScan.lineStart : _TagScan.text;
+  }
+
+  void _stepTrim(int ch, StringBuffer out) {
+    if (_isRegexSpace(ch)) {
+      _trimHitLineBreak = _isLineTerminator(ch);
+      return;
+    }
+    // The first kept byte after the alias + trimLeft: at an original line
+    // boundary the per-line rule re-arms, elsewhere it is plain text.
+    _scan = _trimHitLineBreak ? _TagScan.lineStart : _TagScan.text;
+    _step(ch, out);
+  }
+
+  void _stepText(int ch, StringBuffer out) {
+    _emit(ch, out);
+    if (ch == 0x0A) _scan = _TagScan.lineStart;
+  }
+
+  /// Enters [_TagScan.trim] with [ch] — the whitespace byte that ended
+  /// the alias (`(?=\s)` is zero-width, so the byte is consumed HERE): it
+  /// counts as the first trimLeft byte, and a line break among the eaten
+  /// run re-arms the per-line rule at an original line boundary.
+  void _beginTrim(int ch) {
+    _atMessageStart = false;
+    _trimHitLineBreak = _isLineTerminator(ch);
+    _aliasBuffer.clear();
+    _scan = _TagScan.trim;
+  }
+
+  /// Releases the held candidate — not a tag — plus [ch], as text.
+  void _releaseAlias(int ch, StringBuffer out) {
+    out.write(_aliasBuffer.toString());
+    _aliasBuffer.clear();
+    _emit(ch, out);
+    _scan = ch == 0x0A ? _TagScan.lineStart : _TagScan.text;
+  }
+
+  /// Emits one decided byte; any emission ends the message-start span.
+  void _emit(int ch, StringBuffer out) {
+    out.writeCharCode(ch);
+    _atMessageStart = false;
+  }
+
+  /// End of the message: emits whatever stayed undecided — a MID-message
+  /// tail verbatim (the regex contract), a message-initial tail stripped
+  /// (the leading alias) — and resets the filter for the next message.
   String flush() {
     final held = _scan == _TagScan.alias ? _aliasBuffer.toString() : '';
+    final isLeadingAlias = _atMessageStart && held.length > 1;
     _scan = _TagScan.lineStart;
+    _atMessageStart = true;
+    _trimHitLineBreak = false;
     _aliasBuffer.clear();
-    return held;
+    return isLeadingAlias ? '' : held;
   }
 }
 
 /// Whether the code unit is an ASCII digit (a tag alias is `m<digits>`).
 bool _isDigit(int ch) => ch >= 0x30 && ch <= 0x39;
+
+/// Whether the code unit matches the `_leadingAlias` lookahead's `\s` —
+/// the same regex class as `record_tag_echo.dart`'s `(?=\s|$)` (ASCII
+/// whitespace plus the Unicode spaces `\s` knows; astral code units are
+/// never `\s`).
+final RegExp _regexSpace = RegExp(r'\s');
+bool _isRegexSpace(int ch) =>
+    ch < 0x100 && _regexSpace.hasMatch(String.fromCharCode(ch));
+
+/// Whether the code unit is an ECMAScript line terminator — the original
+/// line boundary a stripped alias's trimLeft may reveal.
+final RegExp _lineTerminator = RegExp(r'[\n\r\u2028\u2029]');
+bool _isLineTerminator(int ch) =>
+    ch < 0x100 && _lineTerminator.hasMatch(String.fromCharCode(ch)) ||
+    ch == 0x2028 ||
+    ch == 0x2029;
 
 /// One transcript build: the projected messages plus the record alias each
 /// message projects from (aligned by index, `null` = a non-record) and

@@ -15,10 +15,11 @@ extension AgentServiceAssistant on AgentService {
       'contentBlocks=${message.content.length}, '
       'errorMessage=${message.errorMessage}',
     );
-    // gh-2472: release a still-undecided line-start tail verbatim (the
-    // regex contract — no trailing space, no tag) into the streamed row,
-    // so a reply ending inside `m\d+` never drops its last bytes; flush
-    // resets the filter for the next message.
+    // gh-2472: release a still-undecided MID-message line-start tail
+    // verbatim (the regex contract — no trailing space, no tag) into the
+    // streamed row, so a reply ending inside `m\d+` never drops its last
+    // bytes; a message-initial tail is the gh-2412 leading alias and
+    // strips instead. Flush resets the filter for the next message.
     final echoTail = _recordTagEcho.flush();
     final streamedTarget = _currentAssistantMessage;
     if (echoTail.isNotEmpty && streamedTarget != null) {

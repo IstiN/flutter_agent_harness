@@ -9,6 +9,8 @@
 
 library;
 
+import 'dart:convert';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/projection.dart';
 import 'package:test/test.dart';
@@ -37,6 +39,14 @@ ToolResultMessage _result(List<ContentBlock> content) => ToolResultMessage(
   isError: false,
   timestamp: DateTime.utc(2026),
 );
+
+/// What the gh-2412 finalize seam (`stripRecordTagEcho`) leaves of a
+/// one-text-block reply [text] — the parity oracle for the stream filter.
+String _seamStrippedText(String text) {
+  final cleaned = stripRecordTagEcho(_assistant([TextContent(text: text)]));
+  final blocks = cleaned.content.whereType<TextContent>().toList();
+  return blocks.isEmpty ? '' : blocks.first.text;
+}
 
 ImageContent _image() => ImageContent(mimeType: 'image/png', data: 'AAAA');
 
@@ -325,12 +335,31 @@ void main() {
         );
       });
 
-      test('flush emits an undecided tail verbatim (regex contract)', () {
-        // No trailing space — `^m\d+ ` never matched, so the bytes are the
-        // model's own words and must survive.
-        expect(streamed(['m1494']), 'm1494');
-        expect(streamed(['text\nm2']), 'text\nm2');
-      });
+      test(
+        'a message-initial undecided tail is a leading alias — stripped',
+        () {
+          // gh-2472 review: the gh-2412 echo contract has a SECOND rule —
+          // `_leadingAlias` (`^m\d+(?=\s|$)`, record_tag_echo.dart) strips a
+          // reply that OPENS with an alias even without a trailing space:
+          // `m3208` is a reply that is ONLY its tag (the tagging machinery
+          // itself emits tag-only text blocks for pure tool-call carriers).
+          expect(streamed(['m3208']), '');
+          expect(streamed(['m3208\nреальный ответ']), 'реальный ответ');
+          // The decision survives a delta split too (no flicker).
+          expect(streamed(['m320', '8\nготово']), 'готово');
+        },
+      );
+
+      test(
+        'a mid-message undecided tail survives verbatim (regex contract)',
+        () {
+          // No trailing space — `^m\d+ ` never matched, so the bytes are the
+          // model's own words and must survive. Only the message's FIRST
+          // line-start candidate is judged by the leading-alias rule.
+          expect(streamed(['text\nm2']), 'text\nm2');
+          expect(streamed(['ответ\nm1494']), 'ответ\nm1494');
+        },
+      );
 
       test('an alias-like opening that is not a tag passes through', () {
         // The `m3u8` lookahead rule (record_tag_echo.dart): digits followed
@@ -338,6 +367,34 @@ void main() {
         expect(streamed(['m3u8 ', 'stream']), 'm3u8 stream');
         expect(streamed(['m42x ', 'y']), 'm42x y');
       });
+
+      test('a bare m is not a leading alias', () {
+        // `^m\d+` needs a digit — a lone `m` is the model's own text.
+        expect(streamed(['m', '\nx']), 'm\nx');
+      });
+
+      test(
+        'a leading alias ends at any regex whitespace, not just a space',
+        () {
+          // The lookahead is `(?=\s|$)` — a tab or CR ends the alias the
+          // same way a newline does; the seam's trimLeft then eats the run.
+          expect(streamed(['m3208\tответ']), 'ответ');
+          expect(streamed(['m3208\r\nготово']), 'готово');
+        },
+      );
+
+      test(
+        'after the stripped leading alias the per-line rule re-arms only at line starts',
+        () {
+          // The seam order: stripRecordTags runs BEFORE the leading alias +
+          // trimLeft — so a byte at an ORIGINAL line boundary re-arms the
+          // `^m\d+ +` rule, while a byte trimmed out of a mid-line position
+          // does not (the seam's trimLeft already consumed it).
+          expect(streamed(['m3208\nm1494 x']), 'x');
+          expect(streamed(['m3208\n x']), 'x');
+          expect(streamed(['m3208\nготово']), 'готово');
+        },
+      );
 
       test('a mid-message newline re-arms the classification', () {
         expect(streamed(['Принято\n', 'm1482 ', 'Жду PR']), 'Принято\nЖду PR');
@@ -350,7 +407,9 @@ void main() {
       test('flush resets — the next message classifies from a fresh line', () {
         final filter = RecordTagEchoStreamFilter();
         expect(filter.push('m1'), '');
-        expect(filter.flush(), 'm1');
+        // `m1` opened the message: flush strips it as a leading alias
+        // (`^m\d+(?=\s|$)` — the `$` lookahead), not verbatim.
+        expect(filter.flush(), '');
         expect(filter.push('ok'), 'ok');
         expect(filter.flush(), '');
         // A new message's leading tag is recognized again after the reset.
@@ -368,6 +427,37 @@ void main() {
         viaStream += filter.flush();
         expect(viaStream, stripRecordTags(text));
       });
+
+      test(
+        'stripRecordTagEcho and the stream filter agree (gh-2412 parity)',
+        () {
+          // gh-2472 review: the current suite pinned parity with
+          // `stripRecordTags` only — the leading-alias half of the gh-2412
+          // contract lives in `stripRecordTagEcho` (the finalize seam), and
+          // the live faces must render what the seam stores.
+          const texts = [
+            'm3208', // a reply that is ONLY its tag
+            'm3208\nреальный ответ',
+            'm3208\nm1494 x', // a tagged line after the stripped alias
+            'm3208\n\n\n  отступ сохранён?',
+            'm3208\r\nготово',
+            'm1482 Один\nkeep m143 inline\nm9  [expand]\nm3u8 x\nm2',
+            'm1482 Один\nm1494\nm1510 Два',
+            'm3u8 stream',
+            'm2\nm2',
+            'ok\nm9\nx',
+            '\n m3208', // the alias is anchored at the message start only
+            'just text',
+            '',
+          ];
+          for (final text in texts) {
+            final filter = RecordTagEchoStreamFilter();
+            final viaStream = filter.push(text) + filter.flush();
+            final viaSeam = _seamStrippedText(text);
+            expect(viaStream, viaSeam, reason: 'text: ${jsonEncode(text)}');
+          }
+        },
+      );
     });
   });
 }

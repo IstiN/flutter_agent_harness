@@ -1756,10 +1756,11 @@ extension ApprovalCommands on AgentCli {
   /// [_onAssistantMessageEnd] so the stop-reason dispatch stays under the
   /// CRAP ratchet (gh-1198: the thinking-reset branches tipped it over).
   void _flushAssistantStreamAtEnd() {
-    // gh-2472: release a still-undecided line-start tail verbatim (the
-    // regex contract — no trailing space, no tag) through the SAME
-    // emission path, so the streamed faces paint it and the buffered
-    // faces render it; flush resets the filter for the next message.
+    // gh-2472: release a still-undecided MID-message line-start tail
+    // verbatim (the regex contract — no trailing space, no tag) through
+    // the SAME emission path; a message-initial tail is the gh-2412
+    // leading alias and strips instead. Flush resets the filter for the
+    // next message.
     final echoTail = _recordTagEcho.flush();
     if (echoTail.isNotEmpty) _emitTextDelta(echoTail);
     if (_useTui || !_buffersAnswer) {

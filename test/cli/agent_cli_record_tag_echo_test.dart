@@ -147,6 +147,58 @@ void main() {
       expect(io.out.toString(), contains('ответ\nm2'));
     });
 
+    test(
+      'raw live face: a tag-only reply paints nothing (leading alias)',
+      () async {
+        // gh-2472 review: `m3208` alone is a reply that is ONLY its tag —
+        // the gh-2412 leading-alias rule (`^m\d+(?=\s|$)`) strips it at the
+        // finalize seam; the live face must not flash it either. The
+        // stripped reply is a CLEAN empty, so the pre-existing #1085
+        // empty-reply nudge fires a scripted `continue` turn (the tag-only
+        // carrier shape is real: record_tag.dart's pure tool-call carrier).
+        final fake = FakeStreamFunction([
+          splitDeltaTurn(['m320', '8']),
+          splitDeltaTurn(['Продолжаю: готово']),
+        ]);
+        final cli = cliFor(
+          fake.call,
+          markdownSurface: const MarkdownSurface(mode: MarkdownSurfaceMode.raw),
+        );
+        final run = cli.run();
+        io.sendLine('hi');
+        await waitForIt(() => fake.calls == 2 && !cli.isBusy);
+        io.sendLine('/exit');
+        await run;
+
+        final out = io.out.toString();
+        expect(
+          out.contains('m3208'),
+          isFalse,
+          reason: 'the tag-only reply leaked to the live stream: $out',
+        );
+        expect(out, contains('Продолжаю: готово'));
+      },
+    );
+
+    test('raw live face: a leading alias before a newline strips', () async {
+      final fake = FakeStreamFunction([
+        splitDeltaTurn(['m3208\nреальный ответ']),
+      ]);
+      final cli = cliFor(
+        fake.call,
+        markdownSurface: const MarkdownSurface(mode: MarkdownSurfaceMode.raw),
+      );
+      final run = cli.run();
+      io.sendLine('hi');
+      await waitForIt(() => fake.calls == 1 && !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+
+      final out = io.out.toString();
+      expect(out, contains('реальный ответ'));
+      expect(out.contains('m3208'), isFalse, reason: out);
+    });
+
     test('ansi buffered face: the end-of-message render is clean', () async {
       final fake = FakeStreamFunction([
         splitDeltaTurn(['m', '1482 Один']),
