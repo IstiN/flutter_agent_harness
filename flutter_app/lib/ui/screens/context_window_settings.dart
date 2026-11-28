@@ -58,6 +58,7 @@ class ModelContextWindowSection extends StatefulWidget {
     super.key,
     required this.service,
     this.readOverride,
+    this.readLayer,
     this.write,
     this.supported = appContextWindowConfigSupported,
   });
@@ -76,6 +77,12 @@ class ModelContextWindowSection extends StatefulWidget {
   /// a throw surfaces verbatim (the file is never half-edited).
   final Future<String> Function(String provider, String modelId, int? window)?
   write;
+
+  /// The freshly persisted `models.overrides` layer, re-read for the
+  /// live apply (tests inject the fake write's state; production leaves
+  /// this null so [AgentService.applyModelWindowOverride] reloads the
+  /// layer from the user config the real write just updated).
+  final ModelCapabilityOverrides? Function()? readLayer;
 
   /// Whether this platform can persist the value (false on web).
   final bool supported;
@@ -138,7 +145,11 @@ class _ModelContextWindowSectionState extends State<ModelContextWindowSection> {
         modelId,
         value,
       );
-      widget.service.applyModelWindowOverride(provider, modelId);
+      widget.service.applyModelWindowOverride(
+        provider,
+        modelId,
+        layer: widget.readLayer?.call(),
+      );
       if (!mounted) return;
       faui.showFahSnack(
         context,

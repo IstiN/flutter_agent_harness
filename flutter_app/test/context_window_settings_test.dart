@@ -90,7 +90,11 @@ void main() {
         findsOneWidget,
         reason: 'the effective window renders in the grouped form',
       );
-      expect(find.textContaining('endpoint report'), findsOneWidget);
+      expect(
+        find.textContaining('1,048,576 · endpoint report'),
+        findsOneWidget,
+        reason: 'the caption names the chain layer that won',
+      );
     });
 
     testWidgets('a pin shows the override source; Save persists and applies', (
@@ -109,20 +113,35 @@ void main() {
       );
       final writes = <(String, String, int?)>[];
       int? pinned = 200000;
+      // The layer the fake write "persists" — handed to the apply seam
+      // the way the real user-config write hands it to the reload.
+      ModelCapabilityOverrides? layer;
       await _pump(
         tester,
         ModelContextWindowSection(
           service: service,
           readOverride: () => pinned,
+          readLayer: () => layer,
           write: (provider, modelId, value) async {
             writes.add((provider, modelId, value));
             pinned = value;
+            layer = value == null
+                ? ModelCapabilityOverrides()
+                : (ModelCapabilityOverrides()..set(
+                    provider,
+                    modelId,
+                    ModelCapabilityOverride(contextWindow: value),
+                  ));
             return '/home/.fah/config.yaml';
           },
         ),
       );
-      expect(find.textContaining('override'), findsWidgets);
-      // Edit the override down and save.
+      // The seeded field carries the pin; the provenance caption still
+      // names the chain layer until the override is applied.
+      final field = tester.widget<TextField>(
+        find.byKey(const ValueKey('contextWindowOverrideField')),
+      );
+      expect(field.controller!.text, '200000');
       await tester.enterText(
         find.byKey(const ValueKey('contextWindowOverrideField')),
         '131072',
@@ -136,6 +155,12 @@ void main() {
       expect(
         service.modelContextWindow!.source,
         CapabilityWindowLayer.override,
+      );
+      await tester.pump();
+      expect(
+        find.textContaining('131,072 · override'),
+        findsOneWidget,
+        reason: 'the applied override becomes the caption layer',
       );
       expect(find.textContaining('Saved to'), findsOneWidget);
     });
@@ -280,7 +305,9 @@ void main() {
               const AppContextCapResolution(null, AppContextCapSource.none),
         ),
       );
-      expect(find.textContaining('Not set'), findsOneWidget);
+      // The unset caption renders twice: the empty-field hint and the
+      // source caption under it.
+      expect(find.textContaining('Not set'), findsNWidgets(2));
       expect(find.text('Clear cap'), findsNothing);
     });
 

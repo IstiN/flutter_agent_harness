@@ -75,6 +75,13 @@ const _documentedExemptions = <String, String>{
   'lib/ui/screens/skills_toggles_section.dart':
       'Not a screen — the settings sub-section for per-skill toggles '
       '(issue #1151); its host SettingsScreen logs screenOpened.',
+  'lib/ui/screens/context_window_settings.dart':
+      'Not a screen — two settings sub-sections (gh-2479): the per-model '
+      'context-window row (embedded in ModelsSettingsPage after the '
+      'default-chat-model section) and the owner context-window cap '
+      'control (embedded in the Agent Config category of SettingsScreen); '
+      'the hosts carry the screenOpened/section analytics and the rows '
+      'fire no user paths of their own.',
   'lib/ui/screens/oauth_webview_scaffold.dart':
       'Shared WebView chrome (issue #773) — both SSO/OAuth sign-in screens '
       'render through it; the concrete pages carry the analytics: '
