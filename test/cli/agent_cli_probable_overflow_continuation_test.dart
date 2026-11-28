@@ -77,6 +77,9 @@ void main() {
       final cli = AgentCli(
         config: AgentCliConfig(
           systemPrompt: tinyPrompt,
+          // The forensics fa.log rides the home dir — the guard-class
+          // funnel tests pin the gh-241 #5e contract against it.
+          homeDir: '/home',
           runtimeTools: tinyTools(const ['read', 'bash']),
           // The overstating catalog: 20k advertised, the fake endpoint
           // refuses at ~800 tokens — the loop's own over-window guard
@@ -159,8 +162,40 @@ void main() {
       expect(smol.calls, 1, reason: 'one summarizer call served the pass');
       // The visible transcript settled on the completed task.
       expect(io.out.toString(), contains('task complete after the compaction'));
+
+      // gh-241 follow-up #5e (E2) — the same forensics contract the
+      // guard-class funnel pins (agent_cli_over_window_continuation_retry_test.dart):
+      // a probable-overflow stop that compacted and continued is logged
+      // as such — `stop=compacting (continuation pending)`, NO
+      // `stop=error` line, `run end` exactly once. The stash gate and
+      // the armed predicate are shared, so the settlement can never
+      // disagree with the trail.
+      final log = await _logUntil(env, 'run end sid=');
+      expect(
+        log,
+        contains('stop=compacting (continuation pending)'),
+        reason: log,
+      );
+      expect(
+        log,
+        isNot(matches(RegExp(r'turn end sid=\S+ stop=error'))),
+        reason: log,
+      );
+      expect('run end sid='.allMatches(log).length, 1, reason: log);
     },
   );
+}
+
+/// Polls the forensics fa.log until [needle] lands (the guard-class
+/// funnel tests' helper — the log flush is async behind the run).
+Future<String> _logUntil(MemoryExecutionEnv env, String needle) async {
+  var log = '';
+  for (var i = 0; i < 100; i++) {
+    log = (await env.readTextFile('/home/.fah/logs/fa.log')).valueOrNull ?? '';
+    if (log.contains(needle)) return log;
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+  }
+  return log;
 }
 
 /// The full text of the LAST user message in a served request (the
