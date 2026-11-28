@@ -612,9 +612,9 @@ void main() {
         }
         expect(
           hits.length,
-          entry.key.contains('mobile') ? 2 : 1,
+          entry.key.contains('mobile') ? 2 : 2,
           reason:
-              '${entry.key} must carry ${entry.value == 'Checkout repository from local mirror' ? 'two (build-ios + submit-ios)' : 'one (build-macos)'} '
+              '${entry.key} must carry ${entry.value == 'Checkout repository from local mirror' ? 'two (build-ios + submit-ios)' : 'two (build-macos desktop + build-macos-cli)'} '
               'inline checkout step(s) named "${entry.value}" (gh-1600)',
         );
         for (final script in hits) {
@@ -635,7 +635,14 @@ void main() {
           );
           expect(
             script,
-            contains('git clone --reference'),
+            anyOf(
+              contains('git clone --reference'),
+              // gh-2453 (build-macos-cli): the gh-1644 stall guard wraps
+              // the clone — git "${GUARD[@]}" clone --no-checkout …
+              // --reference "$MIRROR" — so the mirror-seeded shape check
+              // is on the guarded clone + its --reference seeding.
+              allOf(contains('clone --no-checkout'), contains('--reference')),
+            ),
             reason:
                 'the local-mirror clone shape is kept (gh-1600, $entry.key)',
           );
@@ -741,8 +748,8 @@ void main() {
         final scripts = allCheckoutScripts();
         expect(
           scripts.length,
-          3,
-          reason: 'build-ios + submit-ios + build-macos',
+          4,
+          reason: 'build-ios + submit-ios + build-macos + build-macos-cli',
         );
         for (final script in scripts) {
           // The old path skipped the fresh entry (warning-only) and the
@@ -783,8 +790,8 @@ void main() {
         final scripts = allCheckoutScripts();
         expect(
           scripts.length,
-          3,
-          reason: 'build-ios + submit-ios + build-macos',
+          4,
+          reason: 'build-ios + submit-ios + build-macos + build-macos-cli',
         );
         for (final script in scripts) {
           expect(

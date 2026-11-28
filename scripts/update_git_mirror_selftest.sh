@@ -401,14 +401,14 @@ t10() {
   else
     bad "T10 first-post-merge bootstrap FAILED: rc=$rc — $out"
   fi
-  # the same prelude must exist at ALL 3 bootstrap sites (drift guard)
+  # the same prelude must exist at ALL 4 bootstrap sites (drift guard)
   local sites
   sites=$(grep -c "syncing the mirror" .github/workflows/build-macos.yml \
             .github/workflows/build-mobile.yml | awk -F: '{s+=$2} END {print s}')
-  if [ "$sites" = "3" ]; then
-    ok "T10 prelude present at all 3 bootstrap sites (build-macos + build-ios + submit-ios)"
+  if [ "$sites" = "4" ]; then
+    ok "T10 prelude present at all 4 bootstrap sites (build-macos desktop + build-macos-cli + build-ios + submit-ios)"
   else
-    bad "T10 prelude drift: found at $sites/3 bootstrap sites"
+    bad "T10 prelude drift: found at $sites/4 bootstrap sites"
   fi
 }
 
