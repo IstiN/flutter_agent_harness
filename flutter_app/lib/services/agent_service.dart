@@ -14,6 +14,7 @@ import 'package:fa_ui/fa_ui.dart'
         FaChatConnection,
         FaChatMessage,
         FaChatService,
+        FaUiHost,
         ProviderPreset,
         TrajectoryServiceFeed,
         hostedProviderKeyName,

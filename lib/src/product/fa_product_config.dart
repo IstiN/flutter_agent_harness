@@ -15,6 +15,7 @@ final class FaProductConfig {
   const FaProductConfig({
     required this.productId,
     required this.displayName,
+    this.agentName = 'Fa',
     this.description = '',
     this.brandAssets = const {},
     this.themePackId,
@@ -40,6 +41,7 @@ final class FaProductConfig {
   const FaProductConfig._stock()
     : productId = 'fa',
       displayName = 'Fa',
+      agentName = 'Fa',
       description = 'Fa — Flutter Agent Harness: coding agent in your browser.',
       brandAssets = const {},
       themePackId = null,
@@ -67,6 +69,13 @@ final class FaProductConfig {
 
   final String productId;
   final String displayName;
+
+  /// The agent's display identity (gh-2391 addendum 9 item 1): the name the
+  /// assistant calls itself in the system prompt, the typing indicator and
+  /// the skills blurbs. Top-level `agentName` in the profile JSON; stock and
+  /// profiles without the key keep "Fa".
+  final String agentName;
+
   final String description;
 
   /// Logical asset slot (`icon192`, `icon512`, `favicon`, `splash`, …) to a
@@ -330,6 +339,9 @@ final class FaProductConfig {
     final config = FaProductConfig(
       productId: productId,
       displayName: displayName,
+      agentName: json['agentName'] == null
+          ? 'Fa'
+          : _text(json['agentName'], 'agentName'),
       description: description,
       brandAssets: Map.unmodifiable(assets),
       themePackId: themePackId,

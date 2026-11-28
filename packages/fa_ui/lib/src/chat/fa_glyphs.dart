@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../host_config.dart';
 import '../theme/fa2_theme.dart';
 import '../theme/fa2_tokens.dart';
 import '../widgets/fa_logo.dart';
@@ -93,6 +94,11 @@ class FaAiAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // A branded host installs its product mark once at startup (gh-2391
+    // addendum 9 item 1) — every assistant avatar and session tile riding
+    // this widget follows the profile instead of leaking the `>Fa` glyph.
+    final brandBuilder = FaUiHost.brandAvatarBuilder;
+    if (brandBuilder != null) return brandBuilder(size: size, dark: dark);
     final forced = dark;
     if (forced == null) return FaLogo(size: size);
     return Theme(

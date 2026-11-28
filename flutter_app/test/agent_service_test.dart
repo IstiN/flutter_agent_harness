@@ -8,6 +8,7 @@ import 'package:fa/prompts.g.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/analytics/product_analytics_bridge.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa_ui/fa_ui.dart' show FaUiHost;
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/project_mount_env.dart' show SessionCwd;
 import 'package:fa/sandbox/memory_shell.dart';
@@ -2726,10 +2727,10 @@ void main() {
       final commandSection = formatSandboxCommandSection(
         SandboxPlatform.desktop,
       );
-      final base = sandboxSystemPrompt.replaceAll(
-        '{{commands}}',
-        commandSection,
-      );
+      final base = sandboxSystemPrompt
+          .replaceAll('{{commands}}', commandSection)
+          // Stock identity: FaUiHost.agentName is unset in this process.
+          .replaceAll('{{agentName}}', 'Fa');
       final now = DateTime.now();
       final offset = now.timeZoneOffset;
       final sign = offset.isNegative ? '-' : '+';
@@ -2757,6 +2758,20 @@ void main() {
         ),
       );
       expect(prompt, isNot(contains('## Host profile')));
+    });
+
+    test('the agent introduces itself with the profile agentName '
+        '(gh-2391 addendum 9 item 1)', () {
+      FaUiHost.agentName = 'AIN Agent';
+      addTearDown(() => FaUiHost.agentName = null);
+      final prompt = AgentService.effectiveSystemPromptForTest(
+        config(),
+        null,
+        SandboxPlatform.desktop,
+      );
+      expect(prompt, startsWith('You are AIN Agent, a helpful coding assistant.'));
+      expect(prompt, isNot(contains('You are Fa')));
+      expect(prompt, contains('Never call yourself pi, Claude'));
     });
   });
 

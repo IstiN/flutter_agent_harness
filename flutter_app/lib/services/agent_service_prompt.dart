@@ -41,10 +41,12 @@ String _effectiveAgentSystemPrompt(
     '[Fa] system prompt platform=$platform, '
     'commands section ${commandSection.length} chars',
   );
-  var base = (config.systemPrompt ?? sandboxSystemPrompt).replaceAll(
-    '{{commands}}',
-    commandSection,
-  );
+  var base = (config.systemPrompt ?? sandboxSystemPrompt)
+      .replaceAll('{{commands}}', commandSection)
+      // The product profile's display identity (gh-2391 addendum 9 item
+      // 1): the agent introduces itself as the host's agentName, never as
+      // the stock "Fa" — the host installs FaUiHost.agentName at boot.
+      .replaceAll('{{agentName}}', FaUiHost.agentNameOrStock);
   final hostProfile = formatSandboxHostProfile(platform);
   if (hostProfile.isNotEmpty) {
     base = '$base\n\n$hostProfile';
