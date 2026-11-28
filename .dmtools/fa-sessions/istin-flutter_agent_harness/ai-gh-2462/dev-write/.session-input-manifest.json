@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-28T11:06:34.497Z",
+  "ticketKey": "gh-2462",
+  "headSha": "cae470c3533b8e1f5ca7dfca0dbdfba8434ac12d",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:770dadb558f8c8f9",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:890af4e1a3bd17b3",
+      "size": 10385
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:d1a897879f1a28fe",
+      "size": 4499
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:580da8966e87cda2",
+      "size": 2846
+    },
+    "request.md": {
+      "hash": "fnv1a64:eb6bb86d53df9bf2",
+      "size": 3660
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:b93c28eb3e3f9b38",
+      "size": 837
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:de5ac695c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:dd5254eae56d6760",
+      "size": 3749
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:eb6bb86d53df9bf2",
+      "size": 3660
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc69C6hk",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/ci_2462_app_loc_ceiling_guard_test.dart:55",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: belt's glob matcher over-excludes — `.` is never escaped, so `**.g.dart`-style globs would silently blind the belt**\n\n`_globMatch` whitelists `.` as a literal in its regex translation (`ci_2462_app_loc_ceiling_guard_test.dart:55`), but `.` is a regex metacharacter and must be escaped like any other non-glob special char. The translated pattern over-matches, i.e. the belt *skips files the real loc gate scans* — the exact silent-miss class this belt exists to close (gh-2462 Defect B).\n\nDemonstrated on this tree (evaluating the matcher's own translation):\n\n```\nglob '**.g.dart'  →  belt pattern  ^.*.g.dart$\n  landing.dart     ⇒ matched (excluded)   ← real crap4dart glob does NOT match it\n  onboarding.dart  ⇒ matched (excluded)   ← same class: any file ending in `g.dart`\n  prompts.g.dart   ⇒ matched (excluded)   ← correct\n```\n\nToday's `gates.loc.exclude` (`flutter_app/crap4dart.yaml:159-162`) carries only `lib/l10n/app_localizations*.dart`, so the hole is latent — but this repo's configs already use `**.g.dart` / `**.freezed.dart` / `**.mocks.dart` shapes (root `crap4dart.yaml:11-16`, `crap4dart.loc-scope.yaml`), and the belt's documented invariant is \"covers exactly what the CI gate covers and never more\". The moment that generated-set convention reaches `gates.loc.exclude` (plausible — E1 parity keeps generated excludes synchronized, `scripts/check_crap_guards.py`), the belt silently over-excludes hand-written `*g.dart` files (`landing.dart`, `parking.dart`, …) and a future 2801-line screen gets through exactly the way #2438 did.\n\nFix is one line: drop `.` from the whitelist so it escapes (return `'\\\\$c'` for it), and ideally pin the matcher with one fixture asserting `**.g.dart` does NOT exclude `landing.dart`. Everything else in the translation (`**` → `.*` before `*` → `[^/]*`) is correct."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc69C6iT",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "test/ci_2462_canceled_run_no_park_guard_test.dart:369",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: ticket AC-A's re-arm clause is not satisfied — the SM-park/self-push deadlock is documented but not fixed anywhere**\n\nThe ticket (`input/gh-2462/ticket.md`, Acceptance A) requires a failing-first test proving: \"park + SM-authored silent-update push ⇒ validation re-arms on the new head.\" This PR cannot satisfy that from this repo, and it does not claim a hunk that does — but it also asserts the opposite in the PR description: *\"#2457 can be closed with these landed fixes (A + B)\"*.\n\nWhat actually landed here:\n- Defect A source fixed: a cancelled run no longer arms the aggregates (`!cancelled()`), so the false `validation_failed` park is gone. ✅\n- Defect A second half — \"the park-clearing rule must accept the SM's OWN silent-update push as a newer head\" — is **factory-side** (`dmtools-agentic-workflows`) and still demands a HUMAN push, per the PR's own Notes (\"repo-side trigger surface is pinned\") and the test comment at `ci_2462_canceled_run_no_park_guard_test.dart:373-375` (\"documented in gh-2462/rca.md (external repo, not changeable here)\"). The kicker-push test pinned here (lines 369+) only asserts YAML trigger shape (`branches-ignore: [main]`) — it proves a *trigger exists*, not that a parked PR ever re-arms off the SM's own push.\n\nConsequence: the unvalidated-merge trap survives in a narrower window. For any *genuine-failure* park, the SM still parks → silent-update pushes a new head it will never validate → a human merge lands unvalidated → the exact #2457 class (`sm-merge-guard` alarms again, after the fact).\n\nAsk: either land the factory-side change and cite it here, or reconcile the AC before closing — split/annotate #2462 with the external tracking (awf issue or `gh-2462/rca.md` pointer) and soften the \"#2457 can be closed\" claim to \"the false-park half\". As written, a reader closing #2457 off this description would believe the self-deadlock is dead when only its cancellation trigger is."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:bed654a9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: belt's glob matcher over-excludes — `.` is never escaped, so `**.g.dart`-style globs would silently blind the belt**\n\n`_globMatch` whitelists `.` as a literal in its regex translation (`ci_2462_app_loc_ceiling_guard_test.dart:55`), but `.` is a regex metacharacter and must be escaped like any other non-glob special char. The translated pattern over-matches, i.e. the belt *skips files the real loc gate scans* — the exact silent-miss class this belt exists to close (gh-2462 Defect B).\n\nDemonstrated on this tree (evaluating the matcher's own translation):\n\n```\nglob '**.g.dart'  →  belt pattern  ^.*.g.dart$\n  landing.dart     ⇒ matched (excluded)   ← real crap4dart glob does NOT match it\n  onboarding.dart  ⇒ matched (excluded)   ← same class: any file ending in `g.dart`\n  prompts.g.dart   ⇒ matched (excluded)   ← correct\n```\n\nToday's `gates.loc.exclude` (`flutter_app/crap4dart.yaml:159-162`) carries only `lib/l10n/app_localizations*.dart`, so the hole is latent — but this repo's configs already use `**.g.dart` / `**.freezed.dart` / `**.mocks.dart` shapes (root `crap4dart.yaml:11-16`, `crap4dart.loc-scope.yaml`), and the belt's documented invariant is \"covers exactly what the CI gate covers and never more\". The moment that generated-set convention reaches `gates.loc.exclude` (plausible — E1 parity keeps generated excludes synchronized, `scripts/check_crap_guards.py`), the belt silently over-excludes hand-written `*g.dart` files (`landing.dart`, `parking.dart`, …) and a future 2801-line screen gets through exactly the way #2438 did.\n\nFix is one line: drop `.` from the whitelist so it escapes (return `'\\\\$c'` for it), and ideally pin the matcher with one fixture asserting `**.g.dart` does NOT exclude `landing.dart`. Everything else in the translation (`**` → `.*` before `*` → `[^/]*`) is correct."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:b1398e91",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: ticket AC-A's re-arm clause is not satisfied — the SM-park/self-push deadlock is documented but not fixed anywhere**\n\nThe ticket (`input/gh-2462/ticket.md`, Acceptance A) requires a failing-first test proving: \"park + SM-authored silent-update push ⇒ validation re-arms on the new head.\" This PR cannot satisfy that from this repo, and it does not claim a hunk that does — but it also asserts the opposite in the PR description: *\"#2457 can be closed with these landed fixes (A + B)\"*.\n\nWhat actually landed here:\n- Defect A source fixed: a cancelled run no longer arms the aggregates (`!cancelled()`), so the false `validation_failed` park is gone. ✅\n- Defect A second half — \"the park-clearing rule must accept the SM's OWN silent-update push as a newer head\" — is **factory-side** (`dmtools-agentic-workflows`) and still demands a HUMAN push, per the PR's own Notes (\"repo-side trigger surface is pinned\") and the test comment at `ci_2462_canceled_run_no_park_guard_test.dart:373-375` (\"documented in gh-2462/rca.md (external repo, not changeable here)\"). The kicker-push test pinned here (lines 369+) only asserts YAML trigger shape (`branches-ignore: [main]`) — it proves a *trigger exists*, not that a parked PR ever re-arms off the SM's own push.\n\nConsequence: the unvalidated-merge trap survives in a narrower window. For any *genuine-failure* park, the SM still parks → silent-update pushes a new head it will never validate → a human merge lands unvalidated → the exact #2457 class (`sm-merge-guard` alarms again, after the fact).\n\nAsk: either land the factory-side change and cite it here, or reconcile the AC before closing — split/annotate #2462 with the external tracking (awf issue or `gh-2462/rca.md` pointer) and soften the \"#2457 can be closed\" claim to \"the false-park half\". As written, a reader closing #2457 off this description would believe the self-deadlock is dead when only its cancellation trigger is."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:275d7d11",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The repo-side root-cause fix is sound: `!cancelled()` on both required-check aggregates is verified correct (13 new guard tests green, expressions evaluated not grepped, genuine failures still arm), and the `flutter_app` loc-ceiling belt closes the #2438 gap on every SM validation dispatch. Two ⚠️ IMPORTANT items remain: the belt's glob matcher silently over-excludes (latent blind spot in the new guard), and ticket AC-A's park-clearing/re-arm half is not landed anywhere — the PR description's \"#2457 can be closed with these landed fixes (A + B)\" overstates coverage.\n\n**Key Issues**:\n- `test/ci_2462_app_loc_ceiling_guard_test.dart:55` — `_globMatch` never escapes `.`; a future `**.g.dart` exclude would make the belt skip hand-written `*g.dart` files (`landing.dart` verified matched) — the silent-miss class this belt exists to close.\n- `test/ci_2462_canceled_run_no_park_guard_test.dart:369` — AC-A's \"park + SM-authored silent-update push ⇒ validation re-arms\" is factory-side (`dmtools-agentic-workflows`) and still demands a HUMAN push; reconcile the AC before closing #2457/#2462.\n\n**Ranked digest (non-blocking)**:\n- `test/ci_2462_app_loc_ceiling_guard_test.dart:70` — `locViolations` reads each file twice (`lineCount(f.readAsStringSync())` in both condition and tuple); compute once.\n- `test/ci_2462_canceled_run_no_park_guard_test.dart:119` — cancelled-run fixture returns `''` for unsettled legs; GitHub has no such result — use `'cancelled'` (as the second test does) to match the narrative comment.\n- `test/ci_2462_app_loc_ceiling_guard_test.dart:8` — \"executes on every ci.yml dispatch, app-only PRs included\" holds for SM validation dispatches (workflow_dispatch = full gate) but not for pull_request events (app-only diffs green-skip the test-core steps via the scope fastpass, `ci.yml:931`); one clarifying word avoids future confusion.\n\n**Next Steps**:\n1. Escape `.` in `_globMatch` (one line) + add a matcher fixture pinning `**.g.dart` ⊘ `landing.dart`.\n2. Land or explicitly split out the factory-side park-clearing fix and reconcile the PR description / AC before closing #2457."
+    }
+  ]
+}
