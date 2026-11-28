@@ -1236,6 +1236,35 @@ void main() {
       expect(CliConfig.fromYaml(good).misuseBreaker, isFalse);
     });
 
+    test('agent validation agrees on the identicalCallExemptTools '
+        'opt-out (gh-2465 rework)', () {
+      // The gh-2461 abort text sends users to `agent.identicalCallExempt
+      // Tools`; the strict mirror must accept exactly what the boot
+      // parser accepts (a list of tool-name strings), or `fa config
+      // check` false-fails on fa's own output.
+      final badList =
+          loadYaml('agent:\n  identicalCallExemptTools: watch\n') as YamlMap;
+      expect(() => CliConfig.fromYaml(badList), throwsConfigException);
+      expect(
+        () => validateAgentSection(badList['agent']),
+        throwsConfigException,
+      );
+      final badEntry =
+          loadYaml('agent:\n  identicalCallExemptTools:\n    - 3\n') as YamlMap;
+      expect(() => CliConfig.fromYaml(badEntry), throwsConfigException);
+      expect(
+        () => validateAgentSection(badEntry['agent']),
+        throwsConfigException,
+      );
+      final good =
+          loadYaml('agent:\n  identicalCallExemptTools:\n    - watch\n')
+              as YamlMap;
+      final agentNode = good['agent'] as YamlMap;
+      expect(() => validateAgentSection(agentNode), returnsNormally);
+      expect(() => CliConfig.fromYaml(good), returnsNormally);
+      expect(CliConfig.fromYaml(good).identicalCallExemptTools, ['watch']);
+    });
+
     test('agent validation agrees on the stuckTool section (gh-1054)', () {
       // The emitter renders `agent.stuckTool:` when configured; the
       // mirror validates it with the section's own strict parser so the
@@ -1300,6 +1329,7 @@ void main() {
         CliConfig(contextWindowCap: 256000),
         CliConfig(agentLoadMode: 'pi'),
         CliConfig(misuseBreaker: false),
+        CliConfig(identicalCallExemptTools: const ['watch', 'poll_status']),
         CliConfig(stuckTool: StuckToolConfig(floor: Duration(seconds: 90))),
         CliConfig(
           foregroundCall: ForegroundCallBudgetConfig(
