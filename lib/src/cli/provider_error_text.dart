@@ -12,6 +12,7 @@ library;
 import 'dart:convert';
 
 import '../providers/stall_taxonomy.dart' show classifyProviderStall;
+import '../probable_overflow.dart' show isProbableOverflowError;
 import '../providers/transient_retry_stream.dart'
     show matchesRateLimitWording, matchesTransientNetworkWording;
 import '../types.dart' show classifyFinishReason, FinishReasonClass;
@@ -72,6 +73,12 @@ enum ProviderErrorCategory {
   /// The provider's content filter refused the response (the terminal
   /// finish_reason family). Never retried — replaying a filter is unsafe.
   contentFilter,
+
+  /// The gh-2470 deterministic per-history class: the SAME opaque error on
+  /// every attempt of a large request — a probable context overflow /
+  /// poisonous payload. Never heals on a retry; the recovery is compact or
+  /// switch model/session.
+  probableOverflow,
 
   /// Quota / rate limit (429 wordings). A retry window applies.
   rateLimit,
@@ -186,6 +193,25 @@ ClassifiedProviderError classifyProviderFailure(
       'error: $category: $cause$endpoint — $recovery';
 
   final compact = compactProviderError(rawMessage);
+
+  // The gh-2470 class FIRST: the probable-overflow terminal carries a
+  // pinned structural marker ([isProbableOverflowError]) — the most
+  // specific signal there is, and its wording deliberately avoids every
+  // net below (no rate-limit/transport/finish_reason vocabulary), so the
+  // order is belt-and-braces. The recovery is the only actionable one for
+  // a deterministic per-history failure: compact or switch.
+  if (isProbableOverflowError(rawMessage)) {
+    return ClassifiedProviderError._(
+      ProviderErrorCategory.probableOverflow,
+      line(
+        'probable overflow',
+        'the endpoint fails this large request identically — the history '
+            'is the likely poison, retrying cannot succeed',
+        'compact this session (/compact) or switch model/session',
+      ),
+      '${ProviderErrorCategory.probableOverflow.name}:$compact',
+    );
+  }
 
   final stall = classifyProviderStall(rawMessage);
   if (stall != null) {

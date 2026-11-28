@@ -1506,6 +1506,9 @@ void validateProviderTimeoutsSection(Object? node) {
 /// [agentLoadModeValidationError] rule), `misuseBreaker` (a boolean —
 /// gh-1572 makes the emitter render the kill switch, so the mirror has
 /// to accept it or `fa config check` false-fails on fa's own output),
+/// `identicalCallExemptTools` (a list of tool-name strings — the
+/// gh-2461 loop-guard opt-out the abort text names; the boot parser in
+/// `cli_config.dart` applies the same strict rule BY VALUE),
 /// `stuckTool` (validated with the section's own strict parser, the same
 /// one the boot parser applies) and the issue-#1786 foreground-budget
 /// leaves (`foregroundCallBudgetSeconds`, `foregroundCallAutoConvert` —
@@ -1539,6 +1542,7 @@ void validateAgentSection(Object? node) {
 final _agentKeyValidators = <String, void Function(Object?)>{
   'contextWindowCap': _validateAgentCapValue,
   'misuseBreaker': _validateAgentMisuseBreakerValue,
+  'identicalCallExemptTools': _validateAgentIdenticalCallExemptToolsValue,
   'stuckTool': (value) => StuckToolConfig.fromYaml(value),
   'foregroundCallBudgetSeconds': (value) =>
       ForegroundCallBudgetConfig.fromLeaves(budgetSeconds: value),
@@ -1570,6 +1574,24 @@ void _validateAgentCapValue(Object? value) {
 void _validateAgentMisuseBreakerValue(Object? value) {
   if (value is! bool) {
     throw ConfigException('"agent.misuseBreaker" must be a boolean');
+  }
+}
+
+/// Mirrors `_parseAgentIdenticalCallExemptToolsValue` (gh-2465 rework): a
+/// list of tool-name strings — the gh-2461 loop-guard opt-out.
+void _validateAgentIdenticalCallExemptToolsValue(Object? value) {
+  if (value is! YamlList) {
+    throw ConfigException(
+      '"agent.identicalCallExemptTools" must be a list of tool names',
+    );
+  }
+  for (final entry in value) {
+    if (entry is! String) {
+      throw ConfigException(
+        '"agent.identicalCallExemptTools" entries must be tool-name '
+        'strings (got: $entry)',
+      );
+    }
   }
 }
 

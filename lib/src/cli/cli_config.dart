@@ -359,6 +359,27 @@ bool? _parseAgentMisuseBreakerValue(Object? value) {
   return value;
 }
 
+/// gh-2461: the identical-call loop guard's yaml opt-out — a list of
+/// tool-name strings, empty by default (no opt-out). Strict like every
+/// agent key: a scalar or a non-string entry throws [ConfigException].
+List<String> _parseAgentIdenticalCallExemptToolsValue(Object? value) {
+  if (value is! YamlList) {
+    throw ConfigException(
+      '"agent.identicalCallExemptTools" must be a list of tool names',
+    );
+  }
+  return [
+    for (final entry in value)
+      if (entry is String)
+        entry
+      else
+        throw ConfigException(
+          '"agent.identicalCallExemptTools" entries must be tool-name '
+          'strings (got: $entry)',
+        ),
+  ];
+}
+
 /// The compaction reserve the cap floor mirrors (see [_parseAgentSection]).
 const _agentContextWindowCapMin = 16384;
 
@@ -407,6 +428,7 @@ final class _AgentSection {
     required this.mode,
     required this.agentMode,
     required this.misuseBreaker,
+    required this.identicalCallExemptTools,
     required this.stuckTool,
     required this.foregroundCall,
   });
@@ -415,6 +437,11 @@ final class _AgentSection {
   final String? mode;
   final String? agentMode;
   final bool? misuseBreaker;
+
+  /// gh-2461: tool names exempt from the identical-call loop guard
+  /// (`agent.identicalCallExemptTools`), the yaml opt-out the guard's
+  /// abort text names.
+  final List<String> identicalCallExemptTools;
   final StuckToolConfig? stuckTool;
   final ForegroundCallBudgetConfig? foregroundCall;
 }
@@ -427,6 +454,7 @@ _AgentSection? _parseAgentSection(Object? node) {
   int? cap;
   String? mode;
   bool? misuseBreaker;
+  List<String> identicalCallExemptTools = const [];
   StuckToolConfig? stuckTool;
   Object? fgBudgetSeconds;
   Object? fgAutoConvert;
@@ -438,6 +466,10 @@ _AgentSection? _parseAgentSection(Object? node) {
         mode = _parseAgentModeValue(node[key]);
       case 'misuseBreaker':
         misuseBreaker = _parseAgentMisuseBreakerValue(node[key]);
+      case 'identicalCallExemptTools':
+        identicalCallExemptTools = _parseAgentIdenticalCallExemptToolsValue(
+          node[key],
+        );
       case 'stuckTool':
         stuckTool = StuckToolConfig.fromYaml(node[key]);
       // Issue #1786: the two flat leaves are kept raw here and composed
@@ -455,6 +487,7 @@ _AgentSection? _parseAgentSection(Object? node) {
     contextWindowCap: cap,
     mode: mode,
     misuseBreaker: misuseBreaker,
+    identicalCallExemptTools: identicalCallExemptTools,
     stuckTool: stuckTool,
     budgetSeconds: fgBudgetSeconds,
     autoConvert: fgAutoConvert,
@@ -469,6 +502,7 @@ _AgentSection _composeAgentSection({
   required int? contextWindowCap,
   required String? mode,
   required bool? misuseBreaker,
+  required List<String> identicalCallExemptTools,
   required StuckToolConfig? stuckTool,
   required Object? budgetSeconds,
   required Object? autoConvert,
@@ -478,6 +512,7 @@ _AgentSection _composeAgentSection({
     mode: mode,
     agentMode: mode == 'pi' ? 'pi' : null,
     misuseBreaker: misuseBreaker,
+    identicalCallExemptTools: identicalCallExemptTools,
     stuckTool: stuckTool,
     foregroundCall: budgetSeconds == null && autoConvert == null
         ? null
@@ -684,6 +719,7 @@ final class CliConfig {
     this.images,
     this.agentMode,
     this.misuseBreaker = true,
+    this.identicalCallExemptTools = const [],
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
@@ -856,6 +892,8 @@ final class CliConfig {
       agentMode: agentSection?.agentMode,
       agentLoadMode: agentSection?.mode,
       misuseBreaker: agentSection?.misuseBreaker ?? true,
+      identicalCallExemptTools:
+          agentSection?.identicalCallExemptTools ?? const [],
       // The subagents section (background-subagent heartbeat, issue #383)
       subagents: SubagentsConfig.fromYaml(map['subagents']),
       waiting: WaitingConfig.fromYaml(map['waiting']),
@@ -1185,6 +1223,12 @@ final class CliConfig {
   /// behavior byte-identically (E5).
   final bool misuseBreaker;
 
+  /// Tools exempt from the identical-call loop guard
+  /// (`agent.identicalCallExemptTools`, gh-2461): intentional watch or
+  /// polling commands whose byte-identical repetition is the tool's own
+  /// contract. Empty by default — the guard trips nothing at birth.
+  final List<String> identicalCallExemptTools;
+
   /// Tool-load preset from `agent.mode` (`default|pi|omp`, issue #680):
   /// the curated essential set that boots into the schema; everything
   /// else stays discoverable. `null` = default mode (no preset,
@@ -1332,6 +1376,7 @@ final class CliConfig {
     ImageRegistryConfig? images,
     String? agentMode,
     bool? misuseBreaker,
+    List<String>? identicalCallExemptTools,
     SubagentsConfig? subagents,
     WaitingConfig? waiting,
     JobsConfig? jobs,
@@ -1399,6 +1444,8 @@ final class CliConfig {
       images: images ?? this.images,
       agentMode: agentMode ?? this.agentMode,
       misuseBreaker: misuseBreaker ?? this.misuseBreaker,
+      identicalCallExemptTools:
+          identicalCallExemptTools ?? this.identicalCallExemptTools,
       subagents: subagents ?? this.subagents,
       waiting: waiting ?? this.waiting,
       jobs: jobs ?? this.jobs,
@@ -1542,15 +1589,16 @@ final class CliConfig {
       streamThinking ? 'output:\n  streamThinking: true\n' : '';
 
   /// The `agent:` section, only when a cap, a load mode, a stuck-tool
-  /// config, the foreground-call budget, or the misuse-breaker kill
-  /// switch is persisted; defaults are never written so the file stays
-  /// minimal.
+  /// config, the foreground-call budget, the misuse-breaker kill switch,
+  /// or the identical-call opt-out is persisted; defaults are never
+  /// written so the file stays minimal.
   String _agentSectionYaml() {
     final stuckYaml = _stuckToolYaml();
     final fgYaml = _foregroundCallYaml();
     if (contextWindowCap == null &&
         agentLoadMode == null &&
         misuseBreaker &&
+        identicalCallExemptTools.isEmpty &&
         stuckYaml.isEmpty &&
         fgYaml.isEmpty) {
       return '';
@@ -1564,6 +1612,12 @@ final class CliConfig {
     }
     if (!misuseBreaker) {
       section.write('  misuseBreaker: false\n');
+    }
+    if (identicalCallExemptTools.isNotEmpty) {
+      section.write('  identicalCallExemptTools:\n');
+      for (final tool in identicalCallExemptTools) {
+        section.write('    - $tool\n');
+      }
     }
     section.write(stuckYaml);
     section.write(fgYaml);
