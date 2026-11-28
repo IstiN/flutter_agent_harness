@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-28T00:31:20.582Z",
+  "ticketKey": "gh-2458",
+  "headSha": "2af9c58ad09f6ede40ae7a838feaf6d450b6adf5",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_classification.json": {
+      "hash": "fnv1a64:c83c27a325639626",
+      "size": 462
+    },
+    "ci_failures.md": {
+      "hash": "fnv1a64:22b956b21d7a23b9",
+      "size": 123793
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:47ec8efa5b4bca7d",
+      "size": 2706826
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:f0ee2d9e2d3ce6e8",
+      "size": 503
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:3d24250ff6a7c40a",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:7db4d44c42937281",
+      "size": 13681
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:0e99769c7bf19575",
+      "size": 2024
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:74939e14794832d0",
+      "size": 532
+    },
+    "request.md": {
+      "hash": "fnv1a64:d84bb0d2fad53839",
+      "size": 4475
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:4e8476baf68f65fd",
+      "size": 710
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:e6f73dddc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:5b8ca64f50fdf9a3",
+      "size": 4570
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:d84bb0d2fad53839",
+      "size": 4475
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc6890Wq",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/agent/agent_loop.dart:2447",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: CI red on this commit — `agent_loop.dart` is now 2801 lines, over the 2800-line god-file ceiling**\n\nThe guards leg fails (`ci_failures.md` → \"CRAP + duplication\", job 140774142886):\n\n```\n[FAIL] loc: 1/732 files over their limit\n  lib/src/agent/agent_loop.dart: 2801 lines > max 2800\n```\n\nand the aggregate \"Quality gate\" fails in cascade (`Quality gate FAILED: a leg is failure (guards)`); \"Binaries smoke gate\", \"JS engine integration (quickjs-ng)\" and the second \"Quality gate\" are red on the same commit with logs unavailable (404). Verified locally on head `2af9c58ad0`: `wc -l lib/src/agent/agent_loop.dart` → 2801.\n\nThe round-2 hunks (this `_findTool` fallback block + the transformContext comment) added ~19 lines to a file that was already at the ceiling — the added lines above are the direct cause. `AGENTS.md` fixes the ceiling at ≤ 2800 lines per `.dart` file (crap4dart `loc` gate), so CI stays red until the file is split.\n\nFix per `AGENTS.md` (\"split by concern into `part` files — never by extracting public API\"): move a self-contained section into a `part`/`part of` pair — the natural seams are the request-payload builders (`_buildRequestContext` and its rewrite helpers, ~200 lines) or the tool-call execution section (`_executeToolCalls`/`_prepareToolCall`/`_executePreparedToolCall`, all private). A ~20-line trim alone would also clear the gate but re-erodes on the next change; the split is the durable fix. (Minor, same fix: the new live-list search loop in `_findTool` duplicates the snapshot loop — fold it into a small `_nameIn(List<Tool>, String)` helper while restructuring.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:1a052e6c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the live-tools rewrite is clobbered when `transformContext` is installed — the fix silently reverts to the run-start snapshot**\n\nThe added comment claims \"First rewrite, so every later payload rewrite captures the fresh list\", but the very next rewrite violates exactly that: when `config.transformContext != null`, `agent_loop.dart:1730-1735` rebuilds `requestContext` with `tools: context.tools` — the *original* run-start snapshot parameter — discarding the `liveTools` rewrite made ten lines above:\n\n```dart\nfinal transformContext = config.transformContext;\nif (transformContext != null) {\n  requestContext = Context(\n    systemPrompt: context.systemPrompt,\n    messages: await transformContext(List.of(context.messages), cancelToken),\n    tools: context.tools,   // ← run-start snapshot; liveTools is lost\n  );\n}\n```\n\nEvery later rewrite in the function correctly threads `requestContext.tools`; only this one reads `context.tools` (harmless before this PR, when the two could never diverge — now they do).\n\n`Agent.transformContext` is public mutable host API (`agent.dart:475`, wired into the config at `agent.dart:950`), so any host that installs the hook reproduces gh-2458 verbatim: the `others` mount re-syncs `state.tools`, `toolsProvider` resolves the fresh list, and the transformContext rebuild throws it away — the mounted tool stays invisible to the provider for the rest of the run. No in-repo host sets the hook today, which is why this is ⚠️ and not 🚨; the moment one does, this is the original bug with a green test suite (the new tests never install a `transformContext`).\n\nOne-line fix: use `tools: requestContext.tools` in the transformContext rebuild (it is non-null there whenever `toolsProvider` returned a list, falling back to the snapshot otherwise), plus a test case in `gh2458_midloop_mount_test.dart` that installs a `transformContext` hook alongside `toolsProvider`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:7ef08ca4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: executor routing still reads the run-start snapshot — schema and routing agree only through the CLI's `missingToolResolver`**\n\nThis field fixes the *payload* half of gh-2458 (the outbound `Context.tools`), but the loop's own routing half is unchanged and still bound to the run-start snapshot:\n\n- `_prepareToolCall` (`agent_loop.dart:2341`) resolves an incoming `tool_use` via `_findTool(context, name)` → `context.tools`, where `context` is the run-start transcript snapshot (`Agent._createContextSnapshot`, `agent.dart:858-864`); the gate's `apply()` re-syncs `agent.state.tools`, a different object, so the mounted tool is never found there.\n- On a miss the only fallback is `config.missingToolResolver` (`agent_loop.dart:2345-2349`) → error result `Tool X not found` at `:2350`. The sequential-mode probe has the same snapshot lookup (`:2156`).\n- The executor is never reached for a snapshot-missing name — wrapping via `wrapExecutor` cannot route it, because the existence check gates execution first.\n\nOnly `lib/src/cli/agent_cli.dart:1087` installs a resolver. `ToolAvailabilityGate` and `othersTool` are public barrel exports (`lib/flutter_agent_harness.dart:329-330`), so an SDK host wiring discovery per the gate's own docs — gate + `othersTool` + `wrapExecutor`, no resolver — now gets the mounted tool *advertised* in the schema and then a hard `Tool agent_message not found` when the model calls it. That is worse than pre-PR (before, the tool was never advertised so the model never called it): the schema half and the routing half disagree, exactly what the ticket acceptance forbids (\"root cause fixed at the mechanism level — schema visibility AND executor routing AND `_mounted` bookkeeping agree after a mid-loop mount\"). The new tests pass only because every routing case (`_runMountThenCall`, the Agent-wiring test) installs a resolver, which masks the gap.\n\nFix suggestion: when the snapshot lookup misses and `config.toolsProvider` is installed, let `_findTool` fall back to the live list (`config.toolsProvider?.call()`), and add one test that mounts mid-loop *without* a resolver and asserts the call routes to the executor. This keeps the honest no-resolver contract for genuinely un-mounted tools (the #680 tombstone) while making the mounted case agree at the loop layer for all hosts, not just the CLI."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:6dd946c8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT — fixed**\n\nThe `transformContext` rebuild in `_buildRequestContext` now threads `tools: requestContext.tools` instead of the run-start `context.tools` (`lib/src/agent/agent_loop.dart:1737`). The `liveTools` rewrite runs first, so when `toolsProvider` returned a list the rebuild now carries that live list forward; with no provider installed it falls back to the snapshot, unchanged.\n\n- **Test**: `test/agent/gh2458_midloop_mount_test.dart` — new case *\"(b2) REVIEW: a transformContext hook must not clobber the live-tools rewrite\"*: `_runMountThenCall` now accepts a `transformContext` hook; the rig mounts `agent_message` mid-loop with the hook installed alongside `toolsProvider` and asserts request 2's tools array contains the mounted tool. Red first (request 2 showed only `read`/`others`), green after the one-line fix.\n- All 7 tests in the suite pass; `dart format --set-exit-if-changed` and `dart analyze` clean."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:6faa139b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT — fixed**\n\nRouting now agrees with the schema at the loop layer, not only through the CLI's `missingToolResolver`:\n\n- `agent_loop.dart` `_findTool(context, name)` gained an optional `AgentLoopConfig? config` parameter: after the run-start snapshot misses, it falls back to `config.toolsProvider?.call()` — the same per-request live list the schema half already consults (`agent.state.tools`, re-synced by `ToolAvailabilityGate.apply`/`mount`). `_prepareToolCall` (:2345), the sequential-mode probe (:2160), and the misuse-breaker `toolDescription` lookup all pass the config.\n- The honest no-resolver contract is preserved: an *un-mounted* discoverable is in neither the snapshot nor the live list, so `_findTool` still misses → `missingToolResolver` (when installed) remains the last resort with its mount side effect → otherwise the plain `Tool X not found` / #680 tombstone path is untouched. The existing no-toolsProvider honesty case in this suite pins exactly that.\n- **Test**: `test/agent/gh2458_midloop_mount_test.dart` — new case *\"(b3) REVIEW: mounts mid-loop with NO resolver — the call routes to the executor, not the snapshot not-found\"*: `_runMountThenCall(useResolver: false)` mounts `agent_message` mid-loop via `others` and asserts the `tool_use` reaches the executor (`agent_message executed`, no error). Red first (\"Tool agent_message not found\"), green after the fallback.\n\nAll 7 tests in the suite pass; `dart format --set-exit-if-changed` and `dart analyze` clean."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:100104cc",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: CI red on this commit — `agent_loop.dart` is now 2801 lines, over the 2800-line god-file ceiling**\n\nThe guards leg fails (`ci_failures.md` → \"CRAP + duplication\", job 140774142886):\n\n```\n[FAIL] loc: 1/732 files over their limit\n  lib/src/agent/agent_loop.dart: 2801 lines > max 2800\n```\n\nand the aggregate \"Quality gate\" fails in cascade (`Quality gate FAILED: a leg is failure (guards)`); \"Binaries smoke gate\", \"JS engine integration (quickjs-ng)\" and the second \"Quality gate\" are red on the same commit with logs unavailable (404). Verified locally on head `2af9c58ad0`: `wc -l lib/src/agent/agent_loop.dart` → 2801.\n\nThe round-2 hunks (this `_findTool` fallback block + the transformContext comment) added ~19 lines to a file that was already at the ceiling — the added lines above are the direct cause. `AGENTS.md` fixes the ceiling at ≤ 2800 lines per `.dart` file (crap4dart `loc` gate), so CI stays red until the file is split.\n\nFix per `AGENTS.md` (\"split by concern into `part` files — never by extracting public API\"): move a self-contained section into a `part`/`part of` pair — the natural seams are the request-payload builders (`_buildRequestContext` and its rewrite helpers, ~200 lines) or the tool-call execution section (`_executeToolCalls`/`_prepareToolCall`/`_executePreparedToolCall`, all private). A ~20-line trim alone would also clear the gate but re-erodes on the next change; the split is the durable fix. (Minor, same fix: the new live-list search loop in `_findTool` duplicates the snapshot loop — fold it into a small `_nameIn(List<Tool>, String)` helper while restructuring.)"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:e3dd9377",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-2458 root cause (run-start tool snapshot) is correctly fixed for the shipped CLI path and is well tested (5 new tests, all green), but two ⚠️ issues keep the mechanism incomplete: the new live-tools rewrite is silently clobbered when a host installs `transformContext`, and executor routing still resolves names against the run-start snapshot, so schema and routing agree only through the CLI's `missingToolResolver`.\n\n**Key Issues**:\n- ⚠️ `agent_loop.dart:1730-1735` — the `transformContext` rebuild reads `tools: context.tools` (run-start snapshot), discarding the `liveTools` rewrite; any host with the public `Agent.transformContext` hook set reproduces gh-2458 verbatim.\n- ⚠️ `agent_loop.dart:668` — `_prepareToolCall`/`_executeToolCalls` still route via `_findTool(currentContext)` on the snapshot; without the CLI-only resolver, a public-API gate host gets the tool advertised but \"Tool X not found\" on call.\n\n**Next Steps**:\n1. Thread `requestContext.tools` through the `transformContext` rebuild + add a test with a `transformContext` hook installed.\n2. Add the live-list fallback to `_findTool` (or equivalent) + a no-resolver mount-then-call test.\n3. Optional hardening: one REG pass mounting every demoted family through the real `Agent` wiring without a scripted resolver."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-27:578bcff4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-27",
+      "updatedAt": "2026-11-27",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: Both round-1 ⚠️ findings are verifiably fixed in head `2af9c58ad0` (transformContext rebuild now threads `requestContext.tools`; `_findTool` falls back to the live `toolsProvider` list with the no-resolver honesty contract intact — 7/7 tests green, `dart analyze` clean), but CI is red on this commit: the rework hunks pushed `agent_loop.dart` to 2801 lines, one over the 2800-line `loc` gate ceiling, redding the guards leg and the \"Quality gate\" aggregate.\n\n**Key Issues** (5 failed checks on commit `2af9c58a` — `ci_failures.md`):\n- 🚨 **CRAP + duplication** — root cause: `loc` gate `[FAIL] lib/src/agent/agent_loop.dart: 2801 lines > max 2800` (posted as inline thread; split by concern into `part` files per AGENTS.md).\n- 🚨 **Quality gate** — cascade: `Quality gate FAILED: a leg is failure (guards)` (the loc failure above).\n- 🚨 **Quality gate** (2nd check) — failed; job log unavailable (GitHub 404).\n- 🚨 **Binaries smoke gate** — failed; job log unavailable (GitHub 404).\n- 🚨 **JS engine integration (quickjs-ng)** — failed; job log unavailable (GitHub 404).\n\n**Next Steps**:\n1. Split `agent_loop.dart` under the ceiling (part-file split by concern — request-payload builders or tool-call execution are the natural seams); CI re-runs automatically.\n2. Re-check the three log-unavailable failures after CI re-runs — if any stay red with logs, they are owned failures to fix in the next lap.\n3. Digest (no thread, no ceiling impact once the split lands): `agent_loop.dart:2440-2445` — the `_findTool` live-list loop duplicates the snapshot search loop; fold into a tiny name-search helper while restructuring."
+    }
+  ]
+}
