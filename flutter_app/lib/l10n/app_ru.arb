@@ -107,6 +107,14 @@
       }
     }
   },
+  "modelPresetHostDescriptionSignedIn": "Включено с вашим входом в {name}.",
+  "@modelPresetHostDescriptionSignedIn": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chatStartChat": "Начать чат",
   "chatNoUnread": "Нет непрочитанных чатов.",
   "chatNoAgents": "Нет агентов по этому фильтру.",
@@ -666,6 +674,7 @@
   "taskModelSectionTitle": "Модели для задач",
   "taskModelSmolDescription": "Для саммари и сабагентов",
   "taskModelSmolTitle": "Быстрая модель",
+  "taskModelSubagentTitle": "Модель субагентов",
   "taskModelUseMain": "Использовать основную",
   "setupAppBarTitle": "Подключение к Fa",
   "sidebarAllApps": "Все приложения ({count})",

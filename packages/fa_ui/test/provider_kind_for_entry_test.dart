@@ -55,5 +55,16 @@ void main() {
         'openai-completions',
       );
     });
+
+    test('the host-session provenance marker is not a wire dialect '
+        '(gh-2391 addendum 9 item 2)', () {
+      // The bridged host row persists kind 'host-session'; saving it
+      // verbatim made reconfigure die on "Unknown provider kind" — the
+      // host gateway speaks openai-completions like the preset apply.
+      expect(
+        providerKindForEntry('host-session', 'https://api.aiin.by/v1'),
+        'openai-completions',
+      );
+    });
   });
 }

@@ -59,8 +59,10 @@ Future<void> _pumpSection(
   LastConnectionStore? lastConnectionStore,
   ProviderRegistry? registry,
   FaProductConfig? productConfig,
+  Locale? locale,
 }) {
   Widget child = MaterialApp(
+    locale: locale,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
     home: ProductConfigScope(
@@ -547,6 +549,57 @@ void main() {
       expect(find.textContaining('OpenRouter'), findsNothing);
       expect(find.textContaining('API key'), findsNothing);
       expect(find.byType(PageView), findsOneWidget);
+    });
+
+    testWidgets('host card: description follows the sign-in state, role '
+        'labels localized (gh-2391 addendum 9 items 5b/5c)', (tester) async {
+      FaProductConfig config() => FaProductConfig(
+        productId: 'ain',
+        displayName: 'AIIN Agent',
+        apiEndpoint: Uri.parse(ainOrigin),
+        featureFlags: const {},
+        hostConnection: section(),
+        providerCatalog: 'host-only',
+      );
+
+      // Signed OUT (EN): the after-sign-in wording.
+      await _pumpSection(
+        tester,
+        service: _fakeService(),
+        store: MediaModelsStore.inMemory(),
+        registry: ProviderRegistry.inMemory(),
+        productConfig: config(),
+      );
+      expect(find.text('Available after you sign in to AIN.'), findsOneWidget);
+
+      // Signed IN (EN): the included wording.
+      final signedIn = (await bridgedRegistry())
+        ..rememberSessionKey('host', 'bridged-secret');
+      await _pumpSection(
+        tester,
+        service: _fakeService(),
+        store: MediaModelsStore.inMemory(),
+        registry: signedIn,
+        productConfig: config(),
+      );
+      expect(find.text('Included with your AIN sign-in.'), findsOneWidget);
+      expect(find.text('Available after you sign in to AIN.'), findsNothing);
+
+      // Signed IN (RU): localized description AND role labels.
+      await _pumpSection(
+        tester,
+        service: _fakeService(),
+        store: MediaModelsStore.inMemory(),
+        registry: (await bridgedRegistry())
+          ..rememberSessionKey('host', 'bridged-secret'),
+        productConfig: config(),
+        locale: const Locale('ru'),
+      );
+      expect(find.text('Включено с вашим входом в AIN.'), findsOneWidget);
+      expect(find.text('Быстрая модель'), findsOneWidget);
+      expect(find.text('Модель субагентов'), findsOneWidget);
+      expect(find.text('Quick model'), findsNothing);
+      expect(find.text('Subagents model'), findsNothing);
     });
 
     testWidgets('Apply on the host card carries the bridged key through', (

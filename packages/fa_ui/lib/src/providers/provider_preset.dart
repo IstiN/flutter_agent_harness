@@ -187,7 +187,13 @@ String? modelsDispatchHintForEntry(String? kind, String baseUrl) =>
 /// provider→live-model linkage apply, so a chat switched onto an entry
 /// rides the same wire the model pickers dispatched it on.
 String providerKindForEntry(String? kind, String baseUrl) {
-  final hint = kind ?? modelsDispatchHintFor(baseUrl);
+  // 'host-session' is a registry provenance marker (the product profile's
+  // host gateway with a bridged session key), not a wire dialect — the
+  // host endpoint speaks openai-completions, exactly like the preset
+  // apply path hardcodes (gh-2391 addendum 9 item 2: the picker used to
+  // save kind verbatim and reconfigure died on "Unknown provider kind").
+  final effectiveKind = kind == 'host-session' ? null : kind;
+  final hint = effectiveKind ?? modelsDispatchHintFor(baseUrl);
   if (hint != null) return hint;
   if (baseUrl.contains('generativelanguage.googleapis.com')) return 'google';
   return 'openai-completions';

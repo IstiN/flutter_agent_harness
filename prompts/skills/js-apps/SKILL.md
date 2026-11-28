@@ -1,6 +1,6 @@
 ---
 name: js-apps
-description: Create JS apps (jsr.render UI) that run inside Fa's Apps section — manifest.json + widget.js in the apps/ folder
+description: Create JS apps (jsr.render UI) that run inside the agent's Apps section — manifest.json + widget.js in the apps/ folder
 ---
 
 # Fa JS App Development Skill
@@ -22,7 +22,7 @@ pick the surface by this table, no improvisation.**
 
 | User asks for… | Build | Why |
 |---|---|---|
-| an app, a tool, an experience, "something I can open again" | `apps/<id>/` + `manifest.json` + `widget.js` | installs into Fa's Apps section, has a manifest, permissions, storage, a standing test, launcher tile |
+| an app, a tool, an experience, "something I can open again" | `apps/<id>/` + `manifest.json` + `widget.js` | installs into the agent's Apps section, has a manifest, permissions, storage, a standing test, launcher tile |
 | a one-off inline answer / a small interactive blip inside the current chat turn | a `dynamic_message` widget | ephemeral, rendered inline in the transcript, gone when the turn scrolls away |
 
 **The calculator anti-pattern (real incident, 2026-09-30):** the owner asked
@@ -61,7 +61,7 @@ JS apps live in the sandbox env folder `apps/<id>/`. You create and edit them wi
 ```
 1. write apps/my-app/manifest.json    metadata + permissions
 2. write apps/my-app/widget.js        ES5-style IIFE, jsr.* API
-3. open it for the user: open_app(id="my-app") — or tell them to open it in Fa's Apps section
+3. open it for the user: open_app(id="my-app") — or tell them to open it in the agent's Apps section
 ```
 
 ### Opening apps for the user — the `open_app` tool
@@ -102,7 +102,7 @@ Avoid these traps (they cost real debugging time):
 
 ## What is a Fa JS App?
 
-A Fa JS app is a self-contained mini-application that runs in Fa's Apps section: **`widget.js`** (ES5-style JavaScript driving UI and logic) plus **`manifest.json`** (metadata and permissions). Apps run in a sandboxed JavaScript engine (JavaScriptCore on macOS/iOS) and talk to the Flutter host via the `jsr.*` API.
+A Fa JS app is a self-contained mini-application that runs in the agent's Apps section: **`widget.js`** (ES5-style JavaScript driving UI and logic) plus **`manifest.json`** (metadata and permissions). Apps run in a sandboxed JavaScript engine (JavaScriptCore on macOS/iOS) and talk to the Flutter host via the `jsr.*` API.
 
 ```
 apps/

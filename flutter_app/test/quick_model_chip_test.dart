@@ -17,6 +17,7 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/widgets/product_brand.dart';
 import 'package:fa/ui/widgets/quick_model_chip.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -283,5 +284,89 @@ void main() {
     expect(page.allowMainConnection, isFalse);
     expect(page.mainBaseUrl, service.activeBaseUrl);
     expect(page.registry, same(registry));
+  });
+
+  testWidgets('host-only: picking a DIFFERENT host model updates the chip '
+      'and the live connection (gh-2391 addendum 9 item 2)', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    const ainOrigin = 'https://api.ain.example/v1';
+    final env = MemoryExecutionEnv();
+    final registry = ProviderRegistry.inMemory();
+    await registry.upsert(
+      CustomProvider(
+        id: 'host',
+        name: 'AIN',
+        baseUrl: ainOrigin,
+        modelId: 'ain/ain_free_vision',
+        provenance: 'host',
+        kind: 'host-session',
+      ),
+    );
+    registry.rememberSessionKey('host', 'bridged-secret');
+    final service = _fakeService(env, modelId: 'ain/ain_free_vision');
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('fake-session', service);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFahTheme(),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: ProductConfigScope(
+          productConfig: FaProductConfig(
+            productId: 'ain',
+            displayName: 'AIN Agent',
+            apiEndpoint: Uri.parse(ainOrigin),
+            featureFlags: const {},
+            hostConnection: HostConnectionConfig.fromJson(
+              {
+                'baseUrl': ainOrigin,
+                'sessionBridge': {
+                  'storage': 'localStorage',
+                  'key': 'aiin_agent_session',
+                },
+                'defaultModel': 'ain/ain_free_vision',
+                'modelRoles': {'subagent': 'ain/ain_pro'},
+              },
+              apiEndpoint: Uri.parse(ainOrigin),
+              displayName: () => 'AIN',
+            ),
+            providerCatalog: 'host-only',
+          ),
+          child: Builder(
+            builder: (context) => faHomeScreen(
+              context: context,
+              manager: manager,
+              registry: registry,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(_chip());
+    await tester.pumpAndSettle();
+    expect(find.byType(MediaSlotProviderPickerPage), findsOneWidget);
+
+    await tester.tap(find.text('AIN'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Model id'),
+      'ain/ain_pro',
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Save'));
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(service.modelId, 'ain/ain_pro');
+    expect(service.activeApiKeyForTest, 'bridged-secret');
+    expect(
+      find.descendant(of: _chip(), matching: find.text('ain/ain_pro')),
+      findsOneWidget,
+    );
   });
 }

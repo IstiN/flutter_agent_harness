@@ -1,15 +1,15 @@
 ---
 name: self-settings
 description: >
-  Configure fa (flutter_agent_harness) itself by editing the exact config
+  Configure the agent harness itself by editing the exact config
   files the CLI settings commands write: provider/model selection and roles,
   memory paths, tool availability, cubes, MCP servers, redaction, skills
   access, approval and mode, themes and TUI appearance (tui.theme: switch
-  or create a theme). Use when asked to reconfigure fa without a human
+  or create a theme). Use when asked to reconfigure the harness without a human
   in the REPL ("switch us to provider X", "point project memory at this
   path", "disable web_search for this project", "switch the theme to
   ohmypi").
-when_to_use: Reconfiguring fa itself — settings, provider, models, memory,
+when_to_use: Reconfiguring the harness itself — settings, provider, models, memory,
   tools, cubes, MCP, redaction, skills access, themes/TUI appearance — on
   any host (CLI headless, REPL, app), by editing the YAML config the CLI
   persists (themes also via ~/.fah/themes/*.json), never by guessing keys.

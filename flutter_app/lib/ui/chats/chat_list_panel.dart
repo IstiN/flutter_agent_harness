@@ -457,15 +457,39 @@ class _ChatListPanelState extends State<ChatListPanel> {
     final filter = widget.controller.filter;
     final animateLabels = _renderedFilter != null && _renderedFilter != filter;
     _renderedFilter = filter;
-    final filters = ChatListFilter.values;
+    // The host-only channels policy (gh-2391 addendum 9 item 4): a branded
+    // build with no network/relay never offers the Channels filter.
+    final hostOnly = ProductConfigScope.of(context).hostOnlyChannels;
+    if (hostOnly && filter == ChatListFilter.channels) {
+      // A channels selection persisted under another profile can't render
+      // here — reset after the frame (never mutate during build).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (widget.controller.filter == ChatListFilter.channels) {
+          widget.controller.setFilter(ChatListFilter.all);
+        }
+      });
+    }
+    final filters = ChatListFilter.values
+        .where((value) => value != ChatListFilter.channels || !hostOnly)
+        .toList();
+    // A stale channels selection (persisted under another profile) is not
+    // in the chip list — display All until the post-frame reset lands.
+    final effectiveFilter = hostOnly && filter == ChatListFilter.channels
+        ? ChatListFilter.all
+        : filter;
     return ColoredBox(
       color: _panelColor(colors),
       child: MessengerFilterControl(
         key: const ValueKey('chatCategoryChips'),
-        selectedIndex: filters.indexOf(filter),
+        selectedIndex: filters.indexOf(effectiveFilter),
         categories: [
           for (final value in filters)
-            _filterChip(value, _filterLabel(value), filter, animateLabels),
+            _filterChip(
+              value,
+              _filterLabel(value),
+              effectiveFilter,
+              animateLabels,
+            ),
         ],
         extraActions: widget.filterActions,
         selectedExtraIndex: widget.filterSelectedExtraIndex,

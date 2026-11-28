@@ -1,4 +1,3 @@
-import 'package:fa/prompts.g.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/services/secrets_store.dart';
 import 'package:fa/webllm/webllm_stream_function.dart';
@@ -70,10 +69,9 @@ Future<String> _engineVisibleSystemPrompt() async {
     ),
     askTool(),
   ];
-  final rendered = sandboxSystemPrompt.replaceAll(
-    '{{commands}}',
-    formatSandboxCommandSection(SandboxPlatform.web),
-  );
+  // The shared renderer (gh-2391 addendum 9 review): both placeholders —
+  // a raw template would leak {{agentName}} into the engine-visible prompt.
+  final rendered = renderSandboxSystemPrompt(platform: SandboxPlatform.web);
   final engine = _CaptureEngine();
   await webLlmStreamFunction(engine)(
     model,

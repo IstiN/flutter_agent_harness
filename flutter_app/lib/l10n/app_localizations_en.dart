@@ -282,6 +282,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String modelPresetHostDescription(String name) {
+    return 'Available after you sign in to $name.';
+  }
+
+  @override
+  String modelPresetHostDescriptionSignedIn(String name) {
     return 'Included with your $name sign-in.';
   }
 
@@ -1875,6 +1880,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get taskModelSmolTitle => 'Quick model';
+
+  @override
+  String get taskModelSubagentTitle => 'Subagents model';
 
   @override
   String get taskModelUseMain => 'Use main model';

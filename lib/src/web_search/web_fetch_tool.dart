@@ -19,6 +19,7 @@ import '../cube/network_gate.dart';
 import 'fetch_types.dart';
 import 'html_markdown.dart';
 import 'html_text.dart';
+import 'host_gateway.dart';
 import 'web_search_tool.dart';
 
 /// Creates the `web_fetch` tool, sharing [WebSearchConfig]'s HTTP plumbing.
@@ -61,9 +62,21 @@ Future<ToolExecutionResult> _executeWebFetch(
   final url = (arguments['url'] as String).trim();
   final uri = _parseFetchUri(url);
 
+  // The cube gate applies to the TARGET url on BOTH routes (ai-teammate
+  // review, gh-2391 addendum 9): a branded profile with an active cube
+  // policy must not turn the host relay into an unrestricted fetch
+  // bypass. The denial fires BEFORE any request to the host.
   final gate = config.networkGate;
   final denial = gate?.denialFor(uri);
   if (denial != null) return ToolExecutionResult.text(denial);
+
+  // The product profile's host gateway (gh-2391 addendum 9 item 3): the
+  // server fetches (SSRF-guarded), the client never touches the target —
+  // browser CORS made the direct path unusable. Raw body comes back for
+  // the stock client-side conversion.
+  if (config.hostFetchUrl != null) {
+    return executeHostWebFetch(config, uri, cancelToken);
+  }
 
   final base = config.httpClient ?? http.Client();
   final client = gate == null ? base : GatedHttpClient(base, gate);
@@ -133,6 +146,12 @@ const _textLikeContentTypes = {
   'application/xml',
   'text/xml',
 };
+
+/// The stock page renderer (markdown/text by content type, caps, fetch
+/// notices), shared with the host-gateway path (gh-2391 addendum 9 item
+/// 3) so both routes emit byte-identical output for the same page.
+String renderWebPageForHost(WebPage page, WebSearchConfig config) =>
+    _renderPage(page, config);
 
 /// Renders a fetched page as markdown (or passes text through) with the
 /// output cap and fetch notices.

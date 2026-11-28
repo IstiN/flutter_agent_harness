@@ -22,6 +22,7 @@ import '../cancel_token.dart';
 import '../cube/network_gate.dart';
 import '../secrets/secrets_store.dart';
 import 'fetch_types.dart';
+import 'host_gateway.dart';
 import 'providers.dart';
 import 'search_types.dart';
 import 'site_handlers.dart';
@@ -41,6 +42,9 @@ final class WebSearchConfig {
     this.siteHandlers,
     this.maxFetchBytes = 2 * 1024 * 1024,
     this.maxFetchChars = 50 * 1024,
+    this.hostSearchUrl,
+    this.hostFetchUrl,
+    this.hostBearerToken,
   });
 
   /// Ordered provider ids (`duckduckgo`, `brave`, `tavily`) or `auto` for
@@ -77,6 +81,23 @@ final class WebSearchConfig {
   /// Output cap for `web_fetch` markdown.
   final int maxFetchChars;
 
+  /// The product profile's host search endpoint (gh-2391 addendum 9 item
+  /// 3). When set it is the ONLY search provider: no DuckDuckGo/Brave/
+  /// Tavily chain, no key prompts — `POST {query, max_results}` with the
+  /// bridged session key as Bearer.
+  final Uri? hostSearchUrl;
+
+  /// The product profile's host fetch endpoint. When set, `web_fetch`
+  /// posts `{url}` here instead of fetching from the client (browser CORS
+  /// made the direct path unusable); the raw body comes back for the
+  /// stock client-side markdown conversion.
+  final Uri? hostFetchUrl;
+
+  /// Live resolver for the bridged session key (sign-in/sign-out rotates
+  /// it — never capture a fixed value). Null/empty sends no Bearer; the
+  /// host's 401 then reads as an expired session.
+  final String Function()? hostBearerToken;
+
   /// Returns a copy bound to [gate]; `this` when the gate is unchanged.
   WebSearchConfig withNetworkGate(CubeNetworkGate? gate) {
     if (gate == networkGate) return this;
@@ -90,6 +111,9 @@ final class WebSearchConfig {
       siteHandlers: siteHandlers,
       maxFetchBytes: maxFetchBytes,
       maxFetchChars: maxFetchChars,
+      hostSearchUrl: hostSearchUrl,
+      hostFetchUrl: hostFetchUrl,
+      hostBearerToken: hostBearerToken,
     );
   }
 
@@ -202,6 +226,20 @@ AgentTool webSearchTool({required WebSearchConfig config}) {
       final effectiveQuery = site != null && site.isNotEmpty
           ? '$query site:$site'
           : query;
+
+      // The product profile's host gateway is the ONLY provider when
+      // declared (gh-2391 addendum 9 item 3) — no chain, no key prompts.
+      // Note: the host contract ({query, max_results, search_type?}) has
+      // no `site` field, so a `site:` restriction rides inside the query
+      // text; the host engine may honor or ignore the operator.
+      if (config.hostSearchUrl != null) {
+        return executeHostWebSearch(
+          config,
+          query: effectiveQuery,
+          count: count,
+          cancelToken: cancelToken,
+        );
+      }
 
       final secrets = await config.secrets?.readAll() ?? const {};
       final resolved = resolveWebSearchChain(

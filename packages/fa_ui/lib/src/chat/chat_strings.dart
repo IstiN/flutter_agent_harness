@@ -4,6 +4,7 @@
 
 import 'package:flutter/widgets.dart';
 
+import '../host_config.dart';
 import 'upload_utils.dart';
 
 /// The chat UI strings (composer, message tiles, approval/ask/secret sheets,
@@ -213,7 +214,7 @@ class FaChatStringsEn extends FaChatStrings {
   @override
   String get chatInputHint => 'Type a message';
   @override
-  String get chatTyping => 'Fa is typing...';
+  String get chatTyping => '${FaUiHost.agentNameOrStock} is typing...';
   @override
   String get chatStatusThinking => 'Thinking...';
   @override
@@ -455,7 +456,7 @@ class FaChatStringsRu extends FaChatStrings {
   @override
   String get chatInputHint => 'Введите сообщение';
   @override
-  String get chatTyping => 'Fa печатает...';
+  String get chatTyping => '${FaUiHost.agentNameOrStock} печатает...';
   @override
   String get chatStatusThinking => 'Думает...';
   @override

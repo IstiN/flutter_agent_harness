@@ -288,6 +288,11 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String modelPresetHostDescriptionSignedIn(String name) {
+    return 'Включено с вашим входом в $name.';
+  }
+
+  @override
   String get chatStartChat => 'Начать чат';
 
   @override
@@ -1890,6 +1895,9 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get taskModelSmolTitle => 'Быстрая модель';
+
+  @override
+  String get taskModelSubagentTitle => 'Модель субагентов';
 
   @override
   String get taskModelUseMain => 'Использовать основную';

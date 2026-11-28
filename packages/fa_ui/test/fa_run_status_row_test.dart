@@ -107,6 +107,22 @@ void main() {
     expect(find.textContaining('Fa is typing'), findsOneWidget);
   });
 
+  testWidgets('the typing indicator names the host agent '
+      '(gh-2391 addendum 9 item 1)', (tester) async {
+    FaUiHost.agentName = 'AIN Agent';
+    addTearDown(() => FaUiHost.agentName = null);
+    final service = _PhaseService()
+      ..rows.add(FaChatMessage(role: 'user', content: 'hi'))
+      ..streaming = true;
+    await _pump(tester, service);
+
+    service.rows.add(FaChatMessage(role: 'assistant', content: 'partial ans'));
+    service.notify();
+    await tester.pump();
+    expect(find.textContaining('AIN Agent is typing'), findsOneWidget);
+    expect(find.textContaining('Fa is typing'), findsNothing);
+  });
+
   testWidgets('#1042 I1: exactly ONE status row in every run phase — '
       'thinking, typing, tool', (tester) async {
     final service = _PhaseService()

@@ -137,6 +137,23 @@ void main() {
     expect(find.byType(FaAiAvatar), findsOneWidget);
   });
 
+  testWidgets('a branded host avatar builder replaces the stock Fa glyph '
+      '(gh-2391 addendum 9 item 1)', (tester) async {
+    FaUiHost.brandAvatarBuilder =
+        ({required size, dark}) => const Text('HOST-MARK');
+    addTearDown(() => FaUiHost.brandAvatarBuilder = null);
+    await tester.pumpWidget(
+      wrap(
+        ChatMessageTile(
+          message: FaChatMessage(role: 'assistant', content: 'hello'),
+          images: images(),
+        ),
+      ),
+    );
+    expect(find.text('HOST-MARK'), findsOneWidget);
+    expect(find.byType(FaLogo), findsNothing);
+  });
+
   testWidgets('surface tokens re-seat the bubble and keep the stock border', (
     tester,
   ) async {

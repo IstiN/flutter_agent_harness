@@ -1311,8 +1311,10 @@ void main() {
         productConfig: _hostOnlyProfile(),
       );
       await tester.pumpAndSettle();
-      // The CTA (headline + button) and NO third-party catalog surface.
-      expect(find.text('Sign in to AIIN Agent'), findsWidgets);
+      // The CTA (headline + button) uses the SHORT product name
+      // (hostConnection.name), not the full displayName (addendum 9 nit).
+      expect(find.text('Sign in to AIN'), findsWidgets);
+      expect(find.text('Sign in to AIIN Agent'), findsNothing);
       expect(
         find.textContaining('Third-party providers are not part'),
         findsOneWidget,
@@ -1424,6 +1426,27 @@ void main() {
       expect(find.text('Sign in to AIIN Agent'), findsNothing);
       expect(find.textContaining('Connect a provider'), findsOneWidget);
     });
+  });
+
+  testWidgets('host-only page 1 ghost shows the sign-in CTA, no provider '
+      'zoo (gh-2391 addendum 9 item 5a)', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await _pumpOnboarding(
+      tester,
+      registry: ProviderRegistry.inMemory(),
+      productConfig: _hostOnlyProfile(),
+    );
+    await tester.pumpAndSettle();
+    // Pre-existing 11px overflow in the page-0 mockups Row
+    // (onboarding_mockups.dart) at test viewports — outside this card.
+    tester.takeException();
+    expect(find.text('Ollama'), findsNothing);
+    expect(find.text('OpenRouter'), findsNothing);
+    expect(find.text('Google Gemini'), findsNothing);
+    // Page 0 is the welcome page: the ghost's sign-in title + CTA.
+    expect(find.byKey(const ValueKey('hostSignInGhost')), findsOneWidget);
   });
 }
 

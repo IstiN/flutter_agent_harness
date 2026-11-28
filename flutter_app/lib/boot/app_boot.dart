@@ -24,6 +24,7 @@ import 'package:fa/network/auth_pending_store.dart';
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
+import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/sandbox/wasm_setup_stub.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -361,6 +362,14 @@ Future<BootStores> loadBootStores(
   // fa_ui's provider UI resolves named keys through the app's chain
   // (dart-defines → saved keys → .env), exactly like the connection form.
   FaUiHost.keyResolver = (name) => settingsKeyEnv(name, sessionKeys);
+  // The product profile's display identity + brand mark (gh-2391 addendum
+  // 9 item 1): the typing indicator, the system prompt's first sentence
+  // and every fa_ui assistant avatar/session tile follow the profile.
+  // Stock installs the same builder — FaBrandTile renders the stock logo
+  // unchanged when the scope is stock, so there is exactly one code path.
+  FaUiHost.agentName = productConfig.agentName;
+  FaUiHost.brandAvatarBuilder =
+      ({required size, dark}) => FaBrandTile(size: size, dark: dark);
   // Network mode (issue #955): the device wallet (keychain-first, file
   // fallback), the persisted mode picker state, and the session manager.
   BootSteps.begin('storage:networkWallet');

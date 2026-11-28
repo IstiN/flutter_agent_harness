@@ -565,9 +565,12 @@ class _PresetCard extends StatelessWidget {
       _ => preset.nameFor(l10n),
     };
     final description = switch (preset.target) {
-      HostModelPresetTarget(:final section) => l10n.modelPresetHostDescription(
-        section.name,
-      ),
+      // Signed-in host cards read "included", anonymous ones read
+      // "available after sign-in" (gh-2391 addendum 9 item 5c).
+      HostModelPresetTarget(:final section) =>
+        keyAvailable
+            ? l10n.modelPresetHostDescriptionSignedIn(section.name)
+            : l10n.modelPresetHostDescription(section.name),
       _ => preset.descriptionFor(l10n),
     };
     // The host session has no "Set key" flow — its credential arrives
@@ -596,7 +599,7 @@ class _PresetCard extends StatelessWidget {
           _comboRow(
             context,
             icon: Icons.bolt_outlined,
-            label: 'Quick model', // l10n:ignore
+            label: l10n.taskModelSmolTitle,
             modelId:
                 preset.taskSlots[TaskRole.smol] ??
                 l10n.mediaModelsFallbackSummary,
@@ -604,7 +607,7 @@ class _PresetCard extends StatelessWidget {
           _comboRow(
             context,
             icon: Icons.groups_outlined,
-            label: 'Subagents model', // l10n:ignore
+            label: l10n.taskModelSubagentTitle,
             modelId:
                 preset.taskSlots[TaskRole.subagent] ??
                 l10n.mediaModelsFallbackSummary,

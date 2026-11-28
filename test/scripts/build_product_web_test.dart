@@ -463,6 +463,62 @@ void main() {
       },
     );
 
+    test(
+      'agentName + tools ride the emitted profile (gh-2391 addendum 9)',
+      () async {
+        final json = _profile(hostConnection: true)
+          ..['agentName'] = 'AIN Agent'
+          ..['tools'] = {
+            'webSearch': {'url': 'https://api.ain.by/v1/search/perplexity'},
+            'webFetch': {'url': 'https://api.ain.by/v1/web/fetch'},
+          };
+        profile.writeAsStringSync(jsonEncode(json));
+        final output = '${temp.path}/branded-add9';
+        await buildProductWeb(
+          profilePath: profile.path,
+          assetsPath: assets.path,
+          outputPath: output,
+          builder: (path) async => _fixtureShell(Directory(path)),
+        );
+        final emitted =
+            jsonDecode(File('$output/product_config.json').readAsStringSync())
+                as Map<String, Object?>;
+        expect(emitted['agentName'], 'AIN Agent');
+        expect(emitted['tools'], {
+          'webSearch': {'url': 'https://api.ain.by/v1/search/perplexity'},
+          'webFetch': {'url': 'https://api.ain.by/v1/web/fetch'},
+        });
+        // The web runtime parses THIS file: the recursive secret rejection
+        // must pass on the way back, and both fields survive the round-trip.
+        final runtime = FaProductConfig.fromJson(emitted);
+        expect(runtime.agentName, 'AIN Agent');
+        expect(
+          runtime.webTools?.webSearchUrl?.toString(),
+          'https://api.ain.by/v1/search/perplexity',
+        );
+        expect(
+          runtime.webTools?.webFetchUrl?.toString(),
+          'https://api.ain.by/v1/web/fetch',
+        );
+
+        // Stock: no fields → no keys (REG).
+        final plain = _profile();
+        profile.writeAsStringSync(jsonEncode(plain));
+        final plainOut = '${temp.path}/branded-plain-add9';
+        await buildProductWeb(
+          profilePath: profile.path,
+          assetsPath: assets.path,
+          outputPath: plainOut,
+          builder: (path) async => _fixtureShell(Directory(path)),
+        );
+        final plainEmitted =
+            jsonDecode(File('$plainOut/product_config.json').readAsStringSync())
+                as Map<String, Object?>;
+        expect(plainEmitted.containsKey('agentName'), isFalse);
+        expect(plainEmitted.containsKey('tools'), isFalse);
+      },
+    );
+
     test('profile without the section emits no hostConnection key', () async {
       final output = '${temp.path}/branded-plain';
       await buildProductWeb(

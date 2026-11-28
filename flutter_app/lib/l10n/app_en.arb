@@ -120,8 +120,16 @@
   "chatNoConversationsTitle": "No chats yet",
   "chatNoConversationsBody": "Start a local chat. Network sign-in is optional.",
   "chatNoConversationsBodyHostOnly": "Start a local chat.",
-  "modelPresetHostDescription": "Included with your {name} sign-in.",
+  "modelPresetHostDescription": "Available after you sign in to {name}.",
   "@modelPresetHostDescription": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "modelPresetHostDescriptionSignedIn": "Included with your {name} sign-in.",
+  "@modelPresetHostDescriptionSignedIn": {
     "placeholders": {
       "name": {
         "type": "String"
@@ -687,6 +695,7 @@
   "taskModelSectionTitle": "Task models",
   "taskModelSmolDescription": "For summaries and subagents",
   "taskModelSmolTitle": "Quick model",
+  "taskModelSubagentTitle": "Subagents model",
   "taskModelUseMain": "Use main model",
   "setupAppBarTitle": "Connect to Fa",
   "sidebarAllApps": "All apps ({count})",

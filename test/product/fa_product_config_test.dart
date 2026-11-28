@@ -744,6 +744,90 @@ void main() {
       }
     });
   });
+
+  group('agentName + host tools envelope (gh-2391 addendum 9)', () {
+    test('agentName falls back to Fa and parses from the profile', () {
+      expect(FaProductConfig.stock.agentName, 'Fa');
+      expect(FaProductConfig.fromJson(_valid()).agentName, 'Fa');
+      final config = FaProductConfig.fromJson(
+        _valid()..['agentName'] = 'AIN Agent',
+      );
+      expect(config.agentName, 'AIN Agent');
+    });
+
+    test('agentName must be non-empty text', () {
+      for (final bad in ['', '   ', 42]) {
+        expect(
+          () => FaProductConfig.fromJson(_valid()..['agentName'] = bad),
+          throwsFormatException,
+          reason: 'agentName: $bad',
+        );
+      }
+    });
+
+    test('a tools section with endpoint urls loads — url is not a secret', () {
+      final config = FaProductConfig.fromJson(
+        _valid()
+          ..['tools'] = {
+            'webSearch': {'url': 'https://api.aiin.by/v1/search/perplexity'},
+            'webFetch': {'url': 'https://api.aiin.by/v1/web/fetch'},
+          },
+      );
+      expect(config.agentName, 'Fa');
+      expect(
+        config.webTools?.webSearchUrl?.toString(),
+        'https://api.aiin.by/v1/search/perplexity',
+      );
+      expect(
+        config.webTools?.webFetchUrl?.toString(),
+        'https://api.aiin.by/v1/web/fetch',
+      );
+    });
+
+    test('absent tools section stays null; non-https urls are rejected', () {
+      expect(FaProductConfig.fromJson(_valid()).webTools, isNull);
+      expect(FaProductConfig.stock.webTools, isNull);
+      for (final bad in ['http://api.aiin.by/v1', 'not a url', 42]) {
+        expect(
+          () => FaProductConfig.fromJson(
+            _valid()
+              ..['tools'] = {
+                'webSearch': {'url': bad},
+              },
+          ),
+          throwsFormatException,
+          reason: 'url: $bad',
+        );
+      }
+    });
+
+    test('a credential nested under tools is still rejected', () {
+      expect(
+        () => FaProductConfig.fromJson(
+          _valid()
+            ..['tools'] = {
+              'webSearch': {'url': 'https://api.aiin.by/v1', 'apiKey': 'sk'},
+            },
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('the product profile never round-trips through ToolsConfig', () {
+      // Two envelopes, two parsers: product.json is FaProductConfig-only.
+      // ToolsConfig's strict {"tools": {"<id>": bool}} would throw on the
+      // host tools map — the isolation this test pins (ain review note).
+      final profile = _valid()
+        ..['tools'] = {
+          'webSearch': {'url': 'https://api.aiin.by/v1/search/perplexity'},
+        };
+      expect(FaProductConfig.fromJson(profile).productId, 'host-product');
+      expect(
+        () => ToolsConfig.fromJson(profile),
+        throwsA(isA<ConfigException>()),
+      );
+    });
+  });
 }
 
 /// The hostConnection section under test, with every field overridable.
