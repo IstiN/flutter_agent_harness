@@ -32,7 +32,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let mut archive = zip::ZipArchive::new(file)?;
         for i in 0..archive.len() {
             let mut entry = archive.by_index(i)?;
-            let entry_path = entry.mangled_name();
+            // zip 9: mangled_name() is fallible (ZipError) - the sanitizer
+            // rejects entry names it cannot make extraction-safe.
+            let entry_path = entry.mangled_name()?;
             let stripped = entry_path.strip_prefix("/").unwrap_or(&entry_path);
             let out_path = Path::new(out_dir).join(stripped);
             if entry.is_dir() {
