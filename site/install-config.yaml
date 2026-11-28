@@ -65,6 +65,17 @@ install:
     - "  ██╔══╝  ██╔══██║╚════╝   ██║   ╚════╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║██║"
     - "  ██║     ██║  ██║         ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║███████╗"
     - "  ╚═╝     ╚═╝  ╚═╝         ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝"
+  # ASCII-only banner for the Windows installers (gh-1945 mojibake):
+  # GitHub Pages serves the .ps1 without a charset; Windows PowerShell 5.1
+  # decodes the irm|iex pipe as ISO-8859-1, so non-ASCII glyphs reach the
+  # user as mojibake. The sh installers keep the Unicode art above.
+  ps_banner:
+    - " ########  ########"
+    - " ##        ##  ##"
+    - " ##        ##  ##"
+    - " ####    ########"
+    - " ##        ##  ##"
+    - " ##        ##  ##"
   tagline: "Fa installer — flutter_agent_harness CLI"
   setup_url_sh: "https://fa1.dev/setup.sh"
   setup_url_ps: "https://fa1.dev/setup.ps1"
