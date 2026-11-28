@@ -3,6 +3,8 @@
 // in the LICENSE file.
 
 import 'package:flutter_chat_core/flutter_chat_core.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show stripRecordTags;
 
 import 'fa_chat_service.dart';
 
@@ -90,10 +92,16 @@ Message _projectDisplayMessage(
         createdAt: now,
       );
     case 'assistant':
+      // gh-2472: the rendered assistant text strips the model-facing
+      // `m<N> ` record-tag echoes — history rows (sessions recorded
+      // before the persist-side echo hygiene still carry them on disk)
+      // and the live tile feed both project through here. User rows
+      // render verbatim: a user-typed `m2 …` quote is not the model's
+      // echo and stays untouched.
       return Message.text(
         id: id,
         authorId: 'assistant',
-        text: chat.content,
+        text: stripRecordTags(chat.content),
         createdAt: now,
       );
     case 'system':
