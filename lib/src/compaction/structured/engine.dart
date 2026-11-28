@@ -47,6 +47,7 @@ import '../token_estimation.dart';
 import 'judge.dart';
 import 'judge_health.dart';
 import 'ledger.dart';
+import '../ledger_budget.dart' show hideBatchLabels;
 import 'markers.dart';
 import 'projection.dart';
 import '../cache_policy.dart';
@@ -505,7 +506,19 @@ final class StructuredCompactor {
     if (evictions.isEmpty) return;
     final watch = Stopwatch()..start();
     final usageBefore = usage?.snapshot();
-    await session.appendHiddenRange(recordIds: evictions.toList()..sort());
+    // gh-2492 C5: the re-hide batch consolidates with its engine label.
+    final evicted = evictions.toList()..sort();
+    await session.appendHiddenRange(
+      recordIds: evicted,
+      labels: hideBatchLabels(
+        evicted,
+        recordAt: (id) {
+          final seq = view.seqs.seqOf(id);
+          return seq == null ? null : view.seqs.recordAt(seq);
+        },
+      ),
+      consolidated: true,
+    );
     // #2258: a kill landing while the append was in flight leaves the
     // record written-but-unprojected — skip the refresh and the receipt;
     // the factory's local trim stays the tail (resume replays the record).
@@ -792,7 +805,19 @@ final class StructuredCompactor {
       },
     );
     if (ids.isEmpty) return (killed: false, decided: true);
-    await session.appendHiddenRange(recordIds: ids.toList()..sort());
+    // gh-2492 C5: the hide batch consolidates with its engine label.
+    final judgeHidden = ids.toList()..sort();
+    await session.appendHiddenRange(
+      recordIds: judgeHidden,
+      labels: hideBatchLabels(
+        judgeHidden,
+        recordAt: (id) {
+          final seq = view.seqs.seqOf(id);
+          return seq == null ? null : view.seqs.recordAt(seq);
+        },
+      ),
+      consolidated: true,
+    );
     // #2258: see _runLruRehidePasses — written-but-unprojected stops
     // here; the verdict's local trim stays the tail.
     if (_ladderTerminated) return (killed: true, decided: false);
@@ -1123,7 +1148,19 @@ final class StructuredCompactor {
     }
     final watch = Stopwatch()..start();
     final usageBefore = usage?.snapshot();
-    await session.appendHiddenRange(recordIds: ids.toList()..sort());
+    // gh-2492 C5: the fallback batch consolidates with its engine label.
+    final fallbackHidden = ids.toList()..sort();
+    await session.appendHiddenRange(
+      recordIds: fallbackHidden,
+      labels: hideBatchLabels(
+        fallbackHidden,
+        recordAt: (id) {
+          final seq = view.seqs.seqOf(id);
+          return seq == null ? null : view.seqs.recordAt(seq);
+        },
+      ),
+      consolidated: true,
+    );
     // #2258: see _runLruRehidePasses — written-but-unprojected stops
     // here; the verdict's local trim stays the tail.
     if (_ladderTerminated) return false;

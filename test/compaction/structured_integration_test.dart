@@ -1281,27 +1281,31 @@ void main() {
       final view = await session.buildContextMessages();
       final texts = [for (final m in view) _textOf(m)];
       final joined = texts.join('\n');
+      // gh-2492 C5: hidden batches render as consolidated pointers
+      // (`<label> [expand a-b]`) — inline at the carrier position, in
+      // ascending id order.
       final markerAt = RegExp(
-        r'\[(\d+):hidden',
+        r'\[expand (\d+)',
       ).allMatches(joined).map((m) => int.parse(m.group(1)!)).toList();
       expect(markerAt, isNotEmpty);
       expect(
         markerAt,
         equals([...markerAt]..sort()),
-        reason: 'markers sit in id order, i.e. at their positions',
+        reason: 'pointers sit in id order, i.e. at their positions',
       );
-      // Inline anchoring: markers render between the surviving user
+      // Inline anchoring: pointers render between the surviving user
       // asks, at the positions the hidden records occupied.
       final firstAsk = joined.indexOf('fix the login');
       final lastAsk = joined.lastIndexOf('exact error');
-      final firstMarker = joined.indexOf(':hidden');
+      // gh-2492 C5: hidden batches render as consolidated pointers.
+      final firstMarker = joined.indexOf('[expand');
       expect(firstMarker, greaterThan(firstAsk));
       expect(firstMarker, lessThan(lastAsk));
-      // Pairs hide atomically (W1): a hidden pair's markers render as
-      // user-role one-liners — never an orphaned tool_result.
+      // Pairs hide atomically (W1): a hidden pair renders as user-role
+      // one-liners — never an orphaned tool_result.
       final markerMessages = view
           .whereType<UserMessage>()
-          .where((m) => _textOf(m).contains(':hidden'))
+          .where((m) => _textOf(m).contains('[expand'))
           .length;
       expect(markerMessages, greaterThan(0));
       expect(

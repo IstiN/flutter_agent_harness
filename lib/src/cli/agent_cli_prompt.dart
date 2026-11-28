@@ -70,11 +70,13 @@ extension AgentCliPromptComposition on AgentCli {
   /// The context includes (issue #2423 C1/C7): the working-set contract
   /// and the context-hygiene rules ride the MODE prompt on every host —
   /// `working_set` has no availability id, so it is registered in every
-  /// load mode and the paragraph never names an absent tool. NOT composed
-  /// over an explicit `systemPrompt` override (same rule as the recall
-  /// contract: an override IS the whole prompt, byte-exact).
+  /// load mode and the paragraph never names an absent tool. gh-2492 C7:
+  /// the pinned-steering contract rides beside them. NOT composed over an
+  /// explicit `systemPrompt` override (same rule as the recall contract:
+  /// an override IS the whole prompt, byte-exact).
   String _withContextIncludes(String base) =>
-      '$base\n\n$workingSetPrompt\n\n$contextHygienePrompt';
+      '$base\n\n$workingSetPrompt\n\n$contextHygienePrompt'
+      '\n\n$pinnedSteeringPrompt';
 
   /// The recall-hygiene contract (issue #1380 A3): structured-engine
   /// sessions run with the total-recall contract appended to the MODE

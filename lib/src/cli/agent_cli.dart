@@ -119,7 +119,8 @@ import '../prompts/prompts.g.dart'
         finalizeGateContractPrompt,
         recallHygienePrompt,
         workingSetPrompt,
-        contextHygienePrompt;
+        contextHygienePrompt,
+        pinnedSteeringPrompt;
 import '../prompts/project_context.dart';
 import '../approval/approval.dart';
 import '../wire/wire_serve.dart';

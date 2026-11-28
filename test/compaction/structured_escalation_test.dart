@@ -20,7 +20,11 @@ library;
 import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/compaction/ledger_budget.dart'
+    show toolHistogramLabel;
 import 'package:flutter_agent_harness/src/compaction/structured/engine.dart';
+import 'package:flutter_agent_harness/src/compaction/structured/markers.dart'
+    show consolidatedHideMarker;
 import 'package:flutter_agent_harness/src/compaction/structured/projection.dart'
     show RecordSeqIndex, hiddenMarkerTokens, recordTokens;
 import 'package:test/test.dart';
@@ -115,7 +119,69 @@ int _settledTokens(List<SessionRecord> entries, Set<String> hidden) {
         ? hiddenMarkerTokens(record, seq)
         : recordTokens(record);
   }
-  return total;
+  // gh-2492 C5: each hide BATCH consolidates — the per-record markers of
+  // a contiguous hidden run become ONE engine-labelled pointer. Measure
+  // the settled cost the way the real wire renders it, with the REAL
+  // label builder over the run's records (exact, not a guess).
+  var consolidatedDelta = 0;
+  for (final run in contiguousHiddenRuns(entries, hidden).values) {
+    final records = [
+      for (final seq in run)
+        if (seqs.recordAt(seq) is MessageRecord) seqs.recordAt(seq)!,
+    ];
+    if (records.isEmpty) continue;
+    final label = toolHistogramLabel(records);
+    final pointer = consolidatedHideMarker(
+      from: run.first,
+      to: run.last,
+      label: label,
+    );
+    consolidatedDelta += estimateTokens(UserMessage.text(pointer));
+    for (final seq in run) {
+      final record = seqs.recordAt(seq);
+      if (record is MessageRecord) {
+        consolidatedDelta -= hiddenMarkerTokens(record, seq);
+      }
+    }
+  }
+  return total + consolidatedDelta;
+}
+
+/// The contiguous hidden runs of [entries] over [hidden] ids:
+/// record seq lists, ascending, one entry per run (members adjacent in
+/// the projection with no visible record between).
+Map<int, List<int>> contiguousHiddenRuns(
+  List<SessionRecord> entries,
+  Set<String> hidden,
+) {
+  final seqs = RecordSeqIndex(entries);
+  final visibleSeqs = <int>{
+    for (final record in entries)
+      if (record is MessageRecord && !hidden.contains(record.id))
+        ?seqs.seqOf(record.id),
+  };
+  final hiddenSeqs = <int>[
+    for (final record in entries)
+      if (record is MessageRecord && hidden.contains(record.id))
+        ?seqs.seqOf(record.id),
+  ];
+  hiddenSeqs.sort();
+  final runs = <int, List<int>>{};
+  List<int>? current;
+  var previous = -1;
+  for (final seq in hiddenSeqs) {
+    final visibleBetween = visibleSeqs.any(
+      (visible) => visible > previous && visible < seq,
+    );
+    if (current == null || visibleBetween) {
+      current = [seq];
+      runs[seq] = current;
+    } else {
+      current.add(seq);
+    }
+    previous = seq;
+  }
+  return runs;
 }
 
 void main() {
@@ -635,7 +701,17 @@ void main() {
         (await session.getEntries()).whereType<CompactCheckpointRecord>(),
         isEmpty,
       );
-      expect(state.messages.length, messagesBefore.length);
+      // gh-2492 C5: the judge's hidden set (filler + the pair — one
+      // contiguous batch) consolidates into ONE pointer instead of three
+      // per-record markers; the failed escalation itself added nothing
+      // and hid nothing further.
+      expect(
+        state.messages.length,
+        messagesBefore.length - 2,
+        reason:
+            'the contiguous batch renders one pointer, not three '
+            'markers; the failed escalation added nothing',
+      );
     });
 
     test('failed processing (throwing summarizer): verdict stands, '
@@ -1020,16 +1096,19 @@ void main() {
         'no-range receipt, verdict stands', () async {
       // Layout (file order): user ask (100 tok, LIVE), one pinned filler
       // (300 tok — absorbs the weight so the settle stays in the band),
-      // two read pairs the judge hides (102 tok full → 35 tok markers),
-      // one live 25-tok filler tail. Entry 629 > 600; after the hides the
-      // settle is 495 → margin 105 rides into the band and the escalation
-      // fires. Its foldable path — user + both marker pairs + the tail —
-      // is 195 tokens, INSIDE keepRecentTokens (200): the keep-recent
-      // region covers the whole path, so NOTHING may fold. The old
-      // whole-world fold swallowed the live user ask and the tail filler
-      // (leaving hosts a projection with no live turn at all — the
-      // resumed-child "subagent produced no assistant message" CI
-      // regression).
+      // two read pairs the judge hides, one live 25-tok filler tail.
+      // Entry > 600; after the hides the settle rides INSIDE the
+      // escalation band and the escalation fires. gh-2492 C5: the two
+      // pairs are one contiguous batch — they consolidate into ONE
+      // engine-labelled pointer (`<histogram> [expand 4-7]`), so the
+      // post-hide settle differs from the per-record-marker era and the
+      // measured margin is 166 (still inside the 200 band). Its foldable
+      // path — user + the marker pointer + the tail — is INSIDE
+      // keepRecentTokens (200): the keep-recent region covers the whole
+      // path, so NOTHING may fold. The old whole-world fold swallowed
+      // the live user ask and the tail filler (leaving hosts a
+      // projection with no live turn at all — the resumed-child
+      // "subagent produced no assistant message" CI regression).
       final session = await repo.create(
         JsonlSessionCreateOptions(cwd: '/work'),
       );
@@ -1090,7 +1169,7 @@ void main() {
         escalations.single.error.toString(),
         contains('no foldable range'),
       );
-      expect(escalations.single.marginTokens, 105);
+      expect(escalations.single.marginTokens, 166);
       expect(escalations.single.bandTokens, 200);
       expect(
         summarizeCalls,

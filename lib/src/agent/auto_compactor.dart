@@ -225,6 +225,7 @@ final class AutoCompactor {
     this.runToken,
     this.messageCap,
     this.messageCapMargin = kMessageCapDefaultMargin,
+    this.pinnedMessages = const [],
   });
 
   /// The session to compact and to read the projected transcript from.
@@ -608,6 +609,14 @@ final class AutoCompactor {
     return (done: false, success: false);
   }
 
+  /// gh-2492 C2: the PINNED messages of this session (the task prompt and
+  /// the newest steering of a task child, derived from its `segment_pin`
+  /// records). The mechanical trim valve carries them behind its cut —
+  /// a pinned record must never leave the LIVE context either; the hide
+  /// tiers already skip pinned ids. Empty on hosts without pins (the
+  /// CLI main agent today) — byte-identical valve behavior.
+  final List<Message> pinnedMessages;
+
   /// gh-2101: the usage this pass consumed over an earlier snapshot — null
   /// when no run ledger is wired or no metered call landed in the window.
   CompactionUsageTotals? _passUsage(CompactionUsageTotals? earlier) {
@@ -639,6 +648,7 @@ final class AutoCompactor {
           tools: state.tools,
           calibration: state.overheadCalibration,
         ),
+        pinnedMessages: pinnedMessages,
       );
 
   /// Picks the summarizer for this pass: smol first, main as fallback when
@@ -974,6 +984,7 @@ final class _PickOutcome {
   required int window,
   required CompactionSettings settings,
   required int overheadTokens,
+  List<Message> pinnedMessages = const [],
 }) {
   if (messages.isEmpty) return null;
   // gh-1425: the valve must land UNDER the compaction trigger, not
@@ -1042,8 +1053,35 @@ final class _PickOutcome {
     for (final i in unansweredAgentMailMessageIndices(messages))
       if (i < cut) messages[i],
   ];
+  // gh-2492 C2: the child's PINNED records behind the cut (the task
+  // prompt, the newest steering) re-home like the summaries and the mail
+  // — a pinned record must never leave the live context through the
+  // mechanical valve. Matched by identity first, then by user text (the
+  // pinned records arrive as persisted copies whose content matches the
+  // live transcript); the newest real user turn is skipped here — it
+  // already rides `carried`.
+  final turnIndex = turn;
+  final carriedPinned = <Message>[];
+  for (final pinned in pinnedMessages) {
+    final index = messages.indexWhere(
+      (message) =>
+          identical(message, pinned) ||
+          (message is UserMessage &&
+              pinned is UserMessage &&
+              _userTextOf(message) == _userTextOf(pinned) &&
+              _userTextOf(pinned).isNotEmpty),
+    );
+    if (index < 0 || index >= cut) continue;
+    if (index == turnIndex) continue;
+    if (carriedPinned.contains(messages[index])) continue;
+    carriedPinned.add(messages[index]);
+  }
   final dropped =
-      cut - summaries.length - carriedMail.length - (carried == null ? 0 : 1);
+      cut -
+      summaries.length -
+      carriedMail.length -
+      carriedPinned.length -
+      (carried == null ? 0 : 1);
   // Nothing actually dropped (the one record behind the cut WAS the
   // turn): the same "nothing droppable" null as an empty walk.
   if (dropped <= 0) return null;
@@ -1069,6 +1107,9 @@ final class _PickOutcome {
     // PR #2435 addendum: unanswered inbound mail re-homes oldest-first,
     // ahead of the pinned turn (the mail may BE what the turn answers).
     ...carriedMail,
+    // gh-2492 C2: the pinned records re-home after the mail, ahead of the
+    // newest turn — the assignment and the latest steering stay visible.
+    ...carriedPinned,
     ?carried,
     // Zero the kept generations' usage anchors — a stale generation-time
     // anchor would keep the estimate over the window and retrigger the
@@ -1167,6 +1208,7 @@ class AutoCompactorFactory {
     this.requestSnapshot,
     this.handOverMaxTokens,
     this.softTriggered = false,
+    this.pinnedMessages = const [],
   });
 
   final Session session;
@@ -1253,6 +1295,10 @@ class AutoCompactorFactory {
   CompactionUsageAccumulator? _usageLedgerInst;
   CompactionUsageAccumulator? get _usageLedger =>
       _usageLedgerInst ??= CompactionUsageAccumulator();
+
+  /// gh-2492 C2: the pinned messages the mechanical trim valve carries
+  /// (see [AutoCompactor.pinnedMessages]). Forwarded unchanged.
+  final List<Message> pinnedMessages;
 
   /// Per-attempt wall-clock budget, forwarded to the built [AutoCompactor].
   final Duration attemptBudget;
@@ -1664,6 +1710,7 @@ class AutoCompactorFactory {
       operativeSkills: operativeSkills,
       messageCap: messageCap,
       messageCapMargin: messageCapMargin,
+      pinnedMessages: pinnedMessages,
     );
   }
 }
@@ -1741,3 +1788,15 @@ final class _StructuredHooksAdapter implements StructuredCompactorHooks {
 /// if a future regression reaches it, instead of silently hiding.
 Future<String?> _unusedJudge(String ledgerText, [CancelToken? cancelToken]) =>
     throw StateError('the hide judge must not run on the merged path');
+
+/// The joined text of a user message's content (gh-2492 C2 valve pin
+/// matching) — empty for non-user or non-text content.
+String _userTextOf(Message message) {
+  if (message is! UserMessage) return '';
+  final content = message.content;
+  if (content is String) return content;
+  if (content is List<ContentBlock>) {
+    return content.whereType<TextContent>().map((b) => b.text).join('\n');
+  }
+  return '';
+}

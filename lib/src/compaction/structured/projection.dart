@@ -19,6 +19,7 @@
 library;
 
 import 'markers.dart';
+import '../ledger_budget.dart';
 import '../summary_sanitizer.dart';
 import '../token_estimation.dart';
 import '../../context.dart';
@@ -308,12 +309,21 @@ List<Message> renderStructuredMessages({
     onMessage?.call(source, message);
   }
 
+  // gh-2492 C4: the budget pass runs over COLLECTED emissions so a
+  // collapse splices the same sequence the caller's onMessage tag
+  // alignment walks (a post-hoc message splice would desync the tag
+  // alignment). Each emission keeps its source record for the C5 label
+  // derivation.
+  final emissions = <(SessionRecord?, Message)>[];
+  void collect(SessionRecord? source, Message message) =>
+      emissions.add((source, message));
+
   for (final record in path) {
     final drop = droppedById[record.id];
     if (drop != null) {
       // The dropped fold's own marker/text never renders — the note
       // replaces it and the span it named renders unfolded.
-      emit(record, _droppedFoldNote(drop, seqs));
+      collect(record, _droppedFoldNote(drop, seqs));
       continue;
     }
     _projectRecord(
@@ -324,10 +334,62 @@ List<Message> renderStructuredMessages({
       emitted: emitted,
       hiddenCallIds: hiddenCallIds,
       projectEntry: projectEntry,
-      emit: emit,
+      emit: collect,
     );
   }
+  _applyHiddenLedgerBudget(emissions, state: state, byId: byId, seqs: seqs);
+  for (var i = 0; i < emissions.length; i++) {
+    final (source, message) = emissions[i];
+    emit(source, message);
+  }
   return messages;
+}
+
+/// gh-2492 C4: the hidden-ids ledger budget over ONE request's rendered
+/// emissions — collapses the oldest adjacent ledger markers into working
+/// pointers until the total is under [hiddenLedgerBudgetTokens]. Mutates
+/// [emissions] in place (replace at the first marker's position, fold
+/// the second away). Checkpoint markers and tool_result pair markers are
+/// out of the budget (they are content, not ledger).
+void _applyHiddenLedgerBudget(
+  List<(SessionRecord?, Message)> emissions, {
+  required StructuredViewState state,
+  required Map<String, SessionRecord> byId,
+  required RecordSeqIndex seqs,
+}) {
+  final refs = <LedgerMarkerRef>[];
+  for (var i = 0; i < emissions.length; i++) {
+    final ref = ledgerMarkerRef(i, emissions[i].$2);
+    if (ref != null) refs.add(ref);
+  }
+  if (refs.length < 2) return;
+  // The C5 label: the tool histogram + time span over the records the
+  // merged span covers — derived from the session records (stable across
+  // rebuilds), never from model text.
+  String labelFor(int fromSeq, int toSeq) {
+    final records = <SessionRecord?>[
+      for (var seq = fromSeq; seq <= toSeq; seq++) seqs.recordAt(seq),
+    ];
+    return toolHistogramLabel(records);
+  }
+
+  final plan = planLedgerBudget(refs, labelFor: labelFor);
+  if (plan.isEmpty) return;
+  final result = <(SessionRecord?, Message)>[];
+  for (var i = 0; i < emissions.length; i++) {
+    if (plan.remove.contains(i)) continue;
+    final replacement = plan.replace[i];
+    if (replacement != null) {
+      // The collapsed pointer rides the FIRST merged marker's source
+      // record — the tag epoch keeps the span's first hidden seq.
+      result.add((emissions[i].$1, replacement));
+      continue;
+    }
+    result.add(emissions[i]);
+  }
+  emissions
+    ..clear()
+    ..addAll(result);
 }
 
 /// The visible resume note for a dropped fold (gh-1425 AC2): names the

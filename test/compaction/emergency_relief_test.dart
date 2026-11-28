@@ -181,13 +181,15 @@ void main() {
       expect(outcome.usedTrimValve, isFalse);
 
       final messages = state.messages;
+      // gh-2492 C5: the relief's r1 pair consolidates — ONE
+      // engine-labelled pointer at the carrier instead of two markers.
       final markerTexts = messages
           .whereType<UserMessage>()
           .map((m) => m.content as String)
-          .where((text) => text.contains(':hidden'))
+          .where((text) => text.contains('[expand'))
           .toList();
-      // The r1 pair became two markers.
-      expect(markerTexts, hasLength(2));
+      expect(markerTexts, hasLength(1));
+      expect(markerTexts.single, contains('read ×'));
       // The two other read copies stay live.
       final liveReads = messages
           .whereType<ToolResultMessage>()
@@ -719,9 +721,10 @@ void main() {
         // markers, none dropped).
         final replayed = await session.buildContextMessages();
         expect(replayed, isNotEmpty);
+        // gh-2492 C5: hidden batches render as consolidated pointers.
         final markers = replayed
             .whereType<UserMessage>()
-            .where((m) => (m.content as String).contains(':hidden'))
+            .where((m) => (m.content as String).contains('[expand'))
             .length;
         expect(markers, greaterThan(0));
       },
