@@ -69,6 +69,9 @@ final class ThemePackSpec {
       deriveAccent2FromAccent: lockAccents,
     ),
     fontFamily: fontFamily,
+    // The locked branded pack also drives the design-token accent family
+    // (gh-2391 addendum 8): one accent language across the token consumers.
+    lockDesignTokens: lockAccents,
   );
 }
 

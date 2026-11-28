@@ -278,6 +278,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'Start a local chat. Network sign-in is optional.';
 
   @override
+  String get chatNoConversationsBodyHostOnly => 'Start a local chat.';
+
+  @override
+  String modelPresetHostDescription(String name) {
+    return 'Included with your $name sign-in.';
+  }
+
+  @override
   String get chatStartChat => 'Start a chat';
 
   @override

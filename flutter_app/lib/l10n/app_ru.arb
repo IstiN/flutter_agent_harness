@@ -98,6 +98,15 @@
   "chatRecent": "Недавние",
   "chatNoConversationsTitle": "Чатов пока нет",
   "chatNoConversationsBody": "Начните локальный чат. Вход в сеть необязателен.",
+  "chatNoConversationsBodyHostOnly": "Начните локальный чат.",
+  "modelPresetHostDescription": "Доступно после входа в {name}.",
+  "@modelPresetHostDescription": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chatStartChat": "Начать чат",
   "chatNoUnread": "Нет непрочитанных чатов.",
   "chatNoAgents": "Нет агентов по этому фильтру.",

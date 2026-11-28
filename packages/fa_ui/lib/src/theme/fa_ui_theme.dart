@@ -30,6 +30,7 @@ final class FaUiTheme {
     this.userBubbleBorder,
     this.darkPalette,
     this.lightPalette,
+    this.lockDesignTokens = false,
   });
 
   /// Primary accent (buttons, marks, selections); null keeps the brand
@@ -83,6 +84,14 @@ final class FaUiTheme {
   /// The [FahColors.light] counterpart of [darkPalette]; null keeps the
   /// stock light palette.
   final FahColors? lightPalette;
+
+  /// A locked branded pack (gh-2391 addendum 8) also re-skins the
+  /// [FaDesignTokens] accent family (accent, accentInk, accentSoft, info)
+  /// from the active palette per brightness — every `tokens.accent`
+  /// consumer (nav rail, FABs, chips, tile strokes) speaks the pack's one
+  /// accent. False (the default, and every stock/user pack) keeps the
+  /// stock tokens untouched.
+  final bool lockDesignTokens;
 
   /// The palette override for [brightness], or null for the stock palette.
   FahColors? paletteFor(Brightness brightness) =>

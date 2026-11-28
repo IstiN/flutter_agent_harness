@@ -22,11 +22,18 @@ ThemeData buildFaTheme({
   FaUiTheme? uiTheme,
   FaFontPreset fontPreset = FaFontPreset.system,
 }) {
-  final tokens = FaDesignTokens.forDirection(direction, brightness);
+  final stockTokens = FaDesignTokens.forDirection(direction, brightness);
   final typography = FaTypography.forDirection(direction, preset: fontPreset);
   final packPalette = uiTheme?.paletteFor(brightness);
-  final directionPalette = FahColors.fromDesignTokens(tokens);
+  final directionPalette = FahColors.fromDesignTokens(stockTokens);
   final palette = packPalette ?? directionPalette;
+  // The locked branded pack (gh-2391 addendum 8) re-skins the token accent
+  // family from the same palette the Material scheme uses; the derivation
+  // is identity-safe when this brightness ships no pack variant. Stock
+  // themes and unlocked user packs keep the stock tokens.
+  final tokens = (uiTheme?.lockDesignTokens ?? false)
+      ? _lockedPackTokens(stockTokens, palette, brightness)
+      : stockTokens;
   final customized = FaUiTheme(
     indigo: uiTheme?.indigo ?? palette.indigo,
     teal: uiTheme?.teal ?? palette.teal,
@@ -115,6 +122,26 @@ ThemeData buildFaTheme({
     splashFactory: InkRipple.splashFactory,
   );
 }
+
+/// The locked-pack design tokens (gh-2391 addendum 8 item 2): the accent,
+/// the ink on it, the soft accent wash and info follow the active palette
+/// — exactly the values the Material scheme already uses — so the token
+/// consumers (nav rail, FABs, chips, logo strokes) speak one accent. The
+/// wash derives a pack-tinted blend of the accent over the background at
+/// the stock soft-wash depth (a stronger tint drowns the content).
+FaDesignTokens _lockedPackTokens(
+  FaDesignTokens stock,
+  FahColors palette,
+  Brightness brightness,
+) => stock.copyWith(
+  accent: palette.teal,
+  accentInk: palette.onAccent,
+  accentSoft: Color.alphaBlend(
+    palette.teal.withValues(alpha: brightness == Brightness.dark ? .18 : .14),
+    palette.bg,
+  ),
+  info: palette.teal,
+);
 
 /// The disabled wash shared by every control family: the enabled color at
 /// 55% alpha keeps a disabled row visible but inert on all surfaces.

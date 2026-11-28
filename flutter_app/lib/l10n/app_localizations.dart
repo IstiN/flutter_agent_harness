@@ -596,6 +596,18 @@ abstract class AppLocalizations {
   /// **'Start a local chat. Network sign-in is optional.'**
   String get chatNoConversationsBody;
 
+  /// No description provided for @chatNoConversationsBodyHostOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Start a local chat.'**
+  String get chatNoConversationsBodyHostOnly;
+
+  /// No description provided for @modelPresetHostDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Included with your {name} sign-in.'**
+  String modelPresetHostDescription(String name);
+
   /// No description provided for @chatStartChat.
   ///
   /// In en, this message translates to:
