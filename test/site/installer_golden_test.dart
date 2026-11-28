@@ -62,9 +62,9 @@ void main() {
       // becomes the literal text `ï»¿` glued to line 1, the leading `#`
       // stops being a comment and the install fails with "The term 'ï»¿#'
       // is not recognized". The artifact must stay BOM-less: position 0 is
-      // plain ASCII `#`, which is decode-invariant in every ANSI code page,
-      // while the non-ASCII glyphs sit inside comments/string literals where
-      // a Latin-1 mis-decode is cosmetic, never syntactic.
+      // plain ASCII `#`, which is decode-invariant in every ANSI code page.
+      // The whole artifact stays pure ASCII too (next test): a Latin-1
+      // mis-decode of the banner glyphs is exactly the mojibake users see.
       // (readAsStringSync strips a BOM, so assert bytes.)
       test('$artifact is served/piped BOM-less (gh-1945)', () {
         final bytes = File('$root/$artifact').readAsBytesSync();
@@ -75,6 +75,22 @@ void main() {
               '$artifact carries a UTF-8 BOM — Windows PowerShell 5.1 '
               'decodes the irm|iex pipe as ISO-8859-1 and chokes on the '
               "`ï»¿#` first line (gh-1945)",
+        );
+      });
+      // The Latin-1 mis-decode of a non-ASCII glyph is NOT cosmetic where
+      // the user reads it: the banner and the menus turn into mojibake.
+      // The artifacts are decode-invariant end to end: pure ASCII bytes,
+      // produced by the renderer _asciiForPs (which hard-errors on
+      // unmapped glyphs - the drift test keeps the committed file honest).
+      test('$artifact is pure ASCII (gh-1945 mojibake)', () {
+        final bytes = File('$root/$artifact').readAsBytesSync();
+        expect(
+          bytes.where((b) => b >= 0x80),
+          isEmpty,
+          reason:
+              '$artifact carries non-ASCII bytes - Windows PowerShell 5.1 '
+              'decodes the irm|iex pipe as ISO-8859-1 and renders them as '
+              'mojibake; keep the .ps1 artifacts ASCII-only',
         );
       });
     }
