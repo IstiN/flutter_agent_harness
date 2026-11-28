@@ -72,7 +72,7 @@ Future<bool> runAiinConnectFlow({
   void Function(String url)? aiinNavigatePopupFn,
 
   /// Injectable `/v1/models` fetcher (tests) — defaults to the live fetch.
-  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  Future<ModelsEndpointInfo> Function(String baseUrl, {required String apiKey})?
   aiinModelsFetcher,
 
   /// Injectable web-callback timeout (tests) — defaults to the
@@ -144,7 +144,7 @@ Future<bool> _runAiinConnectFlowAttempt({
   http.Client? aiinHttpClient,
   bool Function()? aiinOpenPopupFn,
   void Function(String url)? aiinNavigatePopupFn,
-  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  Future<ModelsEndpointInfo> Function(String baseUrl, {required String apiKey})?
   aiinModelsFetcher,
   Duration? aiinWebTimeout,
   CustomProvider? reauthenticateFor,
@@ -184,7 +184,7 @@ Future<bool> _dispatchAiinConnectFlow({
   http.Client? aiinHttpClient,
   bool Function()? aiinOpenPopupFn,
   void Function(String url)? aiinNavigatePopupFn,
-  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  Future<ModelsEndpointInfo> Function(String baseUrl, {required String apiKey})?
   aiinModelsFetcher,
   Duration? aiinWebTimeout,
   CustomProvider? reauthenticateFor,
@@ -266,7 +266,7 @@ Future<bool> runAiinWebConnect({
   http.Client? aiinHttpClient,
   bool Function()? aiinOpenPopupFn,
   void Function(String url)? aiinNavigatePopupFn,
-  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  Future<ModelsEndpointInfo> Function(String baseUrl, {required String apiKey})?
   aiinModelsFetcher,
   Duration? aiinWebTimeout,
   CustomProvider? reauthenticateFor,
@@ -326,7 +326,7 @@ Future<bool> _runAiinDesktopConnect(
   required SessionKeysStore? fallbackKeys,
   required KeychainStore? keychainStore,
   Future<AiinConnectResult?> Function()? aiinConnectFn,
-  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  Future<ModelsEndpointInfo> Function(String baseUrl, {required String apiKey})?
   aiinModelsFetcher,
   CustomProvider? reauthenticateFor,
 }) async {
@@ -383,7 +383,7 @@ Future<bool> _completeAiinConnect(
   required SessionKeysStore? sessionKeysStore,
   required KeychainStore? keychainStore,
   required AiinConnectResult? result,
-  required Future<List<String>> Function(
+  required Future<ModelsEndpointInfo> Function(
     String baseUrl, {
     required String apiKey,
   })?
@@ -562,7 +562,7 @@ Future<bool> runAiinMobileConnect({
   KeychainStore? keychainStore,
   Future<AiinConnectResult?> Function()? aiinConnectFn,
   http.Client? aiinHttpClient,
-  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  Future<ModelsEndpointInfo> Function(String baseUrl, {required String apiKey})?
   aiinModelsFetcher,
   CustomProvider? reauthenticateFor,
 }) async {
@@ -705,7 +705,7 @@ Future<bool> _finishAiinConnect(
   required KeychainStore? keychainStore,
   required String apiKey,
   String? accountLabel,
-  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  Future<ModelsEndpointInfo> Function(String baseUrl, {required String apiKey})?
   aiinModelsFetcher,
 
   /// Re-auth mode (see [runAiinConnectFlow]): refresh the existing entry's
@@ -727,21 +727,22 @@ Future<bool> _finishAiinConnect(
       existing: existing,
     );
   }
-  final modelId = await _pickAiinModel(
+  final pick = await _pickAiinModel(
     context,
-    apiKey: key,
+    apiKey: apiKey,
     aiinModelsFetcher: aiinModelsFetcher,
   );
-  if (modelId == null) return false;
+  if (pick == null) return false;
   await _registerAiinProvider(
     registry: registry,
     service: service,
     lastConnectionStore: lastConnectionStore,
     sessionKeysStore: sessionKeysStore,
     keychainStore: keychainStore,
-    apiKey: key,
+    apiKey: apiKey,
     accountLabel: accountLabel ?? 'AIIN',
-    modelId: modelId,
+    modelId: pick.$1,
+    supportsImages: pick.$2,
   );
   return true;
 }
@@ -794,19 +795,24 @@ Future<bool> _reauthenticateAiin({
 
 /// The model pick: fetches the public `/v1/models` listing (network
 /// errors leave the picker empty for a manual id), pushes the picker
-/// page, and returns the chosen id — null when the user backed out or the
-/// context unmounted.
-Future<String?> _pickAiinModel(
+/// page, and returns the chosen id with the endpoint's word about its
+/// image input (null when unreported — the host's heuristic decides);
+/// null when the user backed out or the context unmounted.
+Future<(String, bool?)?> _pickAiinModel(
   BuildContext context, {
   required String apiKey,
-  required Future<List<String>> Function(
+  required Future<ModelsEndpointInfo> Function(
     String baseUrl, {
     required String apiKey,
   })?
   aiinModelsFetcher,
 }) async {
   const baseUrl = aiinDefaultChatBaseUrl;
-  final models = await _fetchAiinModels(baseUrl, apiKey, aiinModelsFetcher);
+  final (models, _, _, modalities) = await _fetchAiinEndpointInfo(
+    baseUrl,
+    apiKey,
+    aiinModelsFetcher,
+  );
   if (!context.mounted) return null;
   final modelId = await pushFaPage<String>(
     context,
@@ -814,22 +820,31 @@ Future<String?> _pickAiinModel(
   );
   if (modelId == null || modelId.isEmpty) return null;
   if (!context.mounted) return null;
-  return modelId;
+  // gh-2466 review: the pick carries the endpoint's modalities verdict so
+  // the onboarding config matches every other switch surface (the
+  // settings form and the pickers) instead of falling back to the name
+  // heuristic for ids the heuristic cannot see.
+  return (modelId, modalities[modelId]?.contains('image'));
 }
 
-Future<List<String>> _fetchAiinModels(
+Future<ModelsEndpointInfo> _fetchAiinEndpointInfo(
   String baseUrl,
   String apiKey,
-  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  Future<ModelsEndpointInfo> Function(String baseUrl, {required String apiKey})?
   aiinModelsFetcher,
 ) async {
   try {
     return aiinModelsFetcher != null
         ? await aiinModelsFetcher(baseUrl, apiKey: apiKey)
-        : (await fetchModelsForEndpoint(baseUrl, apiKey: apiKey)).$1;
+        : await fetchModelsForEndpoint(baseUrl, apiKey: apiKey);
   } on Object {
     // Network error — the picker opens empty and takes a manual id.
-    return const [];
+    return (
+      const <String>[],
+      const <String, int>{},
+      const <String, int>{},
+      const <String, List<String>>{},
+    );
   }
 }
 

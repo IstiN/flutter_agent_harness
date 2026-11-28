@@ -1378,6 +1378,7 @@ extension on AgentCli {
     _modelCache = const [];
     _modelContextWindows = const {};
     _modelMaxTokens = const {};
+    _modelInputModalities = const {};
     _lastModelList = null;
     unawaited(_refreshModelCache());
     await _session?.appendModelChange(

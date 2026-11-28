@@ -310,6 +310,34 @@ void main() {
     await tester.pumpAndSettle();
     expect(applied.single.supportsImages, isTrue);
   });
+
+  testWidgets('a reported text-only verdict overrides a heuristic match '
+      '(gh-2466 review: endpoint-wins-including-false)', (tester) async {
+    final registry = await registryWithAcme();
+    registry.rememberKey(registry.providers.single.id, 'k-1');
+    await pumpPicker(
+      tester,
+      registry: registry,
+      // The id matches the vision NAME heuristic (gpt-4o), the endpoint
+      // reports text-only: the reported verdict must win — the picker
+      // shows no vision marker and applies supportsImages: false.
+      fetcher: (baseUrl, {required apiKey}) async => (
+        const ['gpt-4o-2024-11-20'],
+        const <String, int>{},
+        const <String, int>{},
+        const {
+          'gpt-4o-2024-11-20': ['text'],
+        },
+      ),
+    );
+
+    expect(find.text('vision ✓'), findsNothing);
+    await tester.tap(
+      find.textContaining('gpt-4o-2024-11-20', findRichText: true),
+    );
+    await tester.pumpAndSettle();
+    expect(applied.single.supportsImages, isFalse);
+  });
 }
 
 /// A two-model listing where m1 reports a window and m2 a cap.

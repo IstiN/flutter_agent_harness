@@ -43,9 +43,10 @@ final class _ModelEntry {
   /// The endpoint's word about image input (gh-2466): true/false when the
   /// `/models` answer carried input modalities, null when it did not (the
   /// id heuristic decides). The AIN gateway lists ids the heuristic cannot
-  /// see (`mistralai/mistral-large-4-0` is text+image); a false NEVER
-  /// overrides a heuristic true — an endpoint that answers modalities at
-  /// all is more specific than a name matcher.
+  /// see (`mistralai/mistral-large-4-0` is text+image). A reported verdict
+  /// wins — true *or* false (a reported text-only list unchecks a
+  /// heuristic-matching id, same rule as the settings form and the CLI
+  /// switches); only null falls back to the id heuristic.
   final bool? supportsImages;
 
   /// The source entry's persisted identity ([CustomProvider.kind]) — wins
@@ -54,8 +55,7 @@ final class _ModelEntry {
 
   /// The picker-visible vision verdict: the endpoint's modalities when
   /// reported, else the id heuristic.
-  bool get visionCapable =>
-      supportsImages ?? modelIdSuggestsVision(modelId);
+  bool get visionCapable => supportsImages ?? modelIdSuggestsVision(modelId);
 
   bool matches(String filter) {
     final lower = filter.toLowerCase();
@@ -679,8 +679,3 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     );
   }
 }
-
-/// The vision marker text for [modelId] (empty when the model does not
-/// suggest vision input).
-String visionMarkerText(String modelId) =>
-    modelIdSuggestsVision(modelId) ? 'vision ✓' : '';

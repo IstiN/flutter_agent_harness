@@ -66,12 +66,17 @@ void main() {
       service: null,
       lastConnectionStore: LastConnectionStore.inMemory(),
       aiinConnectFn: () async => _fakeConnectResult(),
-      aiinModelsFetcher: (baseUrl, {required apiKey}) async => [
-        'moonshotai/kimi-k2',
-        'deepseek-ai/deepseek-v3',
-        'qwen/qwen-72b',
-        'meta-llama/llama-3-70b',
-      ],
+      aiinModelsFetcher: (baseUrl, {required apiKey}) async => (
+        const [
+          'moonshotai/kimi-k2',
+          'deepseek-ai/deepseek-v3',
+          'qwen/qwen-72b',
+          'meta-llama/llama-3-70b',
+        ],
+        const <String, int>{},
+        const <String, int>{},
+        const <String, List<String>>{},
+      ),
     );
 
     // Sign-in succeeded → the model picker shows the full list and count.

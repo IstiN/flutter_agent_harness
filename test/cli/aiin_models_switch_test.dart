@@ -43,6 +43,23 @@ void main() {
     return http.Response(modelsBody, 200);
   });
 
+  // A modality-less endpoint whose list shares an id with the AIN answer
+  // (gateways commonly proxy the same upstream ids) — the plain OpenAI
+  // `data` shape, no `input_modalities` anywhere. The context_length rides
+  // as the deterministic refresh-landed signal.
+  const plainModelsBody =
+      '{"data": ['
+      '{"id": "mistralai/mistral-large-4-0", "context_length": 77123}]}';
+
+  // Routes per host: the AIN gateway answers its live shape, everything
+  // else answers the plain shape above.
+  final routingClient = http_testing.MockClient((request) async {
+    if (request.url.host.contains('aiin')) {
+      return http.Response(modelsBody, 200);
+    }
+    return http.Response(plainModelsBody, 200);
+  });
+
   final aiinModel = Model(
     id: 'z-ai/glm-5.1',
     api: 'openai-completions',
@@ -53,14 +70,17 @@ void main() {
     maxTokens: 8192,
   );
 
-  Future<AgentCli> cliFor(FakeStreamFunction fake) async {
+  Future<AgentCli> cliFor(
+    FakeStreamFunction fake, {
+    http.Client? client,
+  }) async {
     final cli = AgentCli(
       config: AgentCliConfig(
         model: aiinModel,
         apiKey: 'sk-aiin-test',
         env: env,
         sessionRoot: '/sessions',
-        modelsHttpClient: mockClient,
+        modelsHttpClient: client ?? mockClient,
       ),
       io: io,
       streamFunction: fake.call,
@@ -117,10 +137,60 @@ void main() {
           'no global 1M fallback — the endpoint report stands for uncurated '
           'families',
     );
-    expect(
-      model.input,
-      ['text'],
-      reason: 'reported text-only stays text-only',
-    );
+    expect(model.input, ['text'], reason: 'reported text-only stays text-only');
   });
+
+  test(
+    'a provider switch drops the previous provider modality verdicts',
+    () async {
+      final fake = FakeStreamFunction([]);
+      final cli = await cliFor(fake, client: routingClient);
+      final run = cli.run();
+      // The boot's cache warm fetched the AIN answer (map filled).
+      await io.out.waitUntilContains('not reported by the endpoint');
+      io.sendLine('/models');
+      await io.out.waitUntilContains('mistralai/mistral-large-4-0');
+      // Take the shared id on AIN first: the verdict [text, image] lands in
+      // the cache and on the active model.
+      io.sendLine('/model mistralai/mistral-large-4-0');
+      await io.out.waitUntilContains(
+        'switched model to mistralai/mistral-large-4-0',
+      );
+      expect(cli.agent.state.model.input, contains('image'));
+
+      // Switch to a modality-less endpoint whose list shares the SAME id:
+      // the AIN verdict must not survive the switch — neither baked into the
+      // model the switch builds nor served to a later /model pick.
+      io.sendLine(
+        '/provider openai http://plain.local/v1 sk-plain-test-1234567890',
+      );
+      await io.out.waitUntilContains('switched provider to openai');
+      // The plain endpoint's refresh landed: its window report re-applied.
+      await io.out.waitUntilContains(
+        'model context window: 77123 (from endpoint)',
+      );
+      expect(
+        cli.agent.state.model.input,
+        ['text'],
+        reason:
+            'the provider switch rebuilt the model — the previous provider\'s '
+            'image verdict must not ride it',
+      );
+
+      io.sendLine('/model mistralai/mistral-large-4-0');
+      await io.out.waitUntilContains(
+        'switched model to mistralai/mistral-large-4-0',
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(
+        cli.agent.state.model.input,
+        ['text'],
+        reason:
+            'the plain endpoint reports no modalities — the id heuristic '
+            '(text-only for mistral-large-4-0) owns the pick',
+      );
+    },
+  );
 }
