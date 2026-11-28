@@ -11,7 +11,10 @@
 // SM's ci.yml dispatch, i.e. exactly the run a cancel can erase.
 //
 // This belt runs in the CORE suite (CI `test-core` has NO path gate — it
-// executes on every ci.yml dispatch, app-only PRs included) and asserts
+// executes on every ci.yml dispatch, app-only PRs included — but only an
+// SM validation dispatch (workflow_dispatch) runs the FULL gate; on
+// pull_request events the scope fastpass can green-skip core steps for
+// app-only diffs, so this belt is the dispatch-time belt) and asserts
 // the ceiling directly: every non-generated flutter_app .dart file stays
 // within the `max_lines` pinned in flutter_app/crap4dart.yaml (read from
 // the config — single source of truth, the CI gate and this belt can
@@ -50,10 +53,14 @@ bool _globMatch(String relPath, String glob) {
   // `dir/**` / `prefix*` patterns. Translate conservatively:
   //   **  → any run of characters including '/'
   //   *   → any run of characters excluding '/'
+  // `.` is a regex metacharacter and MUST take the escape branch like any
+  // other non-glob special char — leaving it literal turns `**.g.dart`
+  // into `^.*.g.dart$`, which over-matches hand-written `landing.dart`
+  // and silently over-excludes files the CI loc gate scans.
   final escaped = glob.split('').map((c) {
     if (c == '*') return c; // handled below
-    if (RegExp(r'[A-Za-z0-9_/.-]').hasMatch(c)) return c;
-    return '\\$c'; // escape regex metacharacters
+    if (RegExp(r'[A-Za-z0-9_/-]').hasMatch(c)) return c;
+    return '\\$c'; // escape regex metacharacters (incl. `.`)
   }).join();
   final pattern = escaped
       .replaceAll('**', '\u0000')
@@ -92,17 +99,68 @@ List<File> scannableFiles() {
 
 /// The violation set: (file, lines) over maxLines for a list of absolute
 /// file paths — shared by the tree belt below and the incident fixture.
-List<(String, int)> locViolations(Iterable<File> files, int maxLines) => [
-  for (final f in files)
-    if (lineCount(f.readAsStringSync()) > maxLines)
-      (f.path, lineCount(f.readAsStringSync())),
-];
+/// Each file is read exactly once.
+List<(String, int)> locViolations(Iterable<File> files, int maxLines) {
+  final violations = <(String, int)>[];
+  for (final f in files) {
+    final lines = lineCount(f.readAsStringSync());
+    if (lines > maxLines) violations.add((f.path, lines));
+  }
+  return violations;
+}
 
 void main() {
   group('gh-2462 Defect B — flutter_app loc ceiling (repo-side belt)', () {
     test('config pins the 2800 ceiling with the known exclude set', () {
       final (maxLines, _) = locConfig();
       expect(maxLines, 2800, reason: 'AGENTS.md god-file ceiling');
+    });
+
+    test('glob translation escapes regex metacharacters — a `**.g.dart` '
+        'exclude never swallows a hand-written `landing.dart`', () {
+      // Every regex metacharacter in a glob — `.` included — must be
+      // escaped in the translation. A literal `.` in the whitelist
+      // compiles to an any-char wildcard, so a generated-file exclude
+      // (`**.g.dart` — the convention root crap4dart.yaml already uses)
+      // would silently over-match hand-written `*g.dart` files
+      // (landing.dart, parking.dart, …) and this belt would skip files
+      // the CI loc gate scans — the exact silent-miss class the belt
+      // exists to close (review PRRT_kwDOTXdlLc69C6hk).
+      expect(
+        _globMatch('lib/util/landing.dart', '**.g.dart'),
+        isFalse,
+        reason: 'landing.dart does not end in a LITERAL `.g.dart`',
+      );
+      expect(
+        _globMatch('lib/util/onboarding.dart', '**.g.dart'),
+        isFalse,
+        reason: 'onboarding.dart ends in `ing.dart`, not `.g.dart`',
+      );
+      expect(
+        _globMatch('lib/util/prompts.g.dart', '**.g.dart'),
+        isTrue,
+        reason: 'the generated-file glob still matches its real target',
+      );
+      // Dot-bearing names stay covered by suffix globs once `.` is a
+      // literal (the fix must not under-match either).
+      expect(_globMatch('lib/util/a.b.dart', '**.dart'), isTrue);
+      // The exclude shape today's config actually carries keeps
+      // translating exactly as the CI loc gate reads it.
+      expect(
+        _globMatch(
+          'lib/l10n/app_localizations_en.dart',
+          'lib/l10n/app_localizations*.dart',
+        ),
+        isTrue,
+      );
+      expect(
+        _globMatch(
+          'lib/l10n/nested/app_localizations_en.dart',
+          'lib/l10n/app_localizations*.dart',
+        ),
+        isFalse,
+        reason: 'a single `*` must not cross a path separator',
+      );
     });
 
     test('checker catches the #2438 incident shape (2801 > 2800) and passes '

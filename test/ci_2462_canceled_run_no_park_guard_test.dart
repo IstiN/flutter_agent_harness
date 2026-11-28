@@ -249,7 +249,7 @@ void main() {
         legResult: (job) =>
             {'static', 'flutter-analyze', 'test-core'}.contains(job)
             ? 'success'
-            : '',
+            : 'cancelled', // GitHub has no '' result — unsettled = cancelled
       );
       expect(
         GhExpr.eval(jobIf('quality-gate'), ctx),
@@ -369,9 +369,27 @@ void main() {
     test('kicker re-arms on any non-main push (the silent-update head)', () {
       // The SM silent-update pushes a new head onto the PR branch; the
       // kicker's push arm (branches-ignore: [main]) is the repo-side
-      // surface that reaches the factory tick with the NEW head SHA. The
-      // factory-side half — clearing its own park off that push — is
-      // documented in gh-2462/rca.md (external repo, not changeable here).
+      // surface that reaches the factory tick with the NEW head SHA —
+      // it fires regardless of WHO authored the push, so the SM's own
+      // silent-update head reaches the tick too.
+      //
+      // gh-2462 AC split (reconciled with review PRRT_kwDOTXdlLc69C6iT):
+      // this test pins only the REPO-SIDE half of AC-A's re-arm clause
+      // (a re-dispatch trigger exists for the new head). The PARK-CLEAR
+      // half — `validation_failed` park vs the SM's own silent-update
+      // push — is factory-side and NOT in this repo: the rule engine is
+      // dmtools-agents js/sm/branchRefresh.js (called via
+      // dmtools-agentic-workflows factory-sm.yml, which this repo's
+      // machine-sm.yml stub invokes). Its live contract
+      // (dmtools-agents docs/agents/sm_github.md) still clears the
+      // sticky `validation_failed` park only when the head's last
+      // committer is NOT `sm-silent-update` — design lineage
+      // dmtools-agents#994 (park reset on head change). Until that rule
+      // accepts the SM's own push, a genuine-failure park can still
+      // strand a silently-updated head — the surviving self-deadlock
+      // window this PR's description explicitly leaves to the factory
+      // (its "#2457 can be closed" claim covers the FALSE-PARK half +
+      // the loc belt only).
       final push = kickerTriggers()['push'] as YamlMap;
       expect((push['branches-ignore'] as YamlList), contains('main'));
       expect(
