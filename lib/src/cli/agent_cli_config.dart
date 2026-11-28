@@ -171,6 +171,7 @@ final class AgentCliConfig {
     this.runtimeTools,
     this.agentMode,
     this.misuseBreaker = true,
+    this.identicalCallExemptTools = const <String>{},
     this.loadMode = AgentLoadMode.defaultMode,
     this.onToolsConfigChanged,
     this.onDapHubConfigChanged,
@@ -573,6 +574,13 @@ final class AgentCliConfig {
   /// child. `false` disables it everywhere — byte-identical to the
   /// pre-breaker harness (E5).
   final bool misuseBreaker;
+
+  /// Tools exempt from the identical-call loop guard
+  /// (`agent.identicalCallExemptTools`, gh-2461): intentional watch or
+  /// polling commands whose byte-identical repetition is the tool's own
+  /// contract. Wired into the [Agent] (main + every spawned child) —
+  /// empty by default, so the guard trips nothing at birth.
+  final Set<String> identicalCallExemptTools;
 
   /// The tool-load preset for this boot (issue #680): resolves
   /// `--omp` > `FA_AGENT_MODE` > `agent.mode`. [AgentLoadMode.defaultMode]

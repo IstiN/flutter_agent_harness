@@ -235,6 +235,10 @@ final class SubagentServices {
   /// `agent.misuseBreaker` covers children too (issue #862).
   final bool misuseBreaker;
 
+  /// gh-2461: tools exempt from the identical-call loop guard
+  /// (`agent.identicalCallExemptTools`) — wired into every spawned child.
+  final Set<String> identicalCallExemptTools;
+
   /// Pre-persistence redaction gate for subagent deliverable artifacts
   /// (issue #1829, I3): the host's redaction pipeline applied to report
   /// text before it lands in the session output store. Null = no pipeline.
@@ -289,6 +293,7 @@ final class SubagentServices {
     this.contextWindowRegistry,
     this.contextWindowCap,
     this.misuseBreaker = true,
+    this.identicalCallExemptTools = const <String>{},
     this.deliverableRedactor,
     this.replyAutoSpill,
     this.deliverableArtifactSink,
@@ -634,6 +639,11 @@ final class AgentWiringSpec {
   final MessageCapPolicy? messageCapPolicy;
   final MessageCapRelief? messageCapRelief;
 
+  /// gh-2461: tools exempt from the identical-call loop guard
+  /// (`agent.identicalCallExemptTools`) — watch/polling call sites whose
+  /// byte-identical repetition is the tool's own contract.
+  final Set<String> identicalCallExemptTools;
+
   const AgentWiringSpec({
     required this.model,
     required this.systemPrompt,
@@ -651,6 +661,7 @@ final class AgentWiringSpec {
     this.toolMisuseBreaker,
     this.messageCapPolicy,
     this.messageCapRelief,
+    this.identicalCallExemptTools = const <String>{},
   });
 }
 
@@ -803,6 +814,7 @@ final class WiredAgentCore {
       wireDump: spec.wireDump,
       overWindowRelief: spec.overWindowRelief,
       toolMisuseBreaker: spec.toolMisuseBreaker,
+      identicalCallExemptTools: spec.identicalCallExemptTools,
       messageCapPolicy: spec.messageCapPolicy,
       messageCapRelief: spec.messageCapRelief,
     );
@@ -1162,6 +1174,7 @@ _WiredTaskSurface? _wireTaskSurface({
     contextWindowRegistry: bundle.contextWindowRegistry,
     contextWindowCap: bundle.contextWindowCap,
     misuseBreaker: bundle.misuseBreaker,
+    identicalCallExemptTools: bundle.identicalCallExemptTools,
     deliverableRedactor: bundle.deliverableRedactor,
     // gh-1956: reply auto-spill is the default delivery for oversized
     // reports; the kill switch getter and the durable-artifact seam ride

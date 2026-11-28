@@ -903,6 +903,62 @@ prompts:
         );
       });
 
+      test('parses agent.identicalCallExemptTools (gh-2465 rework)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync(
+          'agent:\n  identicalCallExemptTools:\n    - watch\n    - poll_status\n',
+        );
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.identicalCallExemptTools, ['watch', 'poll_status']);
+      });
+
+      test('identicalCallExemptTools defaults to empty when the key is '
+          'absent (gh-2465 rework)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: pi\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.identicalCallExemptTools, isEmpty);
+      });
+
+      test('rejects a non-list identicalCallExemptTools with the exact '
+          'message (gh-2465 rework)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  identicalCallExemptTools: watch\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              '"agent.identicalCallExemptTools" must be a list of tool names',
+            ),
+          ),
+        );
+      });
+
+      test('rejects a non-string identicalCallExemptTools entry (gh-2465 '
+          'rework)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync(
+          'agent:\n  identicalCallExemptTools:\n    - watch\n    - 3\n',
+        );
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              '"agent.identicalCallExemptTools" entries must be tool-name '
+                  'strings (got: 3)',
+            ),
+          ),
+        );
+      });
+
       test('rejects an unknown agent.mode value', () {
         final file = File('${tmp.path}/.fah/config.yaml');
         file.createSync(recursive: true);
