@@ -1250,32 +1250,17 @@ Future<List<Message>> _runAgentLoop({
       await _emitTurnStart(firstTurn, emit);
       firstTurn = false;
 
-      // Inject queued messages before the next assistant response.
-      // gh-2423 (C3): pending context notices join the injection — they
-      // ride this request (last, after any steering) and never count as
-      // steering extensions.
-      final steeringArrived = pendingMessages.isNotEmpty;
-      final pendingNotices =
-          currentConfig.takePendingNotices?.call() ?? const <Message>[];
-      if (steeringArrived) {
-        // gh-2461: a user/steering message joined between turns ends the
-        // unattended stretch — the identical-call streak evidence resets.
-        // The verdict is captured BEFORE the gh-2423 machine notices merge
-        // into the list: a context notice is not user evidence, and a
-        // reset on it would buy a degenerate loop 5 fresh identical calls
-        // exactly where notices fire most (near-limit reads).
-        loopGuard?.resetStreak();
-      }
-      if (pendingNotices.isNotEmpty) {
-        pendingMessages = [...pendingMessages, ...pendingNotices];
-      }
-      await _injectPendingMessages(
+      // Inject queued messages before the next assistant response
+      // (gh-2423 C3 boundary drain + the gh-2461 steering-only streak
+      // reset — see [_injectTurnBoundaryMessages]).
+      pendingMessages = await _injectTurnBoundaryMessages(
         pendingMessages,
+        currentConfig,
+        loopGuard,
         emit,
         currentContext,
         newMessages,
       );
-      pendingMessages = const [];
       AssistantMessage message;
       (message, currentContext) = await _streamAssistantResponse(
         currentContext,
@@ -1325,47 +1310,21 @@ Future<List<Message>> _runAgentLoop({
       // gh-2461: the identical-call loop guard verdict — after the tool
       // phase so the verdict is OUTCOME-aware (turns whose every call
       // failed are the tool-misuse breaker's domain, issue #862, and never
-      // advance the streak). The abort ends the run BEFORE TurnEnd and
+      // advance the streak). An abort ends the run BEFORE TurnEnd and
       // before the next provider call — the 8th identical call executed
-      // once, the 9th never happens.
-      IdenticalCallVerdict guardVerdict = const IdenticalCallVerdict.none();
-      if (loopGuard != null) {
-        guardVerdict = loopGuard.acceptTurn(
-          message,
-          turnSucceeded: toolResults.any((result) => !result.isError),
-        );
-      }
-      if (guardVerdict.action == IdenticalCallAction.abortRun) {
-        final stop = await _finishWithoutStream(
-          currentContext,
-          emit,
-          _terminalMessage(config.model, StopReason.error, guardVerdict.text),
-        );
-        newMessages.add(stop);
-        return await _terminalRunMessages(
-              stop,
-              newMessages,
-              currentContext.messages,
-              strippedLedgers,
-              currentConfig.finalizeGate,
-              emit,
-            ) ??
-            newMessages;
-      }
-
-      // gh-2461: the armed notice rides AFTER this turn's tool results —
-      // as a synthetic user message at the context tail it is the
-      // model-visible LAST line on the next request (the gh-1603
-      // continuation-nudge emission shape: MessageStart/End lands it in
-      // the transcript and session record, a truthful record of what the
-      // model was told).
-      if (guardVerdict.action == IdenticalCallAction.injectNotice) {
-        final notice = UserMessage.text(guardVerdict.text);
-        await emit(MessageStartEvent(notice));
-        await emit(MessageEndEvent(notice));
-        currentContext.messages.add(notice);
-        newMessages.add(notice);
-      }
+      // once, the 9th never happens; an armed notice rides after this
+      // turn's tool results (see [_applyIdenticalCallVerdict]).
+      final guardStop = await _applyIdenticalCallVerdict(
+        loopGuard: loopGuard,
+        message: message,
+        toolResults: toolResults,
+        currentContext: currentContext,
+        config: currentConfig,
+        strippedLedgers: strippedLedgers,
+        newMessages: newMessages,
+        emit: emit,
+      );
+      if (guardStop != null) return guardStop;
 
       final turnResults = List<ToolResultMessage>.unmodifiable(toolResults);
       await emit(TurnEndEvent(message: message, toolResults: turnResults));
@@ -1483,6 +1442,40 @@ Future<List<Message>?> _terminalRunMessages(
   return (currentContext, currentConfig);
 }
 
+/// Drains the turn-boundary queue into the request: the polled steering
+/// (and any follow-ups) plus the gh-2423 pending context notices, which
+/// ride the same injection slot (last, after any steering) and never
+/// count as steering extensions.
+///
+/// gh-2461: the steering-only verdict is captured BEFORE the machine
+/// notices merge — a user/steering message ends the unattended stretch
+/// and resets the identical-call streak; a context notice is not user
+/// evidence, and a reset on it would buy a degenerate loop 5 fresh
+/// identical calls exactly where notices fire most (near-limit reads).
+/// Always returns `const []`: the boundary queue is fully consumed.
+Future<List<Message>> _injectTurnBoundaryMessages(
+  List<Message> pendingMessages,
+  AgentLoopConfig config,
+  IdenticalCallLoopGuard? loopGuard,
+  AgentEventSink emit,
+  Context currentContext,
+  List<Message> newMessages,
+) async {
+  final steeringArrived = pendingMessages.isNotEmpty;
+  final pendingNotices = config.takePendingNotices?.call() ?? const <Message>[];
+  if (steeringArrived) loopGuard?.resetStreak();
+  if (pendingNotices.isNotEmpty) {
+    pendingMessages = [...pendingMessages, ...pendingNotices];
+  }
+  await _injectPendingMessages(
+    pendingMessages,
+    emit,
+    currentContext,
+    newMessages,
+  );
+  return const [];
+}
+
 /// Emits and appends the queued steering/follow-up [pendingMessages] before
 /// the next assistant response.
 Future<void> _injectPendingMessages(
@@ -1496,6 +1489,66 @@ Future<void> _injectPendingMessages(
     await emit(MessageEndEvent(message));
     currentContext.messages.add(message);
     newMessages.add(message);
+  }
+}
+
+/// gh-2461: folds the assistant [message] into the identical-call guard
+/// (outcome-aware: a turn whose every call failed is the tool-misuse
+/// breaker's jurisdiction, issue #862 — it never advances the streak) and
+/// applies the verdict.
+///
+/// - `abortRun`: the honest terminal lands via [_finishWithoutStream] —
+///   the 8th identical call executed once, the 9th never happens. The
+///   run's final messages come back (the abort arm never returns null).
+/// - `injectNotice`: the armed notice rides AFTER this turn's tool
+///   results — as a synthetic user message at the context tail it is the
+///   model-visible LAST line on the next request (the gh-1603
+///   continuation-nudge emission shape: MessageStart/End lands it in the
+///   transcript and session record, a truthful record of what the model
+///   was told).
+/// - `none`: the run continues — returns null.
+Future<List<Message>?> _applyIdenticalCallVerdict({
+  required IdenticalCallLoopGuard? loopGuard,
+  required AssistantMessage message,
+  required List<ToolResultMessage> toolResults,
+  required Context currentContext,
+  required AgentLoopConfig config,
+  required List<_StrippedLedger> strippedLedgers,
+  required List<Message> newMessages,
+  required AgentEventSink emit,
+}) async {
+  if (loopGuard == null) return null;
+  final verdict = loopGuard.acceptTurn(
+    message,
+    turnSucceeded: toolResults.any((result) => !result.isError),
+  );
+  switch (verdict.action) {
+    case IdenticalCallAction.abortRun:
+      final stop = await _finishWithoutStream(
+        currentContext,
+        emit,
+        _terminalMessage(config.model, StopReason.error, verdict.text),
+      );
+      newMessages.add(stop);
+      return await _terminalRunMessages(
+            stop,
+            newMessages,
+            currentContext.messages,
+            strippedLedgers,
+            config.finalizeGate,
+            emit,
+          ) ??
+          newMessages;
+    case IdenticalCallAction.injectNotice:
+      await _injectPendingMessages(
+        [UserMessage.text(verdict.text)],
+        emit,
+        currentContext,
+        newMessages,
+      );
+      return null;
+    case IdenticalCallAction.none:
+      return null;
   }
 }
 
