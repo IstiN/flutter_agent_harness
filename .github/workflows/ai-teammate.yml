@@ -186,7 +186,13 @@ jobs:
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
       flutter-version: 'stable'  # explicit: awf no longer defaults to a Flutter toolchain
       # STRING — number/choice-typed reusable inputs cannot take expressions.
-      issue: ${{ needs.gate.outputs.issue || github.event.inputs.issue }}
+      # The factory anchor contract is EXACTLY ONE of issue/pr — a dispatch
+      # carrying both reds in the callee's input guard (gh-2463, run
+      # 46180742541: "both issue (2463) and pr (2467) given — exactly one
+      # anchor allowed"). PR-anchored dispatches (#687) win: when inputs.pr
+      # carries the target, the caller drops the issue anchor here.
+      # Wiring pinned by test/machine_kit/factory_stub_ref_test.dart.
+      issue: ${{ github.event.inputs.pr != '' && '' || (needs.gate.outputs.issue || github.event.inputs.issue) }}
       # #687: PR-anchored review (SM dispatches with pr instead of issue).
       pr: ${{ github.event.inputs.pr || '' }}
       # #687: machine login via jobParams — branch-independent (the
