@@ -1,0 +1,96 @@
+# Experiment (owner-directed, 2026-11-28): verify empirically on a LINUX
+# runner what fa headless actually does — background-job drain + settle
+# steering, schedule_message timers, and the sh(dash) tool-shell syntax
+# surface. Drives the headless token-burn investigation (ai-teammate
+# poll-loop run 46186528757). workflow_dispatch ONLY — no CI triggers.
+name: headless-probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'OpenRouter model id for the probe agent'
+        default: 'google/gemini-2.5-flash'
+        type: string
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      MODEL: ${{ inputs.model }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v2
+        with:
+          sdk: stable
+
+      - name: pub get
+        run: dart pub get
+
+      - name: P0 — runner shell facts (no agent)
+        run: |
+          echo "sh -> $(readlink -f /bin/sh)"
+          sh -c 'echo "sh says: $0"'
+          echo '--- dash subshell check (the ai-teammate failure shape) ---'
+          sh -c '(echo subshell-ok)' || echo "SUBSHELL FAILED rc=$?"
+          sh -c '[[ -n x ]] && echo brackets-ok' || echo "BRACKETS FAILED rc=$?"
+          bash -c '(echo bash-subshell-ok); [[ -n x ]] && echo bash-brackets-ok'
+
+      - name: P1 — headless background-job drain + settle steering
+        id: p1
+        run: |
+          set +e
+          timeout 300 dart run bin/fah.dart -p \
+            'Use the bash tool to start `sleep 20 && echo DRAIN_PROBE_DONE` as a BACKGROUND job (background: true). Then END YOUR TURN immediately — do NOT poll the job, do NOT start any other jobs; the harness will wake you when it finishes. When the completion notice arrives, read the job log (bash_job output) and reply with the exact DONE line you find.' \
+            --provider openai-completions --model "$MODEL" \
+            --session "probe-p1-$GITHUB_RUN_ID" > /tmp/p1.log 2>&1
+          rc=$?
+          echo "P1 exit=$rc"
+          echo "P1 settles seen: $(grep -c 'Background shell job' /tmp/p1.log)"
+          echo "P1 poll calls (sleep/status re-reads): $(grep -cE 'sleep 20|bash_job · (status|output)' /tmp/p1.log)"
+          grep -c 'DRAIN_PROBE_DONE' /tmp/p1.log || true
+          tail -25 /tmp/p1.log
+          exit 0
+
+      - name: P2 — schedule_message in headless (timer vs process exit)
+        id: p2
+        run: |
+          set +e
+          timeout 240 dart run bin/fah.dart -p \
+            'Load the schedule_message tool (via the others tool) and arm a one-shot message 20 seconds from now with the text TIMER_PROBE_PING. Then end your turn. If the timer fires while you are still running, reply TIMER_PROBE_PONG; if you find yourself exiting before it fires, just exit.' \
+            --provider openai-completions --model "$MODEL" \
+            --session "probe-p2-$GITHUB_RUN_ID" > /tmp/p2.log 2>&1
+          rc=$?
+          echo "P2 exit=$rc"
+          echo "P2 PONG count: $(grep -c 'TIMER_PROBE_PONG' /tmp/p2.log)"
+          echo "P2 schedule arm evidence: $(grep -ciE 'schedule_message|scheduled' /tmp/p2.log)"
+          tail -20 /tmp/p2.log
+          exit 0
+
+      - name: P3 — agent bash-isms through the fa tool shell on Linux
+        id: p3
+        run: |
+          set +e
+          timeout 240 dart run bin/fah.dart -p \
+            'Run exactly this with the bash tool and report the raw output verbatim: echo "shell=$0"; (echo subshell-ok); [[ -n x ]] && echo brackets-ok; echo done. Then stop.' \
+            --provider openai-completions --model "$MODEL" \
+            --session "probe-p3-$GITHUB_RUN_ID" > /tmp/p3.log 2>&1
+          rc=$?
+          echo "P3 exit=$rc"
+          echo "P3 syntax errors: $(grep -c 'Syntax error' /tmp/p3.log)"
+          tail -20 /tmp/p3.log
+          exit 0
+
+      - name: Upload probe logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: headless-probe-logs
+          path: |
+            /tmp/p1.log
+            /tmp/p2.log
+            /tmp/p3.log
+          retention-days: 7
