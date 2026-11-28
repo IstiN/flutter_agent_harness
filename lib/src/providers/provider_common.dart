@@ -21,6 +21,7 @@ import '../event_stream.dart';
 import '../json_parse.dart';
 import '../model.dart';
 import '../rate_limit_info.dart';
+import '../redact/redaction_pipeline.dart';
 import '../sse_decoder.dart';
 import '../types.dart';
 import 'conn_trace.dart' show connTraceWrapProviderClient;
@@ -408,7 +409,9 @@ String formatProviderError(Object error) {
     if (body.isEmpty) {
       return 'Request failed with status ${error.statusCode}';
     }
-    return '${error.statusCode}: $body';
+    // gh-2476: the non-200 body rides the retry path bounded (≤2KB) and
+    // redacted — it is the provider's own diagnosis, but untrusted text.
+    return '${error.statusCode}: ${redactProviderPayload(body)}';
   }
   if (error is http.ClientException) {
     return error.message;
@@ -509,7 +512,8 @@ String _formatHtmlAnswer(ProviderHttpError error) {
 /// the real gateway message (unknown model, dead session, quota) is
 /// visible instead of an empty assistant turn.
 String _formatJsonAnswer(ProviderHttpError error) {
-  final body = error.body.trim();
+  // gh-2476: gateway bodies are untrusted too — redact before previewing.
+  final body = redactProviderPayload(error.body.trim());
   final preview = body.length > 500 ? '${body.substring(0, 500)}…' : body;
   return 'The endpoint answered 200 with a JSON body instead of an event '
       'stream — the gateway rejected the request without a proper status '
@@ -1062,6 +1066,38 @@ Future<http.StreamedResponse> _validateStreamResponse(
 String redactProviderUrl(Uri url) {
   final port = url.hasPort ? ':${url.port}' : '';
   return '${url.scheme}://${url.host}$port${url.path}';
+}
+
+/// The capture budget for provider error payloads (gh-2476): the
+/// provider's own error detail rides the error message bounded — the
+/// transcript is a diagnosis surface, not a body dump.
+const int providerErrorPayloadMaxChars = 2048;
+
+/// Host seam for provider payload redaction (gh-2476): wire the session's
+/// redaction pipeline here so captured payloads honor registered secrets
+/// and host config. Null falls back to the default pipeline below.
+String Function(String text)? providerPayloadRedactor;
+
+/// The lazily-built default pipeline for [redactProviderPayload]: the
+/// standard layer stack with default config — pure Dart, no host wiring
+/// required.
+RedactionPipeline? _defaultPayloadPipeline;
+
+/// Redacts and bounds [payload] for an error message (gh-2476): the
+/// provider's own error detail is diagnosis gold, but it is untrusted
+/// text — vendor-key/credential shapes never ride the transcript and the
+/// capture stays inside [providerErrorPayloadMaxChars]. Redaction runs
+/// before truncation so markers survive intact.
+String redactProviderPayload(String payload) {
+  if (payload.isEmpty) return payload;
+  final redactor = providerPayloadRedactor;
+  final redacted = redactor != null
+      ? redactor(payload)
+      : (_defaultPayloadPipeline ??= RedactionPipeline(
+          registeredSecrets: const [],
+        )).redact(payload);
+  if (redacted.length <= providerErrorPayloadMaxChars) return redacted;
+  return '${redacted.substring(0, providerErrorPayloadMaxChars)}…[truncated]';
 }
 
 /// Renders a watchdog window for stall notes: whole seconds at or above

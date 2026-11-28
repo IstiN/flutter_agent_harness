@@ -163,6 +163,35 @@ void main() {
       return stream;
     }
 
+    /// Like [failFinish] but the message carries gh-2476 provider detail
+    /// after the literal prefix (the composed shape the adapter emits).
+    AssistantMessageEventStream failFinishWithDetail(
+      String raw,
+      String composed,
+    ) {
+      final stream = AssistantMessageEventStream();
+      scheduleMicrotask(() {
+        stream.push(
+          ErrorEvent(
+            reason: StopReason.error,
+            error: AssistantMessage(
+              content: const [],
+              api: 'test-api',
+              provider: 'test-provider',
+              model: 'test-model',
+              usage: Usage.zero,
+              stopReason: StopReason.error,
+              rawStopReason: raw,
+              errorMessage: composed,
+              timestamp: DateTime.utc(2026),
+            ),
+          ),
+        );
+        stream.end();
+      });
+      return stream;
+    }
+
     test('a reset-then-recover call retries and succeeds', () async {
       var calls = 0;
       final notices = <String>[];
@@ -275,6 +304,38 @@ void main() {
         startsWith('Provider call failed after 3 attempt(s)'),
       );
       expect(message.errorMessage, contains('Connection reset by peer'));
+    });
+
+    test('gh-2476: the aggregated Attempts evidence carries each '
+        'attempt\'s own provider detail, not N identical literals',
+        () async {
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction(
+        (model, context, {cancelToken}) {
+          calls++;
+          return failFinishWithDetail(
+            'error',
+            'Provider finish_reason: error — provider said: '
+                '{"error":{"message":"upstream exploded v$calls '
+                '(org acme)","code":"boom_$calls"}}',
+          );
+        },
+        maxAttempts: 2,
+        delay: const Duration(milliseconds: 10),
+      );
+
+      final message = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).result;
+
+      expect(message.stopReason, StopReason.error);
+      final story = message.errorMessage!;
+      expect(story, contains('Attempts:'));
+      // Each attempt's own detail shows in the evidence — the first
+      // attempt saw boom_1, the second boom_2.
+      expect(story, contains('boom_1'));
+      expect(story, contains('boom_2'));
     });
 
     test('a failure AFTER content is never replayed (observable-output '

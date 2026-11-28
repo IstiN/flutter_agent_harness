@@ -36,6 +36,7 @@ import '../types.dart';
 import 'aiin_auth.dart';
 import 'codemie_sso.dart' show codeMieRequestHeaders, isCodeMieBaseUrl;
 import 'provider_common.dart';
+import 'transient_retry_stream.dart' show providerErrorDetailSeparator;
 
 /// Options for [streamOpenAICompletions].
 ///
@@ -341,6 +342,14 @@ final class _OpenAICompletionsSession {
   /// usage first, then the (single) choice's finish reason and delta.
   void _handleChunk(Map<String, dynamic> chunk) {
     _applyChunkMetadata(chunk);
+    // gh-2476: an SSE-level `{"error": …}` object (gateways answer dead
+    // deployments/quota with one, sometimes mid-stream without choices)
+    // used to be dropped on the floor here — capture it as the provider's
+    // own explanation.
+    final topError = chunk['error'];
+    if (topError is Map<String, dynamic>) {
+      _sseErrorPayload = topError;
+    }
 
     final choice = _firstChoice(chunk);
     if (choice == null) {
@@ -349,7 +358,7 @@ final class _OpenAICompletionsSession {
 
     _applyChoiceUsageFallback(chunk, choice);
 
-    _applyFinishReason(choice);
+    _applyFinishReason(chunk, choice);
 
     final delta = choice['delta'];
     if (delta is! Map<String, dynamic>) {
@@ -399,15 +408,64 @@ final class _OpenAICompletionsSession {
     }
   }
 
-  void _applyFinishReason(Map<String, dynamic> choice) {
+  /// gh-2476: the last SSE-level `{"error": …}` payload seen this stream
+  /// (some gateways send it mid-stream or INSTEAD of choices).
+  Map<String, dynamic>? _sseErrorPayload;
+
+  void _applyFinishReason(
+    Map<String, dynamic> chunk,
+    Map<String, dynamic> choice,
+  ) {
     final finishReason = choice['finish_reason'];
     if (finishReason != null) {
       final result = _mapStopReason(finishReason as String);
       state.stopReason = result.reason;
       state.rawStopReason = finishReason;
       state.errorMessage = result.errorMessage;
+      // gh-2476: on an error-class finish reason the provider is
+      // explaining itself — capture the full final chunk (its
+      // `error`/`message`/`details` payload included) plus any SSE-level
+      // error payload, redacted and bounded, onto the error message so
+      // the session error record and the aggregated retry evidence carry
+      // the real detail instead of N copies of the literal.
+      if (result.reason == StopReason.error) {
+        final detail = _providerErrorDetail(chunk);
+        if (detail != null) {
+          state.errorMessage =
+              '${result.errorMessage}$providerErrorDetailSeparator$detail';
+        }
+      }
       hasFinishReason = true;
     }
+  }
+
+  /// The provider's own error detail for the finished stream (gh-2476):
+  /// an SSE-level `{"error": …}` payload first (it is the provider's
+  /// explanation), then the full final chunk (its `error`/`message`/
+  /// `details` payload rides inside). Redacted and bounded to the capture
+  /// budget; null when nothing was captured.
+  String? _providerErrorDetail(Map<String, dynamic> finalChunk) {
+    final parts = <String>[];
+    final sseError = _sseErrorPayload;
+    if (sseError != null) {
+      final encoded = _encodeErrorDetail(sseError);
+      parts.add(encoded);
+      if (encoded == _encodeErrorDetail(finalChunk)) {
+        // The final chunk IS the SSE error payload — encode it once.
+        return redactProviderPayload(encoded);
+      }
+    }
+    parts.add(_encodeErrorDetail(finalChunk));
+    return redactProviderPayload(parts.join(' | '));
+  }
+
+  /// Encodes one captured payload: JSON for structures, the raw string
+  /// for scalars (some vendors put the human message directly in
+  /// `choice.error`).
+  String _encodeErrorDetail(Object? payload) {
+    if (payload is Map || payload is List) return jsonEncode(payload);
+    if (payload is String) return payload;
+    return '$payload';
   }
 
   void _handleContentDelta(Map<String, dynamic> delta) {
@@ -820,14 +878,23 @@ final class _OpenAICompletionsSession {
       );
     }
     if (!hasFinishReason) {
-      const truncated =
+      const truncatedHead =
           'stream ended without finish_reason — the reply may be truncated';
       // Issue #312: with nothing observable streamed, a stream that closes
       // without a finish_reason is a cut transport, not a natural stop —
       // surface it as a (transient-classified) error the retry umbrella
       // can replay, instead of answering an empty turn.
       if (state.blocks.isEmpty) {
-        throw StateError(truncated);
+        // gh-2476: when the gateway explained itself with an SSE-level
+        // `{"error": …}` object (no choices, no finish_reason), the bare
+        // truncation sentence used to bury it — carry the payload.
+        final sseError = _sseErrorPayload;
+        throw StateError(
+          sseError == null
+              ? truncatedHead
+              : '$truncatedHead$providerErrorDetailSeparator'
+                    '${redactProviderPayload(_encodeErrorDetail(sseError))}',
+        );
       }
       // Some providers (seen on OpenRouter free-tier models) close the SSE
       // stream without a final finish_reason chunk. The accumulated content
@@ -837,7 +904,7 @@ final class _OpenAICompletionsSession {
       // tool call surfaces as an args-parse error downstream, which the
       // agent loop already feeds back to the model as a tool error.
       state.stopReason = StopReason.stop;
-      state.errorMessage ??= truncated;
+      state.errorMessage ??= truncatedHead;
     }
 
     eventStream.push(

@@ -210,6 +210,12 @@ extension AgentCliRunNotices on AgentCli {
       );
       if (rateLimited) {
         _recordRateLimitRetry(attempt, maxAttempts, delay, line);
+      } else {
+        // gh-2476: every transport-class replay leaves an always-on
+        // per-attempt record — the post-mortem surface was rate-limit-only,
+        // so "what did the provider say per attempt" was unanswerable for
+        // plain connection failures.
+        _recordNetRetry(attempt, maxAttempts, delay, reason);
       }
     };
   }
@@ -273,6 +279,46 @@ extension AgentCliRunNotices on AgentCli {
           .then((_) {})
           .catchError((Object error) {
             _logDiagnostic('429_retry persist failed sid=$_logSid: $error');
+          }),
+    );
+  }
+
+  /// Appends the `net_retry` session record (gh-2476) for a TRANSPORT-class
+  /// replay the ladder announced. Best-effort like the 429 sibling — a
+  /// persist failure never takes the run down. The reason rides WHOLE (the
+  /// gh-2476 capture keeps it bounded ≤2KB) so the record carries the
+  /// provider's own detail, plus the HTTP status when the failure message
+  /// carries the `ProviderHttpError` `"<code>: …"` head.
+  void _recordNetRetry(
+    int attempt,
+    int maxAttempts,
+    Duration delay,
+    String reason,
+  ) {
+    final session = _session;
+    if (session == null) return;
+    final statusHead = RegExp(r'^(\d{3}): ').firstMatch(reason);
+    final status = statusHead == null
+        ? null
+        : int.tryParse(statusHead.group(1)!);
+    unawaited(
+      session
+          .appendCustomEntry(
+            customType: netRetryRecordType,
+            data: {
+              // The 429_retry contract (gh-1602 review r1 thread 1): the
+              // 1-based attempt that JUST FAILED.
+              'attempt': attempt,
+              'max_attempts': maxAttempts,
+              'delay_ms': delay.inMilliseconds,
+              'status': ?status,
+              'reason': reason,
+              'ts': DateTime.now().toIso8601String(),
+            },
+          )
+          .then((_) {})
+          .catchError((Object error) {
+            _logDiagnostic('net_retry persist failed sid=$_logSid: $error');
           }),
     );
   }
