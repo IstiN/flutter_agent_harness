@@ -311,7 +311,7 @@ void main() {
     expect(plugin.agentId, isNotNull);
   }, timeout: timeout);
 
-  test('rosterSetled: our re-welcome after a hub restart gates the warm-up '
+  test('rosterSettled: our re-welcome after a hub restart gates the warm-up '
       'window (gh-2471)', () async {
     final (adapter, plugin) = await newFabric(
       rosterWarmup: const Duration(milliseconds: 300),

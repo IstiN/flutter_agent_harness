@@ -308,7 +308,7 @@ void main() {
       },
     );
 
-    test('rosterSetled: false within the warm-up after a welcome, true '
+    test('rosterSettled: false within the warm-up after a welcome, true '
         'after it (gh-2471)', () async {
       final repo = HubMessagingRepository(
         url: hub.url,
