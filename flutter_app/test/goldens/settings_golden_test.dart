@@ -57,6 +57,7 @@ Future<ModelsEndpointInfo> _editorModels(
   const ['gpt-image-1', 'dall-e-3', 'tts-1', 'gpt-4o'],
   const <String, int>{},
   const <String, int>{},
+  const <String, List<String>>{},
 );
 
 /// Loads the MaterialIcons font from the local Flutter SDK so icon glyphs

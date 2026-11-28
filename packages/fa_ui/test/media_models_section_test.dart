@@ -16,7 +16,7 @@ Future<void> _pump(WidgetTester tester, Widget child) {
 Future<ModelsEndpointInfo> _noModels(
   String baseUrl, {
   required String apiKey,
-}) async => (const <String>[], const <String, int>{}, const <String, int>{});
+}) async => (const <String>[], const <String, int>{}, const <String, int>{}, const <String, List<String>>{});
 
 void main() {
   group('MediaModelsSection', () {

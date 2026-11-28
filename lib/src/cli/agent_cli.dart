@@ -2195,6 +2195,14 @@ class AgentCli {
   /// correction so the conservative catalog floor stops truncating answers.
   Map<String, int> _modelMaxTokens = const {};
 
+  /// Input modalities reported by the endpoint's `/models` payload (same
+  /// source as [_modelContextWindows], gh-2466): the endpoint's word about
+  /// image input beats the id heuristic at every model switch — an entry
+  /// absent from the map keeps the `inputModalitiesFor` fallback (gh-2466:
+  /// the AIN gateway lists `mistralai/mistral-large-4-0` et al. as
+  /// text+image while the heuristic sees only text).
+  Map<String, List<String>> _modelInputModalities = const {};
+
   /// Whether a run is currently in flight. True from the moment a run is
   /// STARTED (pre-flight compaction runs before the first streamed byte) —
   /// not only while the provider streams.

@@ -81,6 +81,7 @@ void main() {
             const ['gpt-4.1', 'claude-sonnet-4'],
             const <String, int>{},
             const <String, int>{},
+            const <String, List<String>>{},
           );
         },
         onApply: (config) async => connection.applied = config,

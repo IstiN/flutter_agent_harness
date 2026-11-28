@@ -348,7 +348,7 @@ Future<DialModelsInfo> fetchDialModelsInfo(
         const <String, int>{},
       );
     }
-    final (ids, windows, maxTokens) = parseModelsResponse(response.body);
+    final (ids, windows, maxTokens, _) = parseModelsResponse(response.body);
     final cacheSupported = _dialCacheSupportedIds(response.body);
     return (ids, cacheSupported, windows, maxTokens);
   } on Object {

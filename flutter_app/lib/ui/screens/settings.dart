@@ -319,6 +319,18 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
 
   void _onModelIdChanged() {
     if (_visionOverridden) return;
+    // The endpoint's reported modalities win over every heuristic (gh-2466):
+    // the AIN gateway lists ids the name matcher cannot see
+    // (`mistralai/mistral-large-4-0` is text+image), and custom providers
+    // (the AIIN connect flow saves one) previously got NO auto-derive at
+    // all. A reported image modality checks the box; a reported text-only
+    // list unchecks it; an unreported id keeps the hosted-preset heuristic.
+    final reported = _models.inputModalities[_modelController.text];
+    if (reported != null) {
+      final endpointSays = reported.contains('image');
+      if (endpointSays != _vision) setState(() => _vision = endpointSays);
+      return;
+    }
     // Only auto-check vision for hosted presets (OpenRouter, Ollama, Gemini)
     // — custom providers like CodeMie have their own models that may not
     // support vision, and the heuristic would falsely enable it.

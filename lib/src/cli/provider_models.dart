@@ -566,7 +566,7 @@ extension on AgentCli {
       // OAuth blob). The bundled synced catalog answers when the
       // endpoint can't, so the picker lists the full codex catalog
       // instead of collapsing to the entry's one saved model (#1706).
-      final (ids, _, _) = await fetchModelsForEndpoint(
+      final (ids, _, _, _) = await fetchModelsForEndpoint(
         entry.baseUrl,
         apiKey: cookieOrKey,
         provider: chatgptCodexDispatchHint,
@@ -945,9 +945,10 @@ extension on AgentCli {
       provider: copilotDispatchHint,
       client: modelFetchClient(copilotDispatchHint),
     );
-    final (ids, windows, maxTokens) = report.info;
+    final (ids, windows, maxTokens, modalities) = report.info;
     if (windows.isNotEmpty) _modelContextWindows = windows;
     if (maxTokens.isNotEmpty) _modelMaxTokens = maxTokens;
+    if (modalities.isNotEmpty) _modelInputModalities = modalities;
     return (ids, report);
   }
 
@@ -984,25 +985,20 @@ extension on AgentCli {
     required String apiKey,
     http.Client? client,
   }) async {
-    final normalized = baseUrl.replaceAll(RegExp(r'/+$'), '');
-    final uri = Uri.parse('$normalized/models');
-    final headers = <String, String>{'Accept': 'application/json'};
-    if (apiKey.isNotEmpty) headers['Authorization'] = 'Bearer $apiKey';
-    try {
-      final request = http.Request('GET', uri)..headers.addAll(headers);
-      final response =
-          await (client == null
-                  ? http.get(uri, headers: headers)
-                  : client.send(request).then(http.Response.fromStream))
-              .timeout(const Duration(seconds: 15));
-      if (response.statusCode != 200) return const [];
-      final (ids, windows, maxTokens) = parseModelsResponse(response.body);
-      _modelContextWindows = windows;
-      _modelMaxTokens = maxTokens;
-      return ids;
-    } on Object {
-      return const [];
-    }
+    // The SHARED dispatch (gh-2466): the dialect carries the ain per-family
+    // window correction and the endpoint-reported input modalities, so the
+    // CLI's own fetch path cannot drift from the pickers' answers
+    // (gh-1742: ONE window per model identity everywhere).
+    final info = await fetchModelsForEndpoint(
+      baseUrl,
+      apiKey: apiKey,
+      client: client,
+    );
+    final (ids, windows, maxTokens, modalities) = info;
+    _modelContextWindows = windows;
+    _modelMaxTokens = maxTokens;
+    if (modalities.isNotEmpty) _modelInputModalities = modalities;
+    return ids;
   }
 
   /// Lists the known models for the active provider, optionally filtered by
@@ -1044,6 +1040,12 @@ extension on AgentCli {
     final lower = filter.toLowerCase();
     return all.where((id) => id.toLowerCase().contains(lower)).toList();
   }
+
+  /// The input modalities for a model switch (gh-2466): the endpoint's
+  /// reported modalities win when `/models` carried them, the shared id
+  /// heuristic covers every unreported id.
+  List<String> _switchInputModalities(String modelId) =>
+      _modelInputModalities[modelId] ?? inputModalitiesFor(modelId);
 
   /// The active connection's model list when the cross-provider cache
   /// misses: the session's fetched models, else the provider's presets
@@ -1543,7 +1545,7 @@ extension on AgentCli {
       // shared vision heuristic instead of carrying the previous model's
       // modalities (a text-only pick would otherwise keep claiming image
       // support, and vice versa).
-      input: inputModalitiesFor(modelId),
+      input: _switchInputModalities(modelId),
       cost: current.cost,
       contextWindow: window,
       maxTokens: cap,

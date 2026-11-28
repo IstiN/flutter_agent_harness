@@ -127,7 +127,12 @@ void main() {
           },
         },
       });
-      const endpoint = (['M2.7', 'M3'], {'M2.7': 99999}, <String, int>{});
+      const endpoint = (
+        ['M2.7', 'M3'],
+        {'M2.7': 99999},
+        <String, int>{},
+        <String, List<String>>{},
+      );
       final merged = mergeWithRemoteCatalog(
         endpointInfo: endpoint,
         providerKind: 'minimax',
@@ -148,7 +153,12 @@ void main() {
           },
         },
       });
-      const endpoint = (['other-model'], <String, int>{}, <String, int>{});
+      const endpoint = (
+        ['other-model'],
+        <String, int>{},
+        <String, int>{},
+        <String, List<String>>{},
+      );
       final merged = mergeWithRemoteCatalog(
         endpointInfo: endpoint,
         providerKind: 'minimax',
@@ -174,7 +184,12 @@ void main() {
           },
         },
       });
-      const endpoint = (['m1'], <String, int>{}, <String, int>{});
+      const endpoint = (
+        ['m1'],
+        <String, int>{},
+        <String, int>{},
+        <String, List<String>>{},
+      );
       final merged = mergeWithRemoteCatalog(
         endpointInfo: endpoint,
         providerKind: 'minimax',
@@ -196,7 +211,12 @@ void main() {
           },
         },
       });
-      const endpoint = (['m1'], <String, int>{}, <String, int>{});
+      const endpoint = (
+        ['m1'],
+        <String, int>{},
+        <String, int>{},
+        <String, List<String>>{},
+      );
       final merged = mergeWithRemoteCatalog(
         endpointInfo: endpoint,
         providerKind: null,
@@ -216,7 +236,12 @@ void main() {
           },
         },
       });
-      const endpoint = (['m1'], <String, int>{}, <String, int>{});
+      const endpoint = (
+        ['m1'],
+        <String, int>{},
+        <String, int>{},
+        <String, List<String>>{},
+      );
       final merged = mergeWithRemoteCatalog(
         endpointInfo: endpoint,
         providerKind: 'openai',
@@ -243,6 +268,7 @@ void main() {
         ['MiniMax-M3', 'MiniMax-M2.7'],
         <String, int>{},
         <String, int>{},
+        <String, List<String>>{},
       );
       final merged = mergeWithRemoteCatalog(
         endpointInfo: endpoint,
@@ -261,7 +287,12 @@ void main() {
           'minimax': {'media': <String, List<String>>{}},
         },
       });
-      const endpoint = (['m1'], <String, int>{}, <String, int>{});
+      const endpoint = (
+        ['m1'],
+        <String, int>{},
+        <String, int>{},
+        <String, List<String>>{},
+      );
       final merged = mergeWithRemoteCatalog(
         endpointInfo: endpoint,
         providerKind: 'minimax',
@@ -272,7 +303,12 @@ void main() {
     });
 
     test('null catalog is a passthrough', () {
-      const endpoint = (['m'], {'m': 100}, <String, int>{});
+      const endpoint = (
+        ['m'],
+        {'m': 100},
+        <String, int>{},
+        <String, List<String>>{},
+      );
       final merged = mergeWithRemoteCatalog(
         endpointInfo: endpoint,
         providerKind: 'minimax',
@@ -475,7 +511,12 @@ void main() {
           client: client,
         );
         expect(enrichment.cached, isNotNull);
-        const endpoint = (['M3', 'm2.7'], <String, int>{}, <String, int>{});
+        const endpoint = (
+          ['M3', 'm2.7'],
+          <String, int>{},
+          <String, int>{},
+          <String, List<String>>{},
+        );
         final merged = enrichment.mergeFor(endpoint, 'minimax');
         expect(merged.$2['M3'], 1000000);
         expect(enrichment.mediaFor('minimax', 'imageGeneration'), isEmpty);
@@ -555,6 +596,7 @@ void main() {
             const <String>['MiniMax-M3'],
             const <String, int>{},
             const <String, int>{},
+            const <String, List<String>>{},
           ),
           'minimax',
           mediaSlot: const ['imageGeneration'],
@@ -589,6 +631,7 @@ void main() {
             const <String>['glm-5.3-flash', 'glm-5.3-flash-flash'],
             const <String, int>{},
             const <String, int>{},
+            const <String, List<String>>{},
           ),
           providerKind: 'zai',
           catalog: bundledRemoteModelsCatalog,
@@ -602,6 +645,7 @@ void main() {
             const <String>['glm-5.3-flash'],
             const <String, int>{},
             const <String, int>{},
+            const <String, List<String>>{},
           ),
           providerKind: 'zai',
           catalog: null,
@@ -620,6 +664,7 @@ void main() {
             const <String>['glm-5.3-flash'],
             const <String, int>{},
             const <String, int>{},
+            const <String, List<String>>{},
           ),
           providerKind: 'zai',
           catalog: bundledRemoteModelsCatalog,
@@ -636,6 +681,7 @@ void main() {
             const <String>['aiin/aiin_free', 'aiin/aiin_flash'],
             const <String, int>{},
             const <String, int>{},
+            const <String, List<String>>{},
           ),
           providerKind: 'aiin',
           catalog: bundledRemoteModelsCatalog,
@@ -651,6 +697,7 @@ void main() {
             const <String>['aiin/aiin_free'],
             const <String, int>{},
             const <String, int>{},
+            const <String, List<String>>{},
           ),
           providerKind: 'aiin',
           catalog: bundledRemoteModelsCatalog,

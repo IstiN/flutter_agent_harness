@@ -369,7 +369,7 @@ extension on AgentCli {
       provider: builtModel.provider,
       baseUrl: builtModel.baseUrl,
       reasoning: builtModel.reasoning,
-      input: inputModalitiesFor(modelId),
+      input: _switchInputModalities(modelId),
       cost: builtModel.cost,
       contextWindow: builtModel.contextWindow,
       maxTokens: builtModel.maxTokens,

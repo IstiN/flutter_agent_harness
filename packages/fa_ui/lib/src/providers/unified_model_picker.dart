@@ -28,6 +28,7 @@ final class _ModelEntry {
     required this.modelId,
     required this.contextWindow,
     required this.maxTokens,
+    this.supportsImages,
     this.kind,
   });
 
@@ -39,9 +40,22 @@ final class _ModelEntry {
   final int contextWindow;
   final int maxTokens;
 
+  /// The endpoint's word about image input (gh-2466): true/false when the
+  /// `/models` answer carried input modalities, null when it did not (the
+  /// id heuristic decides). The AIN gateway lists ids the heuristic cannot
+  /// see (`mistralai/mistral-large-4-0` is text+image); a false NEVER
+  /// overrides a heuristic true — an endpoint that answers modalities at
+  /// all is more specific than a name matcher.
+  final bool? supportsImages;
+
   /// The source entry's persisted identity ([CustomProvider.kind]) — wins
   /// over URL matching in the save path, mirroring the fetch hint.
   final String? kind;
+
+  /// The picker-visible vision verdict: the endpoint's modalities when
+  /// reported, else the id heuristic.
+  bool get visionCapable =>
+      supportsImages ?? modelIdSuggestsVision(modelId);
 
   bool matches(String filter) {
     final lower = filter.toLowerCase();
@@ -346,21 +360,24 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     String key,
     ModelsEndpointInfo info,
   ) {
-    final (ids, windows, caps) = info;
+    final (ids, windows, caps, modalities) = info;
     if (ids.isEmpty) return _emptyListingEntries(provider, key);
     return [
-      for (final id in ids) _listedModelEntry(provider, key, id, windows, caps),
+      for (final id in ids)
+        _listedModelEntry(provider, key, id, windows, caps, modalities),
     ];
   }
 
   /// One listed id as an entry ([windows]/[caps] per-model when reported,
-  /// the shared fallback otherwise).
+  /// the shared fallback otherwise; [modalities] names image input when the
+  /// endpoint reported it — gh-2466).
   _ModelEntry _listedModelEntry(
     _FetchProvider provider,
     String key,
     String id,
     Map<String, int> windows,
     Map<String, int> caps,
+    Map<String, List<String>> modalities,
   ) => _ModelEntry(
     provider: provider.name,
     providerId: provider.id,
@@ -369,6 +386,7 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
     modelId: id,
     contextWindow: windows[id] ?? fallbackContextWindow,
     maxTokens: caps[id] ?? fallbackMaxTokens,
+    supportsImages: modalities[id]?.contains('image'),
     kind: provider.kind,
   );
 
@@ -478,7 +496,7 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
           apiKey: entry.apiKey,
           contextWindow: entry.contextWindow,
           maxTokens: entry.maxTokens,
-          supportsImages: modelIdSuggestsVision(entry.modelId),
+          supportsImages: entry.visionCapable,
           providerId: entry.providerId,
         ),
       );
@@ -654,7 +672,7 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
         ),
       ),
       subtitle: Text(
-        visionMarkerText(entry.modelId),
+        entry.visionCapable ? 'vision ✓' : '',
         style: theme.textTheme.bodySmall,
       ),
       onTap: () => _selectModel(entry),

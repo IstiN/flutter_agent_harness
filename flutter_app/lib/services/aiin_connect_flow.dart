@@ -845,6 +845,10 @@ Future<void> _registerAiinProvider({
   required String apiKey,
   required String accountLabel,
   required String modelId,
+
+  /// The endpoint's word about image input (gh-2466); null keeps the
+  /// host's heuristic.
+  bool? supportsImages,
 }) async {
   const baseUrl = aiinDefaultChatBaseUrl;
   final name = _uniqueAiinProviderName(registry, accountLabel, baseUrl);
@@ -868,6 +872,7 @@ Future<void> _registerAiinProvider({
     modelId: modelId,
     baseUrl: baseUrl,
     apiKey: apiKey,
+    supportsImages: supportsImages,
   );
   if (service != null) {
     await service.reconfigure(config, fromProviderAddFlow: true);

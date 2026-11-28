@@ -208,6 +208,13 @@ final class AiinSurfaceClosedException implements Exception {
 /// connected".
 Future<AiinConnectResult?> runAiinConnectCliFlow({
   required void Function(String) onStatus,
+
+  /// The identity provider the caller's surface already picked (gh-2466):
+  /// rides the hosted login URL as a `provider` hint so the page can
+  /// preselect it and skip its own picker — one selection per sign-in.
+  /// The hosted-page honouring is the IstiN/aiin companion issue; an
+  /// unrecognised hint is harmless.
+  String? provider,
   Future<bool> Function(String) openBrowserFn = openBrowser,
   bool Function() shouldOpenBrowserFn = defaultBrowserLaunchPolicy,
   http.Client? client,
@@ -273,6 +280,7 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
     final loginUrl = buildAiinLoginUrl(
       redirectUri: redirectUri,
       state: state,
+      provider: provider,
       // `desktop` is the client_type whose redirect shape is an arbitrary
       // localhost loopback URI — the mobile apps use the same shape. There
       // is no `mobile` value in AIIN's contract (the web build sends

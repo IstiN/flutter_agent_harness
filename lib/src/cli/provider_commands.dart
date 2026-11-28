@@ -222,7 +222,12 @@ extension on AgentCli {
       // parameter drops the chat list and answers exactly the
       // catalog's per-slot media ids.
       final merged = remoteCatalogEnrichment.mergeFor(
-        (ids, const <String, int>{}, const <String, int>{}),
+        (
+          ids,
+          const <String, int>{},
+          const <String, int>{},
+          const <String, List<String>>{},
+        ),
         spec.name,
         mediaSlot: [mediaSlot],
       );
@@ -267,7 +272,7 @@ extension on AgentCli {
     // Identity by kind, not a name literal (issue #772): the branch fires
     // for the catalog name AND the adapter kind.
     if (resolveCliProviderSpec(providerName)?.kind == 'chatgpt-codex') {
-      final (ids, _, _) = await fetchModelsForEndpoint(
+      final (ids, _, _, _) = await fetchModelsForEndpoint(
         baseUrl,
         apiKey: key,
         provider: 'chatgpt',
@@ -2104,7 +2109,7 @@ extension on AgentCli {
         reasoning: builtModel.reasoning,
         // The catalog default claims ['text', 'image'] for every model of the
         // provider — the shared heuristic is more accurate per id.
-        input: inputModalitiesFor(modelId),
+        input: _switchInputModalities(modelId),
         cost: builtModel.cost,
         contextWindow: builtModel.contextWindow,
         maxTokens: builtModel.maxTokens,

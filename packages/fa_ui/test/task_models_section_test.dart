@@ -12,7 +12,12 @@ Future<ModelsEndpointInfo> _someModels(
   String baseUrl, {
   required String apiKey,
 }) async =>
-    (const ['fast-1', 'fast-2'], const <String, int>{}, const <String, int>{});
+    (
+      const ['fast-1', 'fast-2'],
+      const <String, int>{},
+      const <String, int>{},
+      const <String, List<String>>{},
+    );
 
 void main() {
   group('TaskModelsSection', () {
