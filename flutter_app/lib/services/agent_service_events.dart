@@ -337,7 +337,12 @@ extension AgentServiceEvents on AgentService {
       // The status line flips to "writing…" — update the Live Activity.
       _pushLiveActivityStatus();
     }
-    target.content += delta;
+    // gh-2472: the delta routes through the echo-hygiene filter FIRST —
+    // a model-facing `m<N> ` record tag at a line start (its bytes split
+    // across deltas included) never accumulates into the live bubble.
+    final sanitized = _recordTagEcho.push(delta);
+    if (sanitized.isEmpty) return;
+    target.content += sanitized;
     _notify();
   }
 

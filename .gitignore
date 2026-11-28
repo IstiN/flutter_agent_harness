@@ -195,6 +195,7 @@ __pycache__/
 # dart test --file-reporter outputs (local shard runs)
 test-results/
 packages/fa_ui/test/trajectory/goldens/failures/
+packages/fa_ui/test/failures/
 
 # Placeholder google-services.json is COMMITTED (the google-services
 # Gradle plugin hard-fails without it); CI overwrites it from the
