@@ -23,10 +23,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      # Coherence-guard workaround under test: the endpoint family (openai)
-      # must resolve the SAME key as the openrouter env family.
-      OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      # ONLY a custom-named key env: no catalog family (OPENROUTER_API_KEY /
+      # OPENAI_API_KEY) may resolve the same value, or the coherence guard
+      # classifies it as a foreign-family key (the probe's documented bug).
+      PROBE_OR_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       # Probe isolation: the runner's ambient GITHUB_TOKEN must not resolve
       # as a copilot-family key in the coherence check.
       GITHUB_TOKEN: ''
@@ -36,7 +36,7 @@ jobs:
       # The factory's own headless wiring (runner env overrides) — bypasses
       # the CLI-flag coherence path that refuses fresh env-only runners.
       FA_PROVIDER_TYPE: openai-completions
-      FA_PROVIDER_CONFIG: '{"baseUrl":"https://openrouter.ai/api/v1","model":"google/gemini-2.5-flash","apiKeyEnvVar":"OPENROUTER_API_KEY","input":["text","image"]}'
+      FA_PROVIDER_CONFIG: '{"baseUrl":"https://openrouter.ai/api/v1","model":"google/gemini-2.5-flash","apiKeyEnvVar":"PROBE_OR_KEY","input":["text","image"]}'
 
     steps:
       - uses: actions/checkout@v4
