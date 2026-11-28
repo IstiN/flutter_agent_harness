@@ -3953,7 +3953,19 @@ jobs:
     name: Quality gate
     runs-on: ubuntu-latest
     needs: [release-pending, release-dedupe, changes, static, flutter-analyze, test-core, coverage-gate, guards, model-switch-reg, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-portability, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-goldens, flutter-app-lock-smoke, office-addin-suite, extension-size-gate]
-    if: always() && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
+    if: always() && !cancelled() && needs.release-pending.outputs.pending == 'true' && needs.release-dedupe.outputs.dedupe != 'true'
+    # gh-2462: !cancelled() — a CANCELLED ci.yml run is a NON-VERDICT, never
+    # a failure verdict. With plain always() the aggregate ran against legs
+    # concluded `cancelled`, its fail() classified them as blockers and the
+    # required check concluded FAILURE off the cancellation (run 46050811851,
+    # 2026-11-27) — SM tick 46054697279 parked #2438 validation_failed off
+    # that false verdict and the silent-update push could not clear its own
+    # park; the human merge of fb6543e0796e landed unvalidated (#2457). On a
+    # cancelled run the aggregate now SKIPS: every required context reports
+    # no verdict, the sm-kicker re-arms on the completed run and the SM
+    # re-dispatches fresh ci.yml. Genuine failures still arm (the park input
+    # is a REAL failure only) — pinned by
+    # test/ci_2462_canceled_run_no_park_guard_test.dart.
     timeout-minutes: 5
     permissions:
       contents: read
@@ -5633,7 +5645,12 @@ jobs:
     # gh-1280: same event fix as binaries-pr — on the SM validation
     # dispatches this aggregate must RUN (and carry a real conclusion),
     # never satisfy the required context by skipping.
-    if: always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+    # gh-2462: !cancelled() — same non-verdict rule as the quality-gate
+    # aggregate: on a cancelled run this gate must SKIP, not run its
+    # `Fail the gate` step against a cancelled binaries-pr and conclude
+    # the required context FAILURE off the cancellation (the false
+    # validation_failed park class, #2457). Genuine failures still arm.
+    if: always() && !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
       - name: All platforms built and smoked
