@@ -1691,6 +1691,22 @@ const String _overWindowContinuationNotice =
     'reads (offset/limit or :A-B selectors) instead.\n'
     '</system-notice>';
 
+/// Delivered to the model when a probable-overflow stop (gh-2470) armed
+/// the same funnel: the provider REFUSED the request — the guard did not —
+/// so the notice names the refusal honestly while prescribing the same
+/// relief.
+const String _probableOverflowContinuationNotice =
+    '<system-notice>\n'
+    'The previous run was stopped by a probable context overflow: the '
+    'provider refused this exact history repeatedly with the same error, '
+    'so the history itself was judged poisonous. The transcript was '
+    'auto-compacted just now (most of it is preserved as a summary; the '
+    'session file keeps the full history). Continue the interrupted task '
+    'from where it stopped. Avoid re-reading whatever filled the context '
+    '(huge tool outputs, whole files) — use targeted reads (offset/limit '
+    'or :A-B selectors) instead.\n'
+    '</system-notice>';
+
 /// One post-compaction relief verdict (issue #2264): a PURE decision
 /// over the POST-RUN measurements, table-pinned in
 /// test/cli/agent_cli_over_window_continuation_retry_test.dart. The
@@ -1753,8 +1769,16 @@ extension OverWindowContinuation on AgentCli {
     final recoverables = session == null
         ? ''
         : hiddenRecoverablesSummary(await session.getEntries());
-    if (recoverables.isEmpty) return _overWindowContinuationNotice;
-    return _overWindowContinuationNotice.replaceFirst(
+    // The notice CLASS follows the stop that armed the funnel
+    // ([_contextStopIsProbableOverflow]): the guard's "request was NOT
+    // sent" story would be false for a probable-overflow refusal, which
+    // the provider DID see.
+    final base = _contextStopIsProbableOverflow
+        ? _probableOverflowContinuationNotice
+        : _overWindowContinuationNotice;
+    _contextStopIsProbableOverflow = false;
+    if (recoverables.isEmpty) return base;
+    return base.replaceFirst(
       '</system-notice>',
       '$recoverables\n</system-notice>',
     );
@@ -1763,13 +1787,19 @@ extension OverWindowContinuation on AgentCli {
   /// Whether the over-window continuation WILL run for [message]: the
   /// guards of [_maybeOverWindowContinue], shared so the forensics log
   /// and the settlement can never disagree (gh-241 follow-up #5e, E2).
+  /// gh-2470: the probable-overflow class arms the funnel too — a
+  /// deterministic per-history provider refusal gets the same
+  /// persist → auto-compact → continue relief, so a following «continue»
+  /// never re-sends the byte-identical poisonous history without a
+  /// relief attempt.
   bool _contextStopContinuationArmed(
     AssistantMessage lastMessage, {
     required bool isAutoContinue,
   }) =>
       !isAutoContinue &&
       !_overWindowAutoResumed &&
-      isContextWindowExhaustedError(lastMessage.errorMessage);
+      (isContextWindowExhaustedError(lastMessage.errorMessage) ||
+          isProbableOverflowError(lastMessage.errorMessage));
 
   /// Settles the stashed context-stop turn end (gh-241 follow-up #5e,
   /// E2). `compacting`: `stop=compacting (continuation pending)` and NO
@@ -1821,6 +1851,12 @@ extension OverWindowContinuation on AgentCli {
     )) {
       return false;
     }
+    // gh-2470: the notice class follows the stop — a probable-overflow
+    // refusal tells the model the provider refused the history, not that
+    // the guard stopped an unsent request.
+    _contextStopIsProbableOverflow =
+        isProbableOverflowError(lastMessage.errorMessage) &&
+        !isContextWindowExhaustedError(lastMessage.errorMessage);
     _overWindowAutoResumed = true;
     await _ttsr?.settled;
     await _persistMessages();

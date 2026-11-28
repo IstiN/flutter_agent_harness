@@ -449,6 +449,19 @@ final class CopilotTokenManager {
     _lastExchangeAt = null;
   }
 
+  /// The credential half of the transient ladder's connection recovery
+  /// (gh-2470 review): invalidates EVERY registered manager's cached
+  /// token so the next request re-exchanges immediately. A stale
+  /// short-lived token refusing a large history reads exactly like the
+  /// opaque deterministic failure the ladder re-dials for (the fresh-pool
+  /// half lives in `recycleProviderHttpClientAfterHeal`); PAT-mode
+  /// managers hold no cached token, so the walk is a no-op for them.
+  static void invalidateAllForConnectionRecovery() {
+    for (final manager in _byGithubToken.values) {
+      manager.invalidate();
+    }
+  }
+
   /// The self-heal ledger (issue #2327): registers one stream end and
   /// answers what it triggers. A truncation-class end increments the
   /// consecutive streak — at [truncationHealThreshold] the heal fires,
