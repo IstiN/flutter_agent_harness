@@ -6,6 +6,11 @@
 name: headless-probe
 
 on:
+  # Push on the experiment branch ONLY: a non-default-branch workflow cannot
+  # be workflow_dispatch-ed (404 until it exists on main) — the push trigger
+  # registers and runs it from this branch. No other branch ever triggers.
+  push:
+    branches: [experiment/headless-probe]
   workflow_dispatch:
     inputs:
       model:
@@ -19,7 +24,7 @@ jobs:
     timeout-minutes: 25
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      MODEL: ${{ inputs.model }}
+      MODEL: ${{ inputs.model || 'google/gemini-2.5-flash' }}
     steps:
       - uses: actions/checkout@v4
 
