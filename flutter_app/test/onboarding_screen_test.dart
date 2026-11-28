@@ -1311,8 +1311,10 @@ void main() {
         productConfig: _hostOnlyProfile(),
       );
       await tester.pumpAndSettle();
-      // The CTA (headline + button) and NO third-party catalog surface.
-      expect(find.text('Sign in to AIIN Agent'), findsWidgets);
+      // The CTA (headline + button) uses the SHORT product name
+      // (hostConnection.name), not the full displayName (addendum 9 nit).
+      expect(find.text('Sign in to AIN'), findsWidgets);
+      expect(find.text('Sign in to AIIN Agent'), findsNothing);
       expect(
         find.textContaining('Third-party providers are not part'),
         findsOneWidget,

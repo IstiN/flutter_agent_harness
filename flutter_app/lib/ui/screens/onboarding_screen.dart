@@ -1395,7 +1395,7 @@ class _HostSignInGhost extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    final displayName = ProductConfigScope.of(context).displayName;
+    final displayName = _signInProductName(ProductConfigScope.of(context));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -2531,6 +2531,13 @@ class _P4 extends StatelessWidget {
 /// The host-only provider step (gh-2391 addendum 4): a branded build with
 /// `providerCatalog: "host-only"` never shows third-party providers or
 /// launches Fa's own OAuth flows. The single path is the host's own
+/// The short product name for sign-in copy (gh-2391 addendum 9 nit):
+/// `hostConnection.name` ("AIIN"), never the full displayName with its
+/// "Agent Beta" suffix — the account/app belongs to the product, not the
+/// agent persona.
+String _signInProductName(FaProductConfig config) =>
+    config.hostConnection?.name ?? config.displayName;
+
 /// cabinet (`signInUrl`): sign in there, the bridge key lands in
 /// same-origin storage, the app resume re-check completes the step.
 class _HostSignInStep extends StatelessWidget {
@@ -2542,6 +2549,7 @@ class _HostSignInStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final signInName = _signInProductName(productConfig);
     final body = Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 460),
@@ -2553,7 +2561,7 @@ class _HostSignInStep extends StatelessWidget {
               _Logo(productConfig: productConfig),
               const SizedBox(height: 24),
               Text(
-                l10n.onboardingHostSignInTitle(productConfig.displayName),
+                l10n.onboardingHostSignInTitle(signInName),
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.w700,
                 ),
@@ -2561,7 +2569,7 @@ class _HostSignInStep extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Text(
-                l10n.onboardingHostSignInBody(productConfig.displayName),
+                l10n.onboardingHostSignInBody(signInName),
                 style: Theme.of(context).textTheme.bodyMedium,
                 textAlign: TextAlign.center,
               ),
@@ -2577,9 +2585,7 @@ class _HostSignInStep extends StatelessWidget {
                     );
                   },
                   icon: const Icon(Icons.open_in_new, size: 18),
-                  label: Text(
-                    l10n.onboardingHostSignInCta(productConfig.displayName),
-                  ),
+                  label: Text(l10n.onboardingHostSignInCta(signInName)),
                 ),
             ],
           ),
