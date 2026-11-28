@@ -2538,5 +2538,18 @@
       "source": "",
       "model": "glm-5.3-flash"
     }
+  ],
+  "issue-2470": [
+    {
+      "leg": "dev",
+      "at": "2026-11-28T14:05:19Z",
+      "prompt": 288664,
+      "completion": 68677,
+      "total": 357341,
+      "cacheRead": 27253824,
+      "requests": 250,
+      "source": "reported",
+      "model": "glm-5.3-flash"
+    }
   ]
 }
