@@ -241,6 +241,14 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
   /// debounce + stale guard) — extracted into its own controller.
   late EndpointModelsController _models;
 
+  /// Whether [_models] exists yet: initState registers [_onModelIdChanged]
+  /// on the model field BEFORE the controller is constructed (the
+  /// last-connection prefill at the top of initState edits the field and
+  /// fires the listener synchronously), so the listener must not touch the
+  /// late field until construction — a raw read crashes with a
+  /// LateInitializationError mid-prefill (CI: setup_prefill/setup_golden).
+  bool _modelsReady = false;
+
   /// The model field's focus node (drives the quick-select overlay).
   final FocusNode _modelFocusNode = FocusNode();
 
@@ -308,6 +316,7 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     _urlController.addListener(_models.schedule);
     _keyController.addListener(_models.schedule);
     _models.schedule();
+    _modelsReady = true;
     _oauthCallbackUrl = OpenRouterOAuthCoordinator.instance.platformCallbackUrl;
   }
 
@@ -325,7 +334,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
     // (the AIIN connect flow saves one) previously got NO auto-derive at
     // all. A reported image modality checks the box; a reported text-only
     // list unchecks it; an unreported id keeps the hosted-preset heuristic.
-    final reported = _models.inputModalities[_modelController.text];
+    final reported = _modelsReady
+        ? _models.inputModalities[_modelController.text]
+        : null;
     if (reported != null) {
       final endpointSays = reported.contains('image');
       if (endpointSays != _vision) setState(() => _vision = endpointSays);
