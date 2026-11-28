@@ -224,4 +224,33 @@ void main() {
       reason: 'the old author filter must not linger',
     );
   });
+
+  // gh-2463 (run 46180742541): the SM's conflict-rework dispatch rode BOTH
+  // anchors (issue=2463 AND pr=2467) and the factory's input guard red'ed
+  // the leg in 8s — "both issue (2463) and pr (2467) given — exactly one
+  // anchor allowed". The callee's contract is exactly ONE anchor; the
+  // caller must enforce that exclusivity: a PR-anchored dispatch (#687)
+  // drops the issue anchor instead of forwarding both.
+  test('factory anchors are exclusive — a pr-anchored dispatch drops the '
+      'issue anchor', () {
+    final withBlock = teammate.substring(
+      teammate.indexOf('factory-teammate.yml@main'),
+      teammate.indexOf('    secrets:'),
+    );
+    final issueLine = withBlock
+        .split('\n')
+        .firstWhere((l) => l.trim().startsWith('issue:'));
+    final prLine = withBlock
+        .split('\n')
+        .firstWhere((l) => l.trim().startsWith('pr:'));
+    // The issue anchor expression must yield '' whenever inputs.pr carries
+    // the target — never forward both.
+    expect(
+      issueLine,
+      contains("github.event.inputs.pr != '' && ''"),
+      reason: 'issue: must resolve empty on PR-anchored dispatches '
+          '(exactly-one-anchor contract); line: $issueLine',
+    );
+    expect(prLine, contains("github.event.inputs.pr || ''"));
+  });
 }

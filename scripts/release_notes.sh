@@ -9,16 +9,23 @@
 #
 # Order of preference:
 #   1. the CHANGELOG.md `## <version>` section (curated per-release notes);
-#   1b. (gh-1522) the curated `## Unreleased` body — the release flow moves
-#      Unreleased into the tag's section AT STAGE TIME (never in-repo), so
-#      a pending Unreleased section IS this release's notes when no
-#      versioned section exists yet;
+#   1b. (gh-2463) the pending `changelog/entries/*.md` aggregate via
+#      scripts/gen_changelog.dart — per-change entry files replaced the
+#      shared-file curation (one file per PR, zero merge conflicts); the
+#      aggregate is flat bullets in entry order, content-identical in shape
+#      to the old curated Unreleased body. A broken entry FAILS LOUD here:
+#      silently dropping it would ship notes missing that change;
+#   1c. (gh-1522) the curated `## Unreleased` body — the pre-gh-2463
+#      curation window (the generated CHANGELOG.md index no longer carries
+#      one; kept for compatibility with any remaining curated file);
 #   2. conventional commits since the previous tag, grouped
 #      Features / Fixes / Maintenance, capped at 50 lines with an
 #      "…and N more" line (issue #282 E4);
 #   3. no commits since the previous tag (re-tag) -> a clean
 #      "No changes" body, never an empty page (issue #282 E5/AC5).
 set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 version="${1:?usage: release_notes.sh <version> [range_start]}"
 version="${version#v}"
@@ -46,18 +53,41 @@ if [ -f CHANGELOG.md ]; then
     printf '%s\n' "$section"
     exit 0
   fi
-  # gh-1522 preference 1b: a pending curated `## Unreleased` section is
+  # gh-1522 preference 1c: a pending curated `## Unreleased` section is
   # this release's notes (the stage-time stamper folds it under the tag's
-  # generated section header).
+  # generated section header). Captured here, printed only if the NEWER
+  # gh-2463 entries level (below) yields nothing.
   section=$(awk '
     /^## Unreleased[ \t]*$/ { found = 1; next }
     found && /^## / { exit }
     found { print }
   ' CHANGELOG.md)
-  if [ -n "$(printf '%s' "$section" | tr -d '[:space:]')" ]; then
-    printf '%s\n' "$section"
+fi
+
+# gh-2463 preference 1b: the pending changelog/entries aggregate. dart
+# missing (or the dir absent) falls through to the legacy levels — a
+# generator FAILURE with entries present is loud (notes missing an entry
+# is a shipped omission, not a fallback situation).
+if command -v dart >/dev/null 2>&1 && [ -d changelog/entries ]; then
+  gen_err="$(mktemp "${TMPDIR:-/tmp}/release-notes-gen.XXXXXX")"
+  gen_ok=0
+  entries_section=$(dart "$script_dir/gen_changelog.dart" --stdout 2>"$gen_err") && gen_ok=1
+  cat "$gen_err" >&2
+  rm -f "$gen_err"
+  if [ "$gen_ok" -ne 1 ]; then
+    echo "::error::changelog/entries aggregation failed — refusing to produce release notes that silently drop entries (gh-2463); fix or remove the broken entry file(s)" >&2
+    exit 1
+  fi
+  if [ -n "$(printf '%s' "$entries_section" | tr -d '[:space:]')" ]; then
+    printf '%s\n' "$entries_section"
     exit 0
   fi
+fi
+
+# gh-1522 preference 1c (continued): the captured curated Unreleased body.
+if [ -n "$(printf '%s' "${section:-}" | tr -d '[:space:]')" ]; then
+  printf '%s\n' "$section"
+  exit 0
 fi
 
 # ── 2. conventional-commit fallback ────────────────────────────────────────

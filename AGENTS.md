@@ -166,7 +166,9 @@ no override point. Full rules: `docs/agents/cross-platform-parity.md`.
 - Every push to main cuts an annotated tag (`scripts/auto_release.sh`);
   the tag is the single version source (pubspecs stay `0.0.0-dev`);
   releases go DRAFT-first and publish at `release-provenance` only with
-  signed SHA256SUMS attached. CHANGELOG.md is curated-only (`## Unreleased`).
+  signed SHA256SUMS attached. Changelog is per-entry files
+  (`changelog/entries/<issue-or-pr>-<slug>.md`); CHANGELOG.md is a
+  generated index — never hand-edit it.
 - `packages/fa_llm` publishes per `fa_llm-v*` tag (first publish of a new
   package is manual); every lockfile is committed and enforced
   (`scripts/check_lockfiles.sh`); TestFlight external-group + store
