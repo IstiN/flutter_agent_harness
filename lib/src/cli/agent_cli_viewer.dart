@@ -464,10 +464,13 @@ extension AgentCliLease on AgentCli {
 const _leaseBeatAlarmEvery = 3;
 
 /// Plain text of one transcript row as a viewer renders it (styles are
-/// applied by the caller; dimming and bolding are presentation).
+/// applied by the caller; dimming and bolding are presentation). The
+/// assistant rows strip the model-facing `m<N>` record-tag echoes
+/// (gh-2472): the viewer replays record material, and a session recorded
+/// before the persist-side echo hygiene still carries the tags on disk.
 String viewerRowText(AttachedMessage row) => switch (row.role) {
   AttachedMessageRole.user => 'user: ${row.text}',
-  AttachedMessageRole.assistant => row.text,
+  AttachedMessageRole.assistant => stripRecordTags(row.text),
   AttachedMessageRole.tool => '[tool] ${row.toolName ?? ''}',
   AttachedMessageRole.system => row.text,
 };

@@ -599,6 +599,17 @@ void main() {
       ),
       'hey',
     );
+    // gh-2472: the viewer replays record text — an echoed model-facing
+    // `m<N>` tag never renders, while prose survives.
+    expect(
+      viewerRowText(
+        const AttachedMessage(
+          role: AttachedMessageRole.assistant,
+          text: 'm1482 Принято. Ставлю ватч на PR',
+        ),
+      ),
+      'Принято. Ставлю ватч на PR',
+    );
     expect(
       viewerRowText(
         const AttachedMessage(

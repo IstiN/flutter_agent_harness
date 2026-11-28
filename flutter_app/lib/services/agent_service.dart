@@ -1961,6 +1961,12 @@ class AgentService extends ChangeNotifier
   FahChatMessage? _currentAssistantMessage;
   FahChatMessage? _currentThinkingMessage;
 
+  /// gh-2472: the streaming echo-hygiene filter — the model-facing `m<N>`
+  /// record tags a reply echoes are classified at LINE boundaries and
+  /// never accumulate into the live chat bubble, even when the tag's
+  /// bytes split across deltas. Flushed at message finalize.
+  final RecordTagEchoStreamFilter _recordTagEcho = RecordTagEchoStreamFilter();
+
   /// Id of the session new messages persist to (`null` until [initialize]).
   String? get currentSessionId => _sessionId;
 
