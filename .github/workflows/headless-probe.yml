@@ -24,6 +24,9 @@ jobs:
     timeout-minutes: 25
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      # Coherence-guard workaround under test: the endpoint family (openai)
+      # must resolve the SAME key as the openrouter env family.
+      OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       # Probe isolation: the runner's ambient GITHUB_TOKEN must not resolve
       # as a copilot-family key in the coherence check.
       GITHUB_TOKEN: ''
