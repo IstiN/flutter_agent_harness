@@ -20,6 +20,8 @@ import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_network_controller.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/context_window_config.dart';
+import 'package:fa/ui/screens/context_window_settings.dart';
 import 'package:fa/services/image_preview_store.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -193,6 +195,7 @@ Future<void> _selectProvider(WidgetTester tester, String label) async {
 
 void main() {
   group('provider queue section (issue #418)', _queueGoldenSection);
+  group('context window settings (gh-2479)', _contextWindowGoldenSection);
   setUpAll(() async {
     await ensureGoldenFonts();
     await _ensureMaterialIcons();
@@ -1086,6 +1089,133 @@ final List<ProviderQueueEntry> _queueFixtureEntries = [
 /// Provider-queue section goldens (issue #418, settings_sections.dart): the editable project-scope
 /// queue and the read-only env-wins queue, each in en and ru. Deterministic
 /// fakes — no config file is read or written.
+/// The context-window settings surfaces (gh-2479): the per-model
+/// display + override row and the owner-cap control — desktop and phone
+/// frames, en + ru.
+void _contextWindowGoldenSection() {
+  // A service whose provenance resolves through an endpoint report
+  // (1,048,576 · endpoint report) — the same shape the widget tests use.
+  Future<AgentService> provenanceService() async {
+    final service = AgentService(
+      agent: Agent(
+        model: Model(
+          id: 'big',
+          api: 'openai-completions',
+          provider: 'aiin',
+          baseUrl: 'https://aiin.example/v1',
+          contextWindow: 200000,
+          maxTokens: 16384,
+        ),
+        systemPrompt: 'You are Fa.',
+        streamFunction: (model, context, {cancelToken}) =>
+            AssistantMessageEventStream()..end(),
+        toolRegistry: ToolRegistry(const []),
+      ),
+      env: MemoryExecutionEnv(),
+      sessionsRoot: '/sessions',
+    );
+    await service.reconfigure(
+      AgentConfig(
+        providerKind: 'aiin',
+        modelId: 'big',
+        baseUrl: 'https://aiin.example/v1',
+        apiKey: '',
+        contextWindow: 1048576,
+        maxTokens: 16384,
+      ),
+    );
+    return service;
+  }
+
+  Future<void> frame(
+    WidgetTester tester,
+    Widget child, {
+    Size size = goldenSizeDesktop,
+    required Locale locale,
+    required String name,
+  }) async {
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: buildFahTheme(),
+        locale: locale,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: Center(
+            child: SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: size.width < 500 ? size.width - 24 : 560,
+                ),
+                child: child,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await expectGolden(tester, name);
+  }
+
+  testWidgets('per-model section, desktop (en)', (tester) async {
+    final service = await provenanceService();
+    await frame(
+      tester,
+      ModelContextWindowSection(service: service, readOverride: () => 200000),
+      locale: const Locale('en'),
+      name: 'settings_context_window_model_desktop_en',
+    );
+  });
+  testWidgets('per-model section, phone (en)', (tester) async {
+    final service = await provenanceService();
+    await frame(
+      tester,
+      ModelContextWindowSection(service: service, readOverride: () => 200000),
+      size: goldenSizePhone,
+      locale: const Locale('en'),
+      name: 'settings_context_window_model_phone_en',
+    );
+  });
+  testWidgets('per-model section, phone (ru)', (tester) async {
+    final service = await provenanceService();
+    await frame(
+      tester,
+      ModelContextWindowSection(service: service, readOverride: () => 200000),
+      size: goldenSizePhone,
+      locale: const Locale('ru'),
+      name: 'settings_context_window_model_phone_ru',
+    );
+  });
+  testWidgets('owner cap section, desktop (en)', (tester) async {
+    await frame(
+      tester,
+      ContextWindowCapSection(
+        resolve: ({projectDir, homeDir}) =>
+            const AppContextCapResolution(65536, AppContextCapSource.user),
+      ),
+      locale: const Locale('en'),
+      name: 'settings_context_window_cap_desktop_en',
+    );
+  });
+  testWidgets('owner cap section, phone (ru)', (tester) async {
+    await frame(
+      tester,
+      ContextWindowCapSection(
+        resolve: ({projectDir, homeDir}) =>
+            const AppContextCapResolution(65536, AppContextCapSource.user),
+      ),
+      size: goldenSizePhone,
+      locale: const Locale('ru'),
+      name: 'settings_context_window_cap_phone_ru',
+    );
+  });
+}
+
 void _queueGoldenSection() {
   final queueEntries = _queueFixtureEntries;
   final editable = ProviderQueueResolution(

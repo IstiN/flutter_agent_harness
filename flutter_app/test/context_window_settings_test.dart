@@ -48,7 +48,9 @@ AgentService _service(io.Directory tmp) => AgentService(
 
 Future<void> _pump(WidgetTester tester, Widget child) async {
   await tester.pumpWidget(
-    MaterialApp(home: Scaffold(body: SingleChildScrollView(child: child))),
+    MaterialApp(
+      home: Scaffold(body: SingleChildScrollView(child: child)),
+    ),
   );
   await tester.pump();
 }
@@ -91,8 +93,9 @@ void main() {
       expect(find.textContaining('endpoint report'), findsOneWidget);
     });
 
-    testWidgets('a pin shows the override source; Save persists and applies',
-        (tester) async {
+    testWidgets('a pin shows the override source; Save persists and applies', (
+      tester,
+    ) async {
       final service = _service(tmp);
       await service.reconfigure(
         AgentConfig(
@@ -105,7 +108,7 @@ void main() {
         ),
       );
       final writes = <(String, String, int?)>[];
-      var pinned = 200000;
+      int? pinned = 200000;
       await _pump(
         tester,
         ModelContextWindowSection(
@@ -137,8 +140,9 @@ void main() {
       expect(find.textContaining('Saved to'), findsOneWidget);
     });
 
-    testWidgets('an empty override clears the pin and restores the chain',
-        (tester) async {
+    testWidgets('an empty override clears the pin and restores the chain', (
+      tester,
+    ) async {
       final service = _service(tmp);
       await service.reconfigure(
         AgentConfig(
@@ -159,8 +163,11 @@ void main() {
           write: (provider, modelId, value) async {
             modelCapabilityOverrides = value == null
                 ? ModelCapabilityOverrides()
-                : (ModelCapabilityOverrides()
-                  ..set('aiin', 'big', ModelCapabilityOverride(contextWindow: value)));
+                : (ModelCapabilityOverrides()..set(
+                    'aiin',
+                    'big',
+                    ModelCapabilityOverride(contextWindow: value),
+                  ));
             return '/home/.fah/config.yaml';
           },
         ),
@@ -246,10 +253,8 @@ void main() {
       await _pump(
         tester,
         ContextWindowCapSection(
-          resolve: ({projectDir, homeDir}) => const AppContextCapResolution(
-            65536,
-            AppContextCapSource.user,
-          ),
+          resolve: ({projectDir, homeDir}) =>
+              const AppContextCapResolution(65536, AppContextCapSource.user),
         ),
       );
       expect(find.text('Context window cap'), findsOneWidget);
@@ -286,10 +291,8 @@ void main() {
       await _pump(
         tester,
         ContextWindowCapSection(
-          resolve: ({projectDir, homeDir}) => const AppContextCapResolution(
-            65536,
-            AppContextCapSource.user,
-          ),
+          resolve: ({projectDir, homeDir}) =>
+              const AppContextCapResolution(65536, AppContextCapSource.user),
           write: (value, {required layer, projectDir, homeDir}) async {
             writes.add((value, layer));
             return '/home/.fah/config.yaml';
@@ -332,41 +335,35 @@ void main() {
       expect(writes, [(200000, AppContextCapSource.project)]);
     });
 
-    testWidgets('Save with an empty field clears the cap; the apply seam fires',
-        (tester) async {
-      final writes = <int?>[];
-      final applied = <int?>[];
-      await _pump(
-        tester,
-        ContextWindowCapSection(
-          resolve: ({projectDir, homeDir}) => const AppContextCapResolution(
-            65536,
-            AppContextCapSource.user,
+    testWidgets(
+      'Save with an empty field clears the cap; the apply seam fires',
+      (tester) async {
+        final writes = <int?>[];
+        final applied = <int?>[];
+        await _pump(
+          tester,
+          ContextWindowCapSection(
+            resolve: ({projectDir, homeDir}) =>
+                const AppContextCapResolution(65536, AppContextCapSource.user),
+            write: (value, {required layer, projectDir, homeDir}) async {
+              writes.add(value);
+              return '/home/.fah/config.yaml';
+            },
+            apply: applied.add,
           ),
-          write: (value, {required layer, projectDir, homeDir}) async {
-            writes.add(value);
-            return '/home/.fah/config.yaml';
-          },
-          apply: applied.add,
-        ),
-      );
-      await tester.tap(find.text('Clear cap'));
-      await tester.pump();
-      expect(writes, [null]);
-      expect(applied, [null], reason: 'the live re-cap runs after the write');
-    });
+        );
+        await tester.tap(find.text('Clear cap'));
+        await tester.pump();
+        expect(writes, [null]);
+        expect(applied, [null], reason: 'the live re-cap runs after the write');
+      },
+    );
 
     testWidgets('web: the not-configurable note replaces the field', (
       tester,
     ) async {
-      await _pump(
-        tester,
-        const ContextWindowCapSection(supported: false),
-      );
-      expect(
-        find.byKey(const ValueKey('contextWindowCapField')),
-        findsNothing,
-      );
+      await _pump(tester, const ContextWindowCapSection(supported: false));
+      expect(find.byKey(const ValueKey('contextWindowCapField')), findsNothing);
       expect(find.textContaining('Not configurable'), findsOneWidget);
     });
   });

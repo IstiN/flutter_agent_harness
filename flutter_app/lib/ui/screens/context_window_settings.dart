@@ -24,12 +24,13 @@ String formatTokenNumber(int tokens) {
   final buffer = StringBuffer();
   for (var i = 0; i < digits.length; i++) {
     buffer.write(digits[i]);
-    if ((digits.length - i - 1) % 3 == 0 &&
-        i < digits.length - 1) {
+    if ((digits.length - i - 1) % 3 == 0 && i < digits.length - 1) {
       buffer.write(',');
     }
   }
-  return digits.startsWith('-') ? '-${buffer.toString().substring(1)}' : '$buffer';
+  return digits.startsWith('-')
+      ? '-${buffer.toString().substring(1)}'
+      : '$buffer';
 }
 
 /// The source-layer caption for a resolved window (gh-2479): the labels
@@ -132,7 +133,11 @@ class _ModelContextWindowSectionState extends State<ModelContextWindowSection> {
     }
     setState(() => _busy = true);
     try {
-      final file = await (widget.write ?? _defaultWrite)(provider, modelId, value);
+      final file = await (widget.write ?? _defaultWrite)(
+        provider,
+        modelId,
+        value,
+      );
       widget.service.applyModelWindowOverride(provider, modelId);
       if (!mounted) return;
       faui.showFahSnack(
@@ -155,7 +160,11 @@ class _ModelContextWindowSectionState extends State<ModelContextWindowSection> {
 
   void _showError(String message) {
     if (!mounted) return;
-    faui.showFahErrorSnack(context, message, duration: const Duration(seconds: 6));
+    faui.showFahErrorSnack(
+      context,
+      message,
+      duration: const Duration(seconds: 6),
+    );
   }
 
   @override
@@ -168,7 +177,10 @@ class _ModelContextWindowSectionState extends State<ModelContextWindowSection> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(l10n.settingsContextWindowLabel, style: theme.textTheme.titleSmall),
+        Text(
+          l10n.settingsContextWindowLabel,
+          style: theme.textTheme.titleSmall,
+        ),
         const SizedBox(height: 8),
         if (!widget.supported)
           Text(
@@ -184,7 +196,7 @@ class _ModelContextWindowSectionState extends State<ModelContextWindowSection> {
           else ...[
             Text(
               '${formatTokenNumber(provenance.window)} · '
-                  '${contextWindowSourceLabel(provenance.source, l10n)}',
+              '${contextWindowSourceLabel(provenance.source, l10n)}',
               style: theme.textTheme.bodyMedium,
             ),
             if (provenance.window != provenance.uncapped)
@@ -194,8 +206,10 @@ class _ModelContextWindowSectionState extends State<ModelContextWindowSection> {
               ),
           ],
           const SizedBox(height: 8),
-          Text(l10n.settingsContextWindowOverrideLabel,
-              style: theme.textTheme.labelMedium),
+          Text(
+            l10n.settingsContextWindowOverrideLabel,
+            style: theme.textTheme.labelMedium,
+          ),
           const SizedBox(height: 4),
           TextField(
             key: const ValueKey('contextWindowOverrideField'),
@@ -415,7 +429,10 @@ class _ContextWindowCapSectionState extends State<ContextWindowCapSection> {
           ),
         ),
         const SizedBox(height: 8),
-        Text(sourceCaption, style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2)),
+        Text(
+          sourceCaption,
+          style: theme.textTheme.bodySmall?.copyWith(color: tokens.ink2),
+        ),
         const SizedBox(height: 8),
         Row(
           children: [
