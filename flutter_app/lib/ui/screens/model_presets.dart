@@ -11,11 +11,13 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/media_models_store.dart';
+import 'package:fa/services/provider_registry.dart' show ProviderRegistry;
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/settings_env.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa/ui/widgets/product_brand.dart';
 import 'package:fa_ui/fa_ui.dart' as faui;
 
 /// Where a [ModelPreset] points the main connection (and the media slots it
@@ -34,8 +36,9 @@ sealed class ModelPresetTarget {
   String? get keyName;
 
   /// The key this target connects with, resolved exactly like the connection
-  /// form; empty means "no credential".
-  String resolveKey({SessionKeysStore? keysStore});
+  /// form; empty means "no credential". [registry] carries the memory-only
+  /// session keys (the host-session seam).
+  String resolveKey({SessionKeysStore? keysStore, ProviderRegistry? registry});
 }
 
 /// A hosted provider preset (OpenRouter, Ollama Cloud) — an
@@ -54,8 +57,37 @@ final class HostedModelPresetTarget extends ModelPresetTarget {
   String? get keyName => hostedProviderKeyName(provider);
 
   @override
-  String resolveKey({SessionKeysStore? keysStore}) =>
-      resolveProviderKey(provider, keysStore: keysStore);
+  String resolveKey({
+    SessionKeysStore? keysStore,
+    ProviderRegistry? registry,
+  }) => resolveProviderKey(provider, keysStore: keysStore);
+}
+
+/// The host-session target (gh-2391 addendum 8 item 5): the branded
+/// profile's own endpoint over the bridged key. The key resolves through
+/// the registry's memory-only session seam ([ProviderRegistry
+/// .keyValueForName]) — never a saved/env key, and a missing session is a
+/// missing credential, not a "Set key" flow.
+final class HostModelPresetTarget extends ModelPresetTarget {
+  /// Creates a target over the profile's [HostConnectionConfig] section.
+  const HostModelPresetTarget(this.section);
+
+  final HostConnectionConfig section;
+
+  @override
+  String get baseUrl => section.baseUrl.toString();
+
+  /// The named-key seam the resolver itself writes
+  /// ([ProviderRegistry.keyNameFor]) — the media slot overrides and the
+  /// main connection share one session key name.
+  @override
+  String? get keyName => ProviderRegistry.keyNameFor(baseUrl);
+
+  @override
+  String resolveKey({
+    SessionKeysStore? keysStore,
+    ProviderRegistry? registry,
+  }) => registry?.keyValueForName(keyName!) ?? '';
 }
 
 /// A complete model combo applied in one tap: the chat model of the main
@@ -152,10 +184,36 @@ const kModelPresets = <ModelPreset>[
   ),
 ];
 
-/// Whether the preset's provider credential resolves (hosted presets require
-/// a saved/env key; keyless targets always apply).
-bool modelPresetKeyAvailable(ModelPreset preset, SessionKeysStore? keysStore) {
-  final name = preset.target.keyName;
+/// The single host-session preset (gh-2391 addendum 8 item 5): the
+/// profile's default chat model, its app-managed role overrides and its
+/// media slots — one combo, no third-party catalog.
+ModelPreset hostModelPreset(HostConnectionConfig section) => ModelPreset(
+  id: 'host',
+  target: HostModelPresetTarget(section),
+  chatModelId: section.defaultModel,
+  mediaSlots: {
+    for (final entry in section.mediaSlots.entries)
+      entry.key: entry.value.model,
+  },
+  taskSlots: {
+    for (final entry in section.modelRoles.entries)
+      if (TaskRole.all.contains(entry.key)) entry.key: entry.value,
+  },
+);
+
+/// Whether the preset's provider credential resolves (hosted presets
+/// require a saved/env key; the host target requires the bridged session
+/// key; keyless targets always apply).
+bool modelPresetKeyAvailable(
+  ModelPreset preset,
+  SessionKeysStore? keysStore, {
+  ProviderRegistry? registry,
+}) {
+  final target = preset.target;
+  if (target is HostModelPresetTarget) {
+    return target.resolveKey(registry: registry).isNotEmpty;
+  }
+  final name = target.keyName;
   return name == null || settingsKeyEnv(name, keysStore).isNotEmpty;
 }
 
@@ -247,6 +305,7 @@ Future<void> applyModelPreset({
   required AgentService? service,
   required MediaModelsStore store,
   SessionKeysStore? keysStore,
+  ProviderRegistry? registry,
   LastConnectionStore? lastConnectionStore,
   TaskModelsStore? taskStore,
 }) async {
@@ -286,7 +345,7 @@ Future<void> applyModelPreset({
     providerKind: 'openai-completions',
     modelId: preset.chatModelId,
     baseUrl: baseUrl,
-    apiKey: preset.target.resolveKey(keysStore: keysStore),
+    apiKey: preset.target.resolveKey(keysStore: keysStore, registry: registry),
     // Catalog window for the endpoint kind (openai-completions → the
     // openrouter catalog entry) instead of the bare fallback constant —
     // the shared app window rule (gh-1077 AC3).
@@ -315,6 +374,7 @@ class ModelPresetsSection extends StatefulWidget {
     this.store,
     this.lastConnectionStore,
     this.taskModelsStore,
+    this.registry,
   });
 
   /// The service whose backend applying a preset reconfigures.
@@ -330,6 +390,10 @@ class ModelPresetsSection extends StatefulWidget {
   /// nearest [TaskModelsScope]. Null skips the role writes on apply.
   final TaskModelsStore? taskModelsStore;
 
+  /// The user-added providers; the host-session preset resolves its
+  /// bridged key through this registry's memory-only session seam.
+  final ProviderRegistry? registry;
+
   @override
   State<ModelPresetsSection> createState() => _ModelPresetsSectionState();
 }
@@ -344,6 +408,18 @@ class _ModelPresetsSectionState extends State<ModelPresetsSection> {
     super.dispose();
   }
 
+  /// The cards this section shows (gh-2391 addendum 8 item 5): the stock
+  /// OpenRouter carousel, or — under a host-only catalog — exactly the
+  /// profile's own host combo. Never both.
+  List<ModelPreset> _presetsFor(BuildContext context) {
+    final product = ProductConfigScope.of(context);
+    final section = product.hostConnection;
+    if (product.hostOnlyProviderCatalog && section != null) {
+      return [hostModelPreset(section)];
+    }
+    return kModelPresets;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -355,6 +431,7 @@ class _ModelPresetsSectionState extends State<ModelPresetsSection> {
     // The saved-keys scope registers as a dependency, so saving the preset's
     // key from the editor re-enables Apply without a manual refresh.
     final keysStore = SessionKeysScope.maybeOf(context);
+    final presets = _presetsFor(context);
     return ListenableBuilder(
       listenable: Listenable.merge([widget.service, store]),
       builder: (context, _) {
@@ -375,22 +452,23 @@ class _ModelPresetsSectionState extends State<ModelPresetsSection> {
               height: 430,
               child: PageView.builder(
                 controller: _pageController,
-                itemCount: kModelPresets.length,
+                itemCount: presets.length,
                 onPageChanged: (page) => setState(() => _page = page),
                 itemBuilder: (context, index) => Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 6),
                   child: _PresetCard(
-                    preset: kModelPresets[index],
+                    preset: presets[index],
                     service: widget.service,
                     store: store,
                     keysStore: keysStore,
                     lastConnectionStore: widget.lastConnectionStore,
                     taskStore: taskStore,
+                    registry: widget.registry,
                   ),
                 ),
               ),
             ),
-            if (kModelPresets.length > 1) ...[
+            if (presets.length > 1) ...[
               const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -402,9 +480,7 @@ class _ModelPresetsSectionState extends State<ModelPresetsSection> {
                       margin: const EdgeInsets.symmetric(horizontal: 4),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: i == _page
-                            ? tokens.accent
-                            : tokens.surface3,
+                        color: i == _page ? tokens.accent : tokens.surface3,
                       ),
                     ),
                 ],
@@ -429,6 +505,7 @@ class _PresetCard extends StatelessWidget {
     required this.keysStore,
     required this.lastConnectionStore,
     this.taskStore,
+    this.registry,
   });
 
   final ModelPreset preset;
@@ -436,6 +513,7 @@ class _PresetCard extends StatelessWidget {
   final MediaModelsStore store;
   final SessionKeysStore? keysStore;
   final LastConnectionStore? lastConnectionStore;
+  final ProviderRegistry? registry;
 
   /// The task-role store (quick/subagents overrides on apply).
   final TaskModelsStore? taskStore;
@@ -465,7 +543,11 @@ class _PresetCard extends StatelessWidget {
     final theme = Theme.of(context);
     final tokens = faui.FaDesignTokens.of(context);
     final l10n = context.l10n;
-    final keyAvailable = modelPresetKeyAvailable(preset, keysStore);
+    final keyAvailable = modelPresetKeyAvailable(
+      preset,
+      keysStore,
+      registry: registry,
+    );
     final applied = modelPresetMatches(
       preset,
       service,
@@ -474,16 +556,32 @@ class _PresetCard extends StatelessWidget {
     );
     final providerLabel = switch (preset.target) {
       HostedModelPresetTarget(:final provider) => provider.labelFor(context),
+      HostModelPresetTarget(:final section) => section.name,
     };
+    // The host combo is the profile's own product data: the section name
+    // is the title, the description tells where it came from (addendum 8).
+    final title = switch (preset.target) {
+      HostModelPresetTarget(:final section) => section.name,
+      _ => preset.nameFor(l10n),
+    };
+    final description = switch (preset.target) {
+      HostModelPresetTarget(:final section) => l10n.modelPresetHostDescription(
+        section.name,
+      ),
+      _ => preset.descriptionFor(l10n),
+    };
+    // The host session has no "Set key" flow — its credential arrives
+    // bridged from the cabinet. No session = Apply stays disabled.
+    final showKeyCta = !keyAvailable && preset.target is! HostModelPresetTarget;
     return faui.FaSurface(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(preset.nameFor(l10n), style: theme.textTheme.titleMedium),
+          Text(title, style: theme.textTheme.titleMedium),
           const SizedBox(height: 2),
           Text(
-            preset.descriptionFor(l10n),
+            description,
             style: theme.textTheme.bodySmall,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
@@ -520,7 +618,7 @@ class _PresetCard extends StatelessWidget {
                   preset.mediaSlots[slot] ?? l10n.mediaModelsFallbackSummary,
             ),
           const Spacer(),
-          if (!keyAvailable)
+          if (showKeyCta)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Row(
@@ -573,6 +671,7 @@ class _PresetCard extends StatelessWidget {
                       keysStore: keysStore,
                       lastConnectionStore: lastConnectionStore,
                       taskStore: taskStore,
+                      registry: registry,
                     )
                   : null,
             ),

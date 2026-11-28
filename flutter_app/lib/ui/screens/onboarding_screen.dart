@@ -112,6 +112,42 @@ Color _onbSelBg(BuildContext context) =>
 Color _onbPrimary(BuildContext context) =>
     faui.FaDesignTokens.of(context).accent;
 
+/// Whether the ambient theme speaks the locked pack accent family (the
+/// gh-2391 addendum 8 item 2 driver): a branded profile pack installed
+/// with [FaUiTheme.lockDesignTokens] re-skins these artwork slots; stock
+/// and every unpinned theme keep the artwork blues byte-identically.
+bool _onbPackAccented(BuildContext context) =>
+    faui.FaUiThemeProvider.maybeOf(context)?.lockDesignTokens ?? false;
+
+/// The permission-card tint: the pack accent under a locked pack, the
+/// stock artwork blue otherwise.
+Color _onbPermTint(BuildContext context) => _onbPackAccented(context)
+    ? faui.FaDesignTokens.of(context).accent
+    : const Color(0xFF3B82F6);
+
+/// The permission-card tint wash; stock keeps its artwork pair.
+Color _onbPermTintBg(BuildContext context) => _onbPackAccented(context)
+    ? faui.FaDesignTokens.of(context).accentSoft
+    : const Color(0xFFEAF2FE);
+
+/// The single-accent decorative gradient: the pack accent family under a
+/// locked pack, the stock artwork blues otherwise.
+LinearGradient _onbAccentGradient(BuildContext context) =>
+    _onbPackAccented(context)
+    ? LinearGradient(
+        colors: [
+          faui.FaDesignTokens.of(context).accent,
+          faui.FaDesignTokens.of(context).accentSoft,
+        ],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      )
+    : const LinearGradient(
+        colors: [Color(0xFF60A5FA), Color(0xFF3B82F6)],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      );
+
 List<BoxShadow> _onbCardShadow(BuildContext context) =>
     _onbDark(context) ? [] : _kCardShadow;
 
@@ -2286,8 +2322,8 @@ class _P3 extends StatelessWidget {
                         Expanded(
                           child: _PermCard(
                             icon: Icons.notifications,
-                            tint: Color(0xFF3B82F6),
-                            tintBg: Color(0xFFEAF2FE),
+                            tint: _onbPermTint(context),
+                            tintBg: _onbPermTintBg(context),
                             title: l10n.onboardingPermissionNotifications,
                             desc: l10n.onboardingPermNotificationsDesc,
                             vertical: true,
@@ -2328,8 +2364,8 @@ class _P3 extends StatelessWidget {
           const SizedBox(height: 8),
           _PermCard(
             icon: Icons.notifications,
-            tint: Color(0xFF3B82F6),
-            tintBg: Color(0xFFEAF2FE),
+            tint: _onbPermTint(context),
+            tintBg: _onbPermTintBg(context),
             title: l10n.onboardingPermissionNotifications,
             desc: l10n.onboardingPermNotificationsDesc,
           ),

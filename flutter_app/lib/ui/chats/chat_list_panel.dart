@@ -12,6 +12,7 @@ import 'package:fa/ui/widgets/folder_avatar.dart';
 import 'package:fa/ui/widgets/messenger_nav_rail.dart';
 import 'package:fa/ui/widgets/messenger_navigation_controls.dart';
 import 'package:fa/ui/widgets/messenger_section_header.dart';
+import 'package:fa/ui/widgets/product_brand.dart';
 import 'package:fa/ui/widgets/subagent_mark.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
@@ -764,7 +765,12 @@ class _ChatListPanelState extends State<ChatListPanel> {
     return _EmptyState(
       icon: Icons.chat_bubble_outline_rounded,
       title: context.l10n.chatNoConversationsTitle,
-      body: context.l10n.chatNoConversationsBody,
+      // The host-only catalog (gh-2391 addendum 8 item 3): a branded build
+      // with no Networks surface never tells the visitor that network
+      // sign-in is optional — there is no network to sign into here.
+      body: ProductConfigScope.of(context).hostOnlyChannels
+          ? context.l10n.chatNoConversationsBodyHostOnly
+          : context.l10n.chatNoConversationsBody,
       actionLabel: context.l10n.chatStartChat,
       onAction: widget.onNew,
     );

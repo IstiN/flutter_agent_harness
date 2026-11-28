@@ -13,6 +13,7 @@ import 'package:fa/ui/chats/local_chat_list_adapter.dart';
 import 'package:fa/ui/chats/network_inbox_adapter.dart';
 import 'package:fa/ui/network/sign_in_dialog.dart';
 import 'package:fa/ui/widgets/folder_avatar.dart';
+import 'package:fa/ui/widgets/product_brand.dart';
 import 'package:fa/ui/widgets/subagent_mark.dart';
 import 'package:fa_ui/fa_ui.dart' show FaLogo, FaVisualDirection, buildFaTheme;
 import 'package:flutter/foundation.dart';
@@ -97,27 +98,31 @@ Future<void> pumpPanel(
   TextEditingController? searchController,
   FocusNode? searchFocusNode,
   ValueChanged<String>? onSearch,
+  FaProductConfig? productConfig,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: buildFaTheme(direction: direction, brightness: brightness),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
-      home: Scaffold(
-        body: SizedBox(
-          width: width ?? (compact ? 390 : 360),
-          child: ChatListPanel(
-            controller: controller,
-            compact: compact,
-            selectedEntryId: selectedEntryId,
-            onOpen: onOpen ?? (_) async {},
-            onNew: onNew ?? () {},
-            networkManager: networkManager,
-            iconResolver: iconResolver,
-            showFilterToolbar: showFilterToolbar,
-            searchController: searchController,
-            searchFocusNode: searchFocusNode,
-            onSearch: onSearch,
+      home: ProductConfigScope(
+        productConfig: productConfig ?? FaProductConfig.stock,
+        child: Scaffold(
+          body: SizedBox(
+            width: width ?? (compact ? 390 : 360),
+            child: ChatListPanel(
+              controller: controller,
+              compact: compact,
+              selectedEntryId: selectedEntryId,
+              onOpen: onOpen ?? (_) async {},
+              onNew: onNew ?? () {},
+              networkManager: networkManager,
+              iconResolver: iconResolver,
+              showFilterToolbar: showFilterToolbar,
+              searchController: searchController,
+              searchFocusNode: searchFocusNode,
+              onSearch: onSearch,
+            ),
           ),
         ),
       ),
@@ -919,6 +924,41 @@ void main() {
       expect(find.text('Remote agent'), findsNothing);
     },
   );
+
+  group('host-only channels empty state (gh-2391 addendum 8 item 3)', () {
+    FaProductConfig hostOnlyChannels() => FaProductConfig.fromJson({
+      'productId': 'ain',
+      'displayName': 'AIIN Agent',
+      'apiEndpoint': 'https://api.aiin.example/v1',
+      'featureFlags': <String>[],
+      'channels': 'host-only',
+      'hostConnection': {
+        'baseUrl': 'https://api.aiin.example/v1',
+        'sessionBridge': {
+          'storage': 'localStorage',
+          'key': 'aiin_agent_session',
+        },
+        'defaultModel': 'aiin/aiin_flash',
+      },
+    });
+
+    testWidgets('the network sign-in sentence never renders', (tester) async {
+      final controller = await makeController(const []);
+      await pumpPanel(tester, controller, productConfig: hostOnlyChannels());
+      expect(find.text('No chats yet'), findsOneWidget);
+      expect(find.textContaining('optional'), findsNothing);
+      expect(find.text('Start a local chat.'), findsOneWidget);
+    });
+
+    testWidgets('stock keeps the optional sentence (REG)', (tester) async {
+      final controller = await makeController(const []);
+      await pumpPanel(tester, controller);
+      expect(
+        find.textContaining('Network sign-in is optional.'),
+        findsOneWidget,
+      );
+    });
+  });
 
   testWidgets('empty conversation, filter, and search states are distinct', (
     tester,

@@ -10,6 +10,9 @@ import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/ui/screens/model_presets.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
+import 'package:fa/ui/widgets/product_brand.dart';
+import 'package:fa_ui/src/stores/provider_registry.dart'
+    show CustomProvider, ProviderRegistry;
 import 'package:fa_ui/fa_ui.dart' show FaDesignTokens;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -54,16 +57,22 @@ Future<void> _pumpSection(
   required MediaModelsStore store,
   SessionKeysStore? keysStore,
   LastConnectionStore? lastConnectionStore,
+  ProviderRegistry? registry,
+  FaProductConfig? productConfig,
 }) {
   Widget child = MaterialApp(
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
-    home: Scaffold(
-      body: SingleChildScrollView(
-        child: ModelPresetsSection(
-          service: service,
-          store: store,
-          lastConnectionStore: lastConnectionStore,
+    home: ProductConfigScope(
+      productConfig: productConfig ?? FaProductConfig.stock,
+      child: Scaffold(
+        body: SingleChildScrollView(
+          child: ModelPresetsSection(
+            service: service,
+            store: store,
+            lastConnectionStore: lastConnectionStore,
+            registry: registry,
+          ),
         ),
       ),
     ),
@@ -393,6 +402,197 @@ void main() {
       await tester.tap(find.text('Set key').first);
       await tester.pumpAndSettle();
       expect(find.byType(ProviderEditorPage), findsOneWidget);
+    });
+  });
+
+  group('host-only catalog (gh-2391 addendum 8 item 5)', () {
+    const ainOrigin = 'https://api.ain.example/v1';
+
+    HostConnectionConfig section() => HostConnectionConfig.fromJson(
+      {
+        'baseUrl': ainOrigin,
+        'sessionBridge': {
+          'storage': 'localStorage',
+          'key': 'aiin_agent_session',
+        },
+        'defaultModel': 'ain/ain_flash',
+        'modelRoles': {
+          'smol': 'ain/ain_flash',
+          'subagent': 'ain/ain_pro',
+          // Profile-only roles stay metadata; the card shows app roles.
+          'plan': 'ain/ain_pro',
+        },
+        'mediaSlots': {
+          'imageGeneration': {'model': 'ain/ain_image'},
+          'videoGeneration': {'model': 'ain/ain_video'},
+        },
+      },
+      apiEndpoint: Uri.parse(ainOrigin),
+      displayName: () => 'AIN',
+    );
+
+    test('hostModelPreset mirrors the section', () {
+      final preset = hostModelPreset(section());
+      expect(preset.target.baseUrl, ainOrigin);
+      expect(preset.chatModelId, 'ain/ain_flash');
+      expect(preset.taskSlots, {
+        TaskRole.smol: 'ain/ain_flash',
+        TaskRole.subagent: 'ain/ain_pro',
+      });
+      expect(preset.mediaSlots, {
+        MediaSlot.imageGeneration: 'ain/ain_image',
+        MediaSlot.videoGeneration: 'ain/ain_video',
+      });
+    });
+
+    Future<ProviderRegistry> bridgedRegistry() async {
+      final registry = ProviderRegistry.inMemory();
+      // The resolver upserts the host row before remembering the key —
+      // the named-key seam resolves through that row.
+      await registry.upsert(
+        CustomProvider(
+          id: 'host',
+          name: 'AIN',
+          baseUrl: ainOrigin,
+          modelId: 'ain/ain_flash',
+          provenance: 'host',
+          kind: 'host-session',
+        ),
+      );
+      return registry;
+    }
+
+    test('the host key resolves through the registry session seam', () async {
+      final registry = await bridgedRegistry();
+      expect(
+        hostModelPreset(section()).target.resolveKey(registry: registry),
+        isEmpty,
+      );
+      registry.rememberSessionKey('host', 'bridged-secret');
+      expect(
+        hostModelPreset(section()).target.resolveKey(registry: registry),
+        'bridged-secret',
+      );
+      // The named-key seam is the resolver's own rule.
+      expect(
+        hostModelPreset(section()).target.keyName,
+        ProviderRegistry.keyNameFor(ainOrigin),
+      );
+    });
+
+    test(
+      'key availability follows the bridged key, never saved keys',
+      () async {
+        final registry = await bridgedRegistry();
+        final hostPreset = hostModelPreset(section());
+        expect(
+          modelPresetKeyAvailable(hostPreset, null, registry: registry),
+          isFalse,
+        );
+        registry.rememberSessionKey('host', 'bridged-secret');
+        expect(
+          modelPresetKeyAvailable(hostPreset, null, registry: registry),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'applyModelPreset writes the host combo over the bridged key',
+      () async {
+        final store = MediaModelsStore.inMemory();
+        final service = _fakeService();
+        final registry = ProviderRegistry.inMemory()
+          ..rememberSessionKey('host', 'bridged-secret');
+        final lastConnection = LastConnectionStore.inMemory();
+
+        await applyModelPreset(
+          preset: hostModelPreset(section()),
+          service: service,
+          store: store,
+          registry: registry,
+          lastConnectionStore: lastConnection,
+        );
+
+        expect(service.modelId, 'ain/ain_flash');
+        expect(service.activeBaseUrl, ainOrigin);
+        for (final entry in store.configuredSlots) {
+          final override = store.overrideFor(entry)!;
+          expect(override.baseUrl, ainOrigin);
+          expect(override.apiKeyName, ProviderRegistry.keyNameFor(ainOrigin));
+        }
+        expect(lastConnection.connection!.modelId, 'ain/ain_flash');
+      },
+    );
+
+    testWidgets('the section renders exactly one host card — no OpenRouter '
+        'zoo, no key CTA', (tester) async {
+      final registry = ProviderRegistry.inMemory();
+      await _pumpSection(
+        tester,
+        service: _fakeService(),
+        store: MediaModelsStore.inMemory(),
+        registry: registry,
+        productConfig: FaProductConfig(
+          productId: 'ain',
+          displayName: 'AIIN Agent',
+          apiEndpoint: Uri.parse(ainOrigin),
+          featureFlags: const {},
+          hostConnection: section(),
+          providerCatalog: 'host-only',
+        ),
+      );
+      expect(find.text('AIN'), findsOneWidget);
+      expect(find.text('ain/ain_flash'), findsWidgets);
+      expect(find.textContaining('OpenRouter'), findsNothing);
+      expect(find.textContaining('API key'), findsNothing);
+      expect(find.byType(PageView), findsOneWidget);
+    });
+
+    testWidgets('Apply on the host card carries the bridged key through', (
+      tester,
+    ) async {
+      final service = _fakeService();
+      final store = MediaModelsStore.inMemory();
+      final lastConnection = LastConnectionStore.inMemory();
+      final registry = await bridgedRegistry()
+        ..rememberSessionKey('host', 'bridged-secret');
+      await _pumpSection(
+        tester,
+        service: service,
+        store: store,
+        lastConnectionStore: lastConnection,
+        registry: registry,
+        productConfig: FaProductConfig(
+          productId: 'ain',
+          displayName: 'AIIN Agent',
+          apiEndpoint: Uri.parse(ainOrigin),
+          featureFlags: const {},
+          hostConnection: section(),
+          providerCatalog: 'host-only',
+        ),
+      );
+
+      await tester.tap(find.text('Apply').first);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Applied'), findsOneWidget);
+      expect(service.modelId, 'ain/ain_flash');
+      expect(service.activeBaseUrl, ainOrigin);
+      // The apply must ride the same registry seam keyAvailable consulted —
+      // dropping it here reconfigures the live connection with an empty key.
+      expect(service.activeApiKeyForTest, 'bridged-secret');
+    });
+
+    testWidgets('stock keeps the two-card carousel (REG)', (tester) async {
+      await _pumpSection(
+        tester,
+        service: _fakeService(),
+        store: MediaModelsStore.inMemory(),
+        registry: ProviderRegistry.inMemory(),
+      );
+      expect(find.text('Budget optimal'), findsOneWidget);
+      expect(find.textContaining('OpenRouter'), findsWidgets);
     });
   });
 }

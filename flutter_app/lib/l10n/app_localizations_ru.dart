@@ -280,6 +280,14 @@ class AppLocalizationsRu extends AppLocalizations {
       'Начните локальный чат. Вход в сеть необязателен.';
 
   @override
+  String get chatNoConversationsBodyHostOnly => 'Начните локальный чат.';
+
+  @override
+  String modelPresetHostDescription(String name) {
+    return 'Доступно после входа в $name.';
+  }
+
+  @override
   String get chatStartChat => 'Начать чат';
 
   @override

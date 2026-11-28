@@ -135,6 +135,14 @@ class VisualDirectionSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final controller = this.controller ?? FahThemeScope.maybeOf(context);
     if (controller == null) return const SizedBox.shrink();
+    // The profile-locked picker (gh-2391 addendum 8 item 6): the stock
+    // direction names (Liquid Glass, Nebula, …) read as "the active pack"
+    // next to the locked profile pack — the pack row is the page's single
+    // theme identity, so the stock direction furniture hides like the
+    // stock pack list does. Stock keeps every preview.
+    if (ProductConfigScope.of(context).themePickerLocked) {
+      return const SizedBox.shrink();
+    }
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) => SettingsGroup(

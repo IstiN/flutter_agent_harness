@@ -338,6 +338,52 @@ void main() {
       expect(saved.voice, 'nova');
     });
 
+    testWidgets('a host session shows the resolved slot models — never the '
+        '"same as main" summary (gh-2391 addendum 8 item 5 REG)', (
+      tester,
+    ) async {
+      const origin = 'https://api.ain.example/v1';
+      // Exactly the override the host resolver writes for a declared slot.
+      final store = MediaModelsStore.inMemory();
+      await store.setOverride(
+        MediaSlot.imageGeneration,
+        MediaSlotOverride(
+          providerKind: 'openai-completions',
+          baseUrl: origin,
+          modelId: 'ain/ain_image',
+          apiKeyName: ProviderRegistry.keyNameFor(origin),
+          providerId: 'host',
+        ),
+      );
+      final registry = ProviderRegistry.inMemory();
+      await registry.upsert(
+        CustomProvider(
+          id: 'host',
+          name: 'AIN',
+          baseUrl: origin,
+          modelId: 'ain/ain_flash',
+          provenance: 'host',
+          kind: 'host-session',
+        ),
+      );
+      registry.rememberSessionKey('host', 'bridged-secret');
+
+      await _pump(
+        tester,
+        MediaModelsSection(
+          store: store,
+          registry: registry,
+          modelsFetcher: _noModels,
+        ),
+      );
+
+      // The slot row names the resolved model and the host provider — the
+      // stock "Same as main connection" summary never renders.
+      expect(find.textContaining('ain/ain_image'), findsOneWidget);
+      expect(find.textContaining('AIN'), findsWidgets);
+      expect(find.text('Same as main connection'), findsNothing);
+    });
+
     testWidgets('non-TTS slots render no voice field', (tester) async {
       FaUiHost.keyResolver = (name) =>
           name == 'OPENROUTER_API_KEY' ? 'sk-or-test' : '';

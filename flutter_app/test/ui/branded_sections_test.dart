@@ -36,6 +36,8 @@ Future<void> _pump(
   final packs = store ?? await ThemePackStore.load(MemoryExecutionEnv());
   Widget home = Column(
     children: [
+      // The theme page's full furniture: direction picker + packs.
+      VisualDirectionSection(),
       ThemePacksSection(),
       MediaModelsSection(store: MediaModelsStore.inMemory()),
     ],
@@ -249,5 +251,29 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Acme'), findsWidgets);
     expect(find.textContaining('Add provider'), findsWidgets);
+  });
+
+  group('theme page direction picker (gh-2391 addendum 8 item 6)', () {
+    testWidgets('profile-locked: the stock direction names never render — '
+        'the pack row is the only theme identity', (tester) async {
+      final store = await ThemePackStore.load(MemoryExecutionEnv());
+      final spec = validateThemePack(
+        _lockedProfile().themePack!,
+        const {},
+      ).spec!;
+      store.registerHostPack(
+        InstalledThemePack(spec: spec, wallpaperBytes: null),
+      );
+      await _pump(tester, config: _lockedProfile(), store: store);
+      expect(find.text('Liquid Glass'), findsNothing);
+      expect(find.text('Nebula'), findsNothing);
+      // The profile pack stays the page's single theme identity.
+      expect(find.text('AIIN Porcelain'), findsOneWidget);
+    });
+
+    testWidgets('stock: the direction previews stay (REG)', (tester) async {
+      await _pump(tester);
+      expect(find.text('Liquid Glass'), findsOneWidget);
+    });
   });
 }
