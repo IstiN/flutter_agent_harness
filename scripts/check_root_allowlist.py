@@ -59,6 +59,7 @@ ALLOWED = frozenset({
     "bin",
     "blog",
     "browser_ext",
+    "changelog",  # per-change changelog entries + archive (gh-2463)
     "docs",
     "example",
     "flutter_app",
