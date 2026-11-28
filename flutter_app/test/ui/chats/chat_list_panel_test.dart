@@ -1303,4 +1303,42 @@ void main() {
       }
     },
   );
+
+  testWidgets('host-only channels hides the Channels filter chip '
+      '(gh-2391 addendum 9 item 4)', (tester) async {
+    final controller = await makeController([entry('Design')]);
+    await pumpPanel(
+      tester,
+      controller,
+      productConfig: const FaProductConfig(
+        productId: 'ain',
+        displayName: 'AIN',
+        channels: 'host-only',
+        featureFlags: <String>{},
+      ),
+    );
+    expect(find.byKey(const ValueKey('chatFilter-channels')), findsNothing);
+    expect(find.byKey(const ValueKey('chatFilter-all')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chatFilter-unread')), findsOneWidget);
+  });
+
+  testWidgets('host-only resets a stale channels selection to all', (
+    tester,
+  ) async {
+    final controller = await makeController([entry('Design')]);
+    controller.setFilter(ChatListFilter.channels);
+    await pumpPanel(
+      tester,
+      controller,
+      productConfig: const FaProductConfig(
+        productId: 'ain',
+        displayName: 'AIN',
+        channels: 'host-only',
+        featureFlags: <String>{},
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(controller.filter, ChatListFilter.all);
+  });
 }
+

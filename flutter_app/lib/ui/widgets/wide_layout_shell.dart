@@ -1728,11 +1728,14 @@ class _WideLayoutShellState extends State<WideLayoutShell>
           selected: _section == _WideShellSection.devices,
           onTap: (_) => _selectSection(_WideShellSection.devices),
         ),
-      filterRow(
-        ChatListFilter.channels,
-        Icons.tag_rounded,
-        context.l10n.chatFilterChannels,
-      ),
+      // No Channels destination in a host-only/relay-less profile
+      // (gh-2391 addendum 9 item 4) — Local/Activity/Apps stay.
+      if (_networksVisible)
+        filterRow(
+          ChatListFilter.channels,
+          Icons.tag_rounded,
+          context.l10n.chatFilterChannels,
+        ),
       sectionRow(
         _WideShellSection.activity,
         Icons.notifications_none_rounded,
