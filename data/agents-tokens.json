@@ -2953,6 +2953,17 @@
       "requests": 232,
       "source": "",
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "review",
+      "at": "2026-11-28T22:58:59Z",
+      "prompt": 193933,
+      "completion": 24888,
+      "total": 218821,
+      "cacheRead": 5009280,
+      "requests": 76,
+      "source": "reported",
+      "model": "glm-5.3-flash"
     }
   ],
   "issue-2492": [
