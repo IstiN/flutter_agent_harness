@@ -693,7 +693,8 @@ String _psBanner(YamlMap install) {
   b.writeln(r'Write-Host ""');
   // ps_banner is the ASCII-only Windows flavour (gh-1945 mojibake);
   // the Unicode art in the yaml stays for the sh installers.
-  for (final line in install['ps_banner'] as YamlList? ?? install['banner'] as YamlList) {
+  for (final line
+      in install['ps_banner'] as YamlList? ?? install['banner'] as YamlList) {
     b.writeln('Write-Host "$line"');
   }
   b.writeln(r'Write-Host ""');
