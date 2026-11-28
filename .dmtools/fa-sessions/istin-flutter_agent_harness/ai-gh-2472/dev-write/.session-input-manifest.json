@@ -1,0 +1,159 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-28T20:27:40.294Z",
+  "ticketKey": "pr-2475",
+  "headSha": "d64385eb98b0421ea1f87d8dd5c634bebca1dafb",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_classification.json": {
+      "hash": "fnv1a64:9871ae0761552c68",
+      "size": 87
+    },
+    "ci_failures.md": {
+      "hash": "fnv1a64:6112ec0c3cad2184",
+      "size": 47760
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:7698569b38c648e6",
+      "size": 386006
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:004d7930500b668f",
+      "size": 5929
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:454806a27c170848",
+      "size": 12303
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:90efaa108e68840c",
+      "size": 15626
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:47c0ccdfb277ee31",
+      "size": 1856
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:6f1d2d92cf79c673",
+      "size": 4627
+    },
+    "request.md": {
+      "hash": "fnv1a64:b0815602d01f6abc",
+      "size": 4286
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:0e6c6830814bc1dc",
+      "size": 716
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:a317730cc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:a74b516962d103cd",
+      "size": 4416
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:b0815602d01f6abc",
+      "size": 4286
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc69Hm7i",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/compaction/record_tag.dart:277",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n🪶 **SUGGESTION: `_isRegexSpace` bounds the `\\s` class at `ch < 0x100` — narrower than the regex it claims to mirror; residual live/finalize divergence for BMP Unicode spaces**\n\nLine 276's doc says \"the same regex class as `record_tag_echo.dart`'s `(?=\\s|$)`\", but the `ch < 0x100` bound at line 277 excludes the BMP whitespace that ECMAScript/Dart `\\s` DOES match: U+1680 (ogham), U+2003–U+200A (en/em/thin spaces), U+2028/U+2029 (line separators), U+202F, U+205F, U+3000, U+FEFF. U+00A0 happens to work only because 0xA0 < 0x100.\n\nFor a message-initial alias followed by one of those, the filter now diverges from the seam the same way F2 did before the rework — reproduced against the real classes:\n\n```\nm3208\\u2003текст   live: [m3208 текст]   seam: [текст]\nm3208\\u1680текст   live: [m3208 текст]   seam: [текст]\nm3208\\u2028текст   live: [m3208 текст]   seam: [текст]\n```\n\n(the alias paints live — permanently on the CLI's buffered faces — while `stripRecordTagEcho` strips it at finalize; `stripRecordTags`'s per-line rule is unaffected).\n\nOne-line fix: drop the bound — `_regexSpace.hasMatch(String.fromCharCode(ch))` is correct for any single code unit (a lone surrogate half never matches `\\s`), which also makes the doc comment true again. Trigger is a model emitting an exotic space directly after a message-initial digit alias, so this is polish, not a merge gate — but it is the exact leak class gh-2472/gh-2412 ban, and the fix is free."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:48fc9a0b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the stream filter diverges from the gh-2412 persist seam for LEADING aliases without a trailing space — the tag still reaches the user live**\n\nThe PR description says the undecided-tail flush follows \"the gh-2412 `^m\\d+ +` regex semantics\", but the gh-2412 echo contract has **two** rules, and this filter implements only one:\n\n1. `stripRecordTags` — per-line `^m\\d+ +` (`record_tag.dart:43`) — implemented ✅ (tests pin the parity).\n2. The **leading-alias** rule — `_leadingAlias = RegExp(r'^m\\d+(?=\\s|$)')` + `trimLeft()` on the first text block (`record_tag_echo.dart:16-24`), applied at the finalize seam the PR itself names as the boundary (`agent.dart:1102`, `_withoutRecordTagEcho`). Its doc is explicit: *\"a reply whose FIRST text block opens with an alias that ends there — `m3208` is a reply that is ONLY its tag\"*.\n\n`flush()` (line 167) releases an undecided `m\\d+` tail verbatim, so the streaming faces paint what the seam strips at finalize. Reproduced against the real classes (each line = filter output vs `stripRecordTagEcho` result):\n\n```\ntag-only reply   live: [m3208]                    seam/final: []\nalias+newline    live: [m3208\\nреальный ответ]    seam/final: [реальный ответ]\n```\n\nConsequences per face: the app's live bubble shows `m3208` for the whole turn and it vanishes at finalize (a flash of exactly what gh-2472 bans); the CLI's raw face keeps it painted, and the buffered ansi/plain faces render it permanently into `_assistantText` (nothing re-cleans that buffer — it disagrees with the TUI replay of the same stored message, which strips). The tag-only shape is not hypothetical: the tagging machinery itself produces tag-only text blocks for pure tool-call carriers (`record_tag.dart:384`).\n\nFix: teach the filter the leading-alias rule — the first line-start candidate of a MESSAGE (not just of a line) that reaches end-of-message/newline without a trailing space must be classified against `^m\\d+(?=\\s|$)` instead of flushed verbatim; every subsequent line keeps the current `^m\\d+ +` semantics. Please also add the missing parity test against `stripRecordTagEcho` (the current suite pins parity with `stripRecordTags` only, which is why this slipped through).\n\nIf the owner confirms tag-only carrier replies occur in production streams, this is upgradeable to 🚨 BLOCKING — today I tier it ⚠️ because the ticket's stated AC shape (`m1482 `, with the trailing space) is handled correctly everywhere."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:7e175561",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 1 — 🚨 BLOCKING: CRAP gate fails on `RecordTagEchoStreamFilter.push` (18.00 vs 12.00)\n\n**Fixed** on this branch — `push` decomposed exactly as suggested: the state handling moved out of `push` into small per-state helpers, and `push` is now the per-byte loop + dispatch only.\n\n## What changed (`lib/src/compaction/record_tag.dart`)\n\n- `push` — now just the code-unit loop calling `_step(ch, out)`: **CC 2, CRAP 2.00** (was CC 18 / CRAP 18.00).\n- `_step` — the 5-way state dispatch (`switch` expression over `_TagScan`): CRAP 6.00.\n- Per-state steps extracted: `_stepLineStart` (3.00), `_stepAlias` (6.00), `_stepSpaces` (3.00), `_stepTrim` (3.00 — new state, see below), `_stepText` (2.00), plus `_releaseAlias` (2.00), `_beginTrim` (1.00), `_emit` (1.00).\n- Every `RecordTagEchoStreamFilter` symbol now measures **≤ 6.00** — under the 12.0 ratchet with 100% line+branch coverage (measured via `crap4dart analyze` against the formatted lcov; the census rows are quoted in the run summary).\n\n## Semantics\n\nThe state machine arms are the same as before (lineStart → alias → spaces / text); the only behavioral addition is the new `_TagScan.trim` state, which exists for thread 2 (the leading-alias rule) — no pre-existing behavior was rewritten; the well-tested `^m\\d+ +` per-line semantics is untouched and still pinned by the existing suite.\n\n## Tests\n\nNo new tests were needed for the decomposition itself (the existing filter suite covers every state arm — verified green: `test/compaction/record_tag_test.dart` 28/28), and the refactor was verified coverage-preserving: the same tests that passed before the split still pass after, now covering every extracted helper at 100%."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:e7c7f384",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Thread 2 — ⚠️ IMPORTANT: the filter misses the gh-2412 leading-alias rule — the tag still reaches the user live\n\n**Fixed** on this branch — the filter now implements BOTH halves of the gh-2412 echo contract, and the reproduced divergences are gone: `m3208` streams as `''` (seam/final: `[]`), `m3208\\nреальный ответ` streams as `реальный ответ` (seam/final: `[реальный ответ]`).\n\n## What changed (`lib/src/compaction/record_tag.dart`)\n\n- The message's FIRST line-start candidate is now additionally classified against the leading-alias rule `_leadingAlias = ^m\\d+(?=\\s|$)` (`record_tag_echo.dart`) instead of being flushed verbatim:\n  - at end-of-message (`flush()`): a message-initial `m\\d+` tail strips — `m3208` alone is a reply that is ONLY its tag (the tag-only carrier shape, `record_tag.dart`'s pure tool-call carrier);\n  - at a non-space whitespace byte (newline/tab/CR — the `(?=\\s)` lookahead class): the alias strips and a new `_TagScan.trim` state skips the `trimLeft()` whitespace run that followed it;\n  - a MID-message undecided tail still flushes verbatim (`text\\nm2` → `text\\nm2`) — the regex contract is unchanged for every line after the first.\n- The trim run preserves the seam's rule ORDER (`stripRecordTags` runs BEFORE the leading alias + trim): a byte at an original line boundary re-arms the per-line `^m\\d+ +` rule (`m3208\\nm1494 x` → `x`), a byte trimmed out of a mid-line position does not (`m3208\\n x` → `x`, tag survives mid-line: `m3208\\tm1494 x` → `m1494 x`).\n- Message-start tracking (`_atMessageStart`) re-arms on `flush()`, so the next message classifies from a fresh line; the stale \"released verbatim\" comments at the two flush call sites (`approval_commands.dart`, `agent_service_assistant.dart`) now state the leading-alias exception.\n\n## Parity test added (the missing oracle)\n\n`test/compaction/record_tag_test.dart`: `stripRecordTagEcho and the stream filter agree (gh-2412 parity)` — drives a 13-text corpus (tag-only, alias+newline, alias+tagged-line, blank-line/indent trim, CRLF, tagged/untagged multi-line, `m3u8`, `m2\\nm2`, leading-newline anchor, empty) through a fresh filter and asserts byte equality with `_seamStrippedText` (`stripRecordTagEcho` on a one-text-block reply) for every text.\n\nNew targeted tests pin each rule shape: message-initial tail stripped (incl. the split-delta `m320`+`8` no-flicker), mid-message tail verbatim, tab/CR lookahead ends, bare `m` not an alias, per-line re-arm after the strip, and the updated flush-reset contract. CLI-face regressions: `test/cli/agent_cli_record_tag_echo_test.dart` adds the tag-only reply (raw face paints nothing; the pre-existing #1085 empty-reply nudge fires a scripted `continue` turn — see the run summary note) and the alias+newline raw-face case.\n\n## Note on the tag-only reply completing the turn\n\nA tag-only reply finalizes to a CLEAN empty reply, so the pre-existing empty-reply machinery (`_shouldContinueAfterEmptyReply`, issue #1085 M2b — present on the parent commit too) nudges `continue` once. That machinery is unchanged by this fix; the live face just no longer paints the tag while it happens."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:189b29ff",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n🪶 **SUGGESTION: `_isRegexSpace` bounds the `\\s` class at `ch < 0x100` — narrower than the regex it claims to mirror; residual live/finalize divergence for BMP Unicode spaces**\n\nLine 276's doc says \"the same regex class as `record_tag_echo.dart`'s `(?=\\s|$)`\", but the `ch < 0x100` bound at line 277 excludes the BMP whitespace that ECMAScript/Dart `\\s` DOES match: U+1680 (ogham), U+2003–U+200A (en/em/thin spaces), U+2028/U+2029 (line separators), U+202F, U+205F, U+3000, U+FEFF. U+00A0 happens to work only because 0xA0 < 0x100.\n\nFor a message-initial alias followed by one of those, the filter now diverges from the seam the same way F2 did before the rework — reproduced against the real classes:\n\n```\nm3208\\u2003текст   live: [m3208 текст]   seam: [текст]\nm3208\\u1680текст   live: [m3208 текст]   seam: [текст]\nm3208\\u2028текст   live: [m3208 текст]   seam: [текст]\n```\n\n(the alias paints live — permanently on the CLI's buffered faces — while `stripRecordTagEcho` strips it at finalize; `stripRecordTags`'s per-line rule is unaffected).\n\nOne-line fix: drop the bound — `_regexSpace.hasMatch(String.fromCharCode(ch))` is correct for any single code unit (a lone surrogate half never matches `\\s`), which also makes the doc comment true again. Trigger is a model emitting an exotic space directly after a message-initial digit alias, so this is polish, not a merge gate — but it is the exact leak class gh-2472/gh-2412 ban, and the fix is free."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:0c51174b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: One blocking issue: the `CRAP + duplication` CI check fails on the new `RecordTagEchoStreamFilter.push` (CRAP 18.00 vs the 12.0 ratchet). One important issue: the streaming filter implements only the `^m\\d+ +` half of the gh-2412 echo contract — a leading alias without a trailing space (`m3208` / `m3208\\n…`) still paints on the live faces while the persist seam strips it at finalize.\n\n**Key Issues**:\n- 🚨 CI red: `RecordTagEchoStreamFilter.push` (record_tag.dart:130) scores CRAP 18.00 > threshold 12.00 — split the state machine into helpers.\n- ⚠️ Live/finalize divergence for leading aliases (record_tag.dart:167 `flush`) — reproduced: live `[m3208]` vs seam `[]`; live `[m3208\\nреальный ответ]` vs seam `[реальный ответ]`.\n\n**Digest** (non-thread notes):\n- flutter_app/test — no new golden: justified in the PR notes (services-only change; the AGENTS.md golden mandate and `golden_guard_test.dart` map key on `lib/ui/**` widget files, none touched; goldens are pixel-pinned to the macOS nightly leg). Acceptable, but a golden pinning a tag-prefixed assistant row would be the durable AC artifact once the macOS leg is reachable.\n- The `_recordTagEcho` filter is instance state flushed only at message end; a run that dies without `MessageEndEvent` (unhandled crash path) would carry `_aliasBuffer` into the next turn — a defensive reset at run start would be cheap hardening.\n\n**Next Steps**:\n1. Bring `push` under the CRAP ratchet (extract per-state helpers) → re-run the `CRAP + duplication` check green.\n2. Add the leading-alias rule to the filter + a `stripRecordTagEcho` parity test."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:1d8911a7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: CI red — the CRAP gate fails on `RecordTagEchoStreamFilter.push` (CRAP 18.00 vs threshold 12.00)**\n\nThe `CRAP + duplication` check fails on this commit (`fa2e11ca`) and the offender is new code introduced by this PR:\n\n```\n18.00  100.0  N/A   18  RecordTagEchoStreamFilter.push   lib/src/compaction/record_tag.dart:130\nMax CRAP: 18.00 — FAIL (threshold: 12.00)\n```\n\nThe project's CRAP ratchet is pinned at 12.0 (`crap4dart.yaml:51`) and only ever moves down; a new symbol scoring 18 breaks the gate (`ci_classification.json` classifies the failure as `owned`). The complexity comes from the single `push` method concentrating the whole state machine: one `switch` with 10 guarded cases over 4 states plus the per-byte loop and buffer management.\n\nSplit the state handling out of `push` so each method stays simple — e.g. extract the `lineStart`/`alias`/`spaces` arms into small private helpers (`_classifyLineStart(int ch)`, `_classifyAlias(int ch)`, …) and keep `push` as the loop + dispatch. That drops each function's complexity below the ratchet without changing the (already well-tested) semantics."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-28:833cf6b1",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 rework arm withheld on head 2ef373b2657239cf0648c22c99a01c7d0e06b130 — 3/3 red arming attempts left the head unchanged (gh-917). The rework leg keeps closing without a fix (a violation class the agent cannot repair without the local toolchain) — the machine stops retrying here. A human owns this PR: push a fix (a NEW head restarts the budget and validation) or resolve the violation at its source."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:9cfb585c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: The rework closes both previously raised findings: the CRAP ratchet (F1) is under the gate again (`push` is now a loop + per-state dispatch, CI green this round), and the streaming filter (F2) now implements the gh-2412 leading-alias rule — all cited divergences verified fixed against the seam, with the requested `stripRecordTagEcho` parity tests landed. One new suggestion-level finding remains (the `\\s` class bounded at `ch < 0x100` misses BMP Unicode spaces), polish-only, does not gate merge.\n\n**Key Issues**:\n- 💡 record_tag.dart:277 — `_isRegexSpace` narrower than the regex class it documents; `m3208\\u2003…` keeps the alias live while the seam strips it (repro'd). One-line fix.\n\n**Digest** (non-thread notes):\n- lib/src/compaction/record_tag.dart:190 — a zero-digit line start `m ` (e.g. `m текст`) is swallowed by the filter while the seam keeps it; carried over unchanged from the round-1 (frozen) filter, not worsened by the rework — noting for the next touch.\n- The integration-screenshot churn is the legitimate re-capture of TUI output once tags stopped rendering; the two similarity warnings baselined for `ci_2462`/`ci_2472` loc-guard tests are accepted gate debt. The new repo-side loc belt (`test/ci_2472_core_loc_ceiling_guard_test.dart`) + the agent_cli.dart seams split (2806→2626) properly close the ceiling-fires-only-in-CI gap.\n\n**Next Steps**:\n1. Land the one-line `_isRegexSpace` widening (or correct its doc) at leisure — no rework lap required."
+    }
+  ]
+}
