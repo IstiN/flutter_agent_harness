@@ -938,6 +938,11 @@ class Agent {
       finalizeGate: finalizeGate,
       operativeSkills: operativeSkills,
       workingSetProvider: _workingSetProvider(),
+      // gh-2458: read per request — a mid-loop `others` mount re-syncs
+      // state.tools (ToolAvailabilityGate.apply), and the very next
+      // request of the SAME run must advertise the mounted tool; a
+      // run-start snapshot would keep it uncallable until the run ends.
+      toolsProvider: () => _state.tools,
       takePendingNotices: _takePendingContextNotices,
       beforeToolCall: beforeToolCall,
       afterToolCall: afterToolCall,
