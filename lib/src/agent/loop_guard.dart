@@ -126,7 +126,11 @@ final class IdenticalCallLoopGuard {
     this.noticeThreshold = defaultIdenticalCallNoticeThreshold,
     this.abortThreshold = defaultIdenticalCallAbortThreshold,
     Set<String> exemptTools = const <String>{},
-  }) : assert(noticeThreshold != 0),
+  }) : assert(
+         noticeThreshold > 0,
+         'noticeThreshold must be positive — ≤ 0 means "disabled" and the '
+         'guard cannot be constructed in that state',
+       ),
        _exemptTools = Set<String>.unmodifiable(exemptTools);
 
   /// Consecutive identical turns before the notice arms.
@@ -194,7 +198,13 @@ final class IdenticalCallLoopGuard {
         identicalCallAbortError(message, _streak),
       );
     }
-    if (_streak >= noticeThreshold && !_noticeDeliveredThisStreak) {
+    // The `noticeThreshold > 0` mirror keeps the documented ≤ 0 disable
+    // honest in release builds too (asserts are debug-only): without it a
+    // negative threshold would arm the notice on the first turn of every
+    // streak — the abort side carries the same defensive check.
+    if (_streak >= noticeThreshold &&
+        noticeThreshold > 0 &&
+        !_noticeDeliveredThisStreak) {
       _noticeDeliveredThisStreak = true;
       return IdenticalCallVerdict(
         IdenticalCallAction.injectNotice,

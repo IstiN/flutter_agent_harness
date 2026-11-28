@@ -1254,15 +1254,20 @@ Future<List<Message>> _runAgentLoop({
       // gh-2423 (C3): pending context notices join the injection — they
       // ride this request (last, after any steering) and never count as
       // steering extensions.
+      final steeringArrived = pendingMessages.isNotEmpty;
       final pendingNotices =
           currentConfig.takePendingNotices?.call() ?? const <Message>[];
-      if (pendingNotices.isNotEmpty) {
-        pendingMessages = [...pendingMessages, ...pendingNotices];
-      }
-      if (pendingMessages.isNotEmpty) {
+      if (steeringArrived) {
         // gh-2461: a user/steering message joined between turns ends the
         // unattended stretch — the identical-call streak evidence resets.
+        // The verdict is captured BEFORE the gh-2423 machine notices merge
+        // into the list: a context notice is not user evidence, and a
+        // reset on it would buy a degenerate loop 5 fresh identical calls
+        // exactly where notices fire most (near-limit reads).
         loopGuard?.resetStreak();
+      }
+      if (pendingNotices.isNotEmpty) {
+        pendingMessages = [...pendingMessages, ...pendingNotices];
       }
       await _injectPendingMessages(
         pendingMessages,

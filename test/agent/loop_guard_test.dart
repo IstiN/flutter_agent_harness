@@ -146,6 +146,24 @@ void main() {
     });
   });
 
+  group('unit: threshold contract', () {
+    test('a non-positive noticeThreshold cannot construct the guard — '
+        'the documented ≤ 0 disable is enforced at construction', () {
+      // The doc says "[noticeThreshold] ≤ 0 disables the whole guard";
+      // a negative threshold passing the old `!= 0` assert would arm the
+      // notice on the FIRST turn of every streak in a release build
+      // (`1 >= -1`) — the exact opposite of the documented disable.
+      expect(
+        () => IdenticalCallLoopGuard(noticeThreshold: 0),
+        throwsA(isA<AssertionError>()),
+      );
+      expect(
+        () => IdenticalCallLoopGuard(noticeThreshold: -1),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+  });
+
   group('loop: streak detection', () {
     /// Drives a scripted run of [turns] and returns the run artifacts.
     Future<
@@ -417,6 +435,53 @@ void main() {
       expect(
         run.lastUserTextAtRequest.any(
           (t) => t?.contains('check the logs') ?? false,
+        ),
+        isTrue,
+      );
+    });
+
+    test('a queued context notice does NOT reset the streak — machine '
+        'notices are not steering evidence', () async {
+      // gh-2423 pending context notices (near-limit compaction notices,
+      // post-hide child records) ride the injection slot right before the
+      // assistant turn; a degenerate read loop growing its context is
+      // exactly where they fire. They are machine content, NOT the
+      // user/steering evidence the reset contract names — the streak must
+      // survive them, or each queued notice buys the loop 5 fresh
+      // identical calls.
+      var noticePolls = 0;
+      final turns = [...identicalReads(9), textTurn('done')];
+      final run = await drive(
+        turns,
+        config: AgentLoopConfig(
+          model: model,
+          takePendingNotices: () {
+            // One notice queued at the turn-5 boundary (mid-streak: 4
+            // identical exchanges already stand).
+            return noticePolls++ == 4
+                ? [
+                    UserMessage.text(
+                      '<system-notice>near context limit — compacting '
+                      'hidden turns</system-notice>',
+                    ),
+                  ]
+                : const <Message>[];
+          },
+        ),
+      );
+      // The streak survived the notice: the honest abort lands on the 8th
+      // identical exchange and the scripted tail never runs. (With the
+      // reset bug the notice restarts the count and the loop walks all 9
+      // scripted reads plus the text turn to a clean stop.)
+      expect(run.executed, hasLength(8));
+      final last = run.transcript.last as AssistantMessage;
+      expect(last.stopReason, StopReason.error);
+      expect(last.errorMessage, contains('identical tool-call loop guard'));
+      // The notice really rode a request (it was delivered — it just
+      // never reset the streak).
+      expect(
+        run.lastUserTextAtRequest.any(
+          (t) => t?.contains('near context limit') ?? false,
         ),
         isTrue,
       );
