@@ -808,6 +808,9 @@ class AgentCli {
           compactionTuning: config.compactionTuning,
           // Issue #862: the `agent.misuseBreaker` switch covers children.
           misuseBreaker: config.misuseBreaker,
+          // gh-2461: the identical-call opt-out covers children too — a
+          // child running a watch command needs the same escape hatch.
+          identicalCallExemptTools: config.identicalCallExemptTools,
           // Real JSONL child sessions, created at child completion (fast
           // register keeps the steering race away; the transcript lands
           // when the child finishes).
@@ -920,6 +923,9 @@ class AgentCli {
         // Issue #862: tool-misuse circuit breaker (off switch:
         // `agent.misuseBreaker: false`).
         toolMisuseBreaker: config.misuseBreaker ? ToolMisuseBreaker() : null,
+        // gh-2461: the identical-call loop guard's per-call-site opt-out
+        // (`agent.identicalCallExemptTools`).
+        identicalCallExemptTools: config.identicalCallExemptTools,
       ),
     );
     _toolRegistry = stack.registry;

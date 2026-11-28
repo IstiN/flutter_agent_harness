@@ -190,6 +190,37 @@ void main() {
     });
   });
 
+  group('gh-2461 identical-call opt-out (AgentWiringSpec → Agent)', () {
+    test('identicalCallExemptTools threads through the wiring spec to '
+        'the agent', () {
+      final wired = wireAgentCore(
+        profile: cliProfile,
+        services: fullServices(MemoryExecutionEnv(cwd: '/w')),
+      );
+      final stack = wired.buildAgentStack(
+        spec: AgentWiringSpec(
+          model: _model,
+          systemPrompt: 's',
+          identicalCallExemptTools: const {'watch', 'poll_status'},
+        ),
+        streamFunction: _fakeStream,
+      );
+      expect(stack.agent.identicalCallExemptTools, {'watch', 'poll_status'});
+    });
+
+    test('the exempt-tools default is empty (no opt-out at birth)', () {
+      final wired = wireAgentCore(
+        profile: cliProfile,
+        services: fullServices(MemoryExecutionEnv(cwd: '/w')),
+      );
+      final stack = wired.buildAgentStack(
+        spec: AgentWiringSpec(model: _model, systemPrompt: 's'),
+        streamFunction: _fakeStream,
+      );
+      expect(stack.agent.identicalCallExemptTools, isEmpty);
+    });
+  });
+
   group('run-narrowing (AC7 — hiding, off means absent everywhere)', () {
     test('a2a-only fabric shape (no sessionRoot, no hub) wires clean — '
         'no repository composes, the plan keeps a2a (regression: the '
