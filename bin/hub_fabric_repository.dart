@@ -22,6 +22,7 @@
 ///   mailbox entries.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:fa_hub_client/fa_hub_client.dart' as hub;
@@ -40,16 +41,58 @@ bool hubFabricWired({
 
 /// Hub-backed [MessagingRepository] over a [hub.HubPlugin].
 final class HubFabricRepository
-    implements MessagingRepository, RoutingMessagingRepository {
+    implements
+        MessagingRepository,
+        RoutingMessagingRepository,
+        RosterSettleness {
   HubFabricRepository(
     this._plugin, {
     this.repositoryResolver,
     this.publicChannelChecker,
     this.privateKeyMissingChecker,
     this.channelLister,
-  });
+    this.rosterWarmup = hubRosterWarmup,
+  }) {
+    _watchWelcomes();
+  }
 
   final hub.HubPlugin _plugin;
+  final Duration rosterWarmup;
+
+  /// Our active client's last accepted welcome, or null before any was
+  /// observed. The re-welcome IS the hub-restart witness: our client only
+  /// re-welcomes when the hub came back, and peers then re-hello on their
+  /// own backoff, so the roster is unsettled for [rosterWarmup]. Fed by
+  /// three signals covering each other's blind spots:
+  /// * the client's `welcomeEvents` (fires on first connect and every
+  ///   reconnect — covers restarts with NO fabric calls during the
+  ///   downtime, where no disconnect is ever observed);
+  /// * the `isConnected` false→true transition observed across calls
+  ///   (covers a welcome event lagging the `connected` flip — the client
+  ///   completes `_firstWelcome` before the post-welcome channel-join /
+  ///   flush chain fires the event);
+  /// * an attach seed of `now` when we first see an ALREADY-connected
+  ///   client (a welcome happened before we could listen — over-cautious
+  ///   for one warm-up window, then converges; never under-cautious).
+  DateTime? _lastWelcomeAt;
+  bool _sawConnected = false;
+  hub.HubClient? _welcomeWatchClient;
+  StreamSubscription<void>? _welcomeWatchSub;
+
+  /// Follows the ACTIVE client (a scoped host-owned repository can swap
+  /// the client under us): each client gets exactly one welcome listener
+  /// and one attach seed.
+  void _watchWelcomes() {
+    final client = _repo?.client;
+    if (client == null || identical(client, _welcomeWatchClient)) return;
+    _welcomeWatchSub?.cancel();
+    _welcomeWatchClient = client;
+    _sawConnected = false;
+    _lastWelcomeAt = client.connected ? DateTime.now() : null;
+    _welcomeWatchSub = client.welcomeEvents.listen(
+      (_) => _lastWelcomeAt = DateTime.now(),
+    );
+  }
 
   /// Resolves the host's ACTIVE repository (a scoped, host-owned client
   /// when a join enrolled a name-bound credential) — falls back to the
@@ -82,7 +125,25 @@ final class HubFabricRepository
   String? get _agentId => _repo?.client.agentId ?? _plugin.agentId;
 
   @override
-  bool get isConnected => _repo?.client.connected ?? false;
+  bool get isConnected {
+    _watchWelcomes();
+    final connected = _repo?.client.connected ?? false;
+    if (connected && !_sawConnected) {
+      // The (re)connect transition observed across calls — the welcome
+      // timestamp for restarts whose welcome event may not have fired yet.
+      _lastWelcomeAt = DateTime.now();
+    }
+    _sawConnected = connected;
+    return connected;
+  }
+
+  @override
+  bool get rosterSettled {
+    _watchWelcomes();
+    final last = _lastWelcomeAt;
+    if (last == null) return false; // no welcome observed yet — untrust
+    return DateTime.now().difference(last) >= rosterWarmup;
+  }
 
   @override
   Future<String?> resolveTarget(String toId) async {
