@@ -21,6 +21,8 @@
 ///   commands.
 library;
 
+import 'package:fa/prompts.g.dart';
+
 /// The platform whose shell the registry describes.
 enum SandboxPlatform {
   /// Browser: the pure-Dart `MemoryShell` over an in-memory filesystem.
@@ -575,6 +577,19 @@ const _shellStateCommands = {
 /// [webShellCommandNames]); they are excluded from the `core utilities:` line
 /// and named in the NOT-available line instead.
 const _webNonFunctional = {'ssh', 'scp', 'sftp', 'lua'};
+
+/// Renders the sandbox system prompt with BOTH placeholders substituted
+/// (gh-2391 addendum 9 review): `{{commands}}` for [platform] and
+/// `{{agentName}}` for the product identity (stock `Fa`). Every consumer of
+/// [sandboxSystemPrompt] must go through this helper — a hand-rolled
+/// `replaceAll('{{commands}}', …)` alone leaks the raw `{{agentName}}`
+/// placeholder into the engine-visible prompt.
+String renderSandboxSystemPrompt({
+  required SandboxPlatform platform,
+  String agentName = 'Fa',
+}) => sandboxSystemPrompt
+    .replaceAll('{{commands}}', formatSandboxCommandSection(platform))
+    .replaceAll('{{agentName}}', agentName);
 
 /// Renders the shell-capability section of the Fa system prompt for
 /// [platform]: the sandboxed shells get the exact command list plus the

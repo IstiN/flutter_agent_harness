@@ -1414,13 +1414,12 @@ class _HostSignInGhost extends StatelessWidget {
           style: TextStyle(fontSize: 11.5, color: _onbGray(context)),
         ),
         const SizedBox(height: 16),
-        FilledButton.icon(
+        // fa_ui equivalents only (styleguide ratchet): a text-only CTA
+        // ghost — no material FilledButton, no extra material glyph.
+        faui.FaButton(
+          label: l10n.onboardingHostSignInCta(displayName),
           onPressed: () {},
-          icon: const Icon(Icons.open_in_new, size: 16),
-          label: Text(
-            l10n.onboardingHostSignInCta(displayName),
-            style: const TextStyle(fontSize: 12),
-          ),
+          dense: true,
         ),
       ],
     );
