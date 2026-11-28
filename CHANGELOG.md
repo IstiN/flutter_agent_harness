@@ -32,6 +32,18 @@ block a release again.
   a list of tool-name strings) wired through the CLI config, the strict validator and
   the host/child agent wiring; and the guard's constructor enforces the documented
   ≤ 0 disable (`noticeThreshold > 0` assert + release-side runtime mirror).
+- fix(fabric): queued hub mail no longer strands off an unsettled roster (gh-2471) —
+  `FallbackMessagingRepository` untracked queued mail on the first connected
+  roster snapshot lacking the recipient, and after a hub restart peers re-hello
+  on their own reconnect backoff, so that snapshot is not ownership evidence
+  (v1.0.794 hostile-env red, run 46147543769: "queued mail not forwarded within
+  20s of inbox probes"; production shape: DMs queued during a hub restart are
+  silently lost). The flush now untracks on a confirmed miss only when the
+  routing primary's roster is settled — the new `RosterSettleness` capability
+  (`hubRosterWarmup`, 5s, rides out the first three reconnect-backoff steps);
+  `HubFabricRepository` (bin/) and `HubMessagingRepository` (flutter_app
+  network-join path) report settledness off their own re-welcome witness.
+  Non-advertising primaries keep today's behavior.
 - fix(browser_ext): provider.save drops contextWindow/custom headers (gh-2425) —
   the panel save overwrote `faProvider` with baseUrl/apiKey/model only, so every
   save reset the stored window override (gh-2059) and a 264k-token model ran on
