@@ -24,6 +24,12 @@ jobs:
     timeout-minutes: 25
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      # Probe isolation: the runner's ambient GITHUB_TOKEN must not resolve
+      # as a copilot-family key in the coherence check.
+      GITHUB_TOKEN: ''
+      GH_TOKEN: ''
+      GOOGLE_API_KEY: ''
+      ANTHROPIC_API_KEY: '' 
       MODEL: ${{ inputs.model || 'google/gemini-2.5-flash' }}
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +55,7 @@ jobs:
         run: |
           set +e
           timeout 300 dart run bin/fah.dart -p \
-            'Use the bash tool to start `sleep 20 && echo DRAIN_PROBE_DONE` as a BACKGROUND job (background: true). Then END YOUR TURN immediately — do NOT poll the job, do NOT start any other jobs; the harness will wake you when it finishes. When the completion notice arrives, read the job log (bash_job output) and reply with the exact DONE line you find.' --provider openai-completions --model "$MODEL" > /tmp/p1.log 2>&1
+            'Use the bash tool to start `sleep 20 && echo DRAIN_PROBE_DONE` as a BACKGROUND job (background: true). Then END YOUR TURN immediately — do NOT poll the job, do NOT start any other jobs; the harness will wake you when it finishes. When the completion notice arrives, read the job log (bash_job output) and reply with the exact DONE line you find.' --provider openai-completions > /tmp/p1.log 2>&1
           rc=$?
           echo "P1 exit=$rc"
           echo "P1 settles seen: $(grep -c 'Background shell job' /tmp/p1.log)"
@@ -63,7 +69,7 @@ jobs:
         run: |
           set +e
           timeout 240 dart run bin/fah.dart -p \
-            'Load the schedule_message tool (via the others tool) and arm a one-shot message 20 seconds from now with the text TIMER_PROBE_PING. Then end your turn. If the timer fires while you are still running, reply TIMER_PROBE_PONG; if you find yourself exiting before it fires, just exit.' --provider openai-completions --model "$MODEL" > /tmp/p2.log 2>&1
+            'Load the schedule_message tool (via the others tool) and arm a one-shot message 20 seconds from now with the text TIMER_PROBE_PING. Then end your turn. If the timer fires while you are still running, reply TIMER_PROBE_PONG; if you find yourself exiting before it fires, just exit.' --provider openai-completions > /tmp/p2.log 2>&1
           rc=$?
           echo "P2 exit=$rc"
           echo "P2 PONG count: $(grep -c 'TIMER_PROBE_PONG' /tmp/p2.log)"
@@ -76,7 +82,7 @@ jobs:
         run: |
           set +e
           timeout 240 dart run bin/fah.dart -p \
-            'Run exactly this with the bash tool and report the raw output verbatim: echo "shell=$0"; (echo subshell-ok); [[ -n x ]] && echo brackets-ok; echo done. Then stop.' --provider openai-completions --model "$MODEL" > /tmp/p3.log 2>&1
+            'Run exactly this with the bash tool and report the raw output verbatim: echo "shell=$0"; (echo subshell-ok); [[ -n x ]] && echo brackets-ok; echo done. Then stop.' --provider openai-completions > /tmp/p3.log 2>&1
           rc=$?
           echo "P3 exit=$rc"
           echo "P3 syntax errors: $(grep -c 'Syntax error' /tmp/p3.log)"
