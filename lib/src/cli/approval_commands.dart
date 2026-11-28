@@ -1209,7 +1209,15 @@ extension ApprovalCommands on AgentCli {
         // run and continue is not an error. The line is settled when the
         // run settles ([_settleContextStopLog]) — `stop=compacting` when
         // a continuation follows, the honest `stop=error` otherwise.
-        if (isContextWindowExhaustedError(message.errorMessage)) {
+        // gh-2470: the probable-overflow refusal arms the same funnel
+        // ([_contextStopContinuationArmed]), so it stashes here too —
+        // the stash gate and the armed predicate stay SHARED, or the
+        // forensics log and the settlement disagree exactly the way #5e
+        // exists to prevent (the trail would read stop=error + run end
+        // + a second run's logs across a run that compacted and
+        // continued).
+        if (isContextWindowExhaustedError(message.errorMessage) ||
+            isProbableOverflowError(message.errorMessage)) {
           _pendingContextStop = message;
         } else {
           _logDiagnostic(

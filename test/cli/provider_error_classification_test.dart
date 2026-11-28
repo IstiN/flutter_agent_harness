@@ -197,6 +197,49 @@ void main() {
       expect(c.consoleLine, 'error: Provider finish_reason: vendor_gibberish');
     });
 
+    test('the gh-2470 probable-overflow terminal renders its category with '
+        'the compact/switch recovery', () {
+      final c = classifyProviderFailure(
+        'Provider call failed after 3 attempt(s) over 82s — every attempt '
+        'failed with the SAME error on this exact request (~245000 '
+        'estimated tokens against the gemini-4-argon catalog window of '
+        '1000000), so the history itself is the likely poison: retrying it '
+        'unchanged cannot succeed ($probableOverflowMarker — probable '
+        'context overflow / poisonous payload). Attempts: Provider '
+        'finish_reason: error; Provider finish_reason: error. This is not '
+        'a transient endpoint failure — the usual retry advice does not '
+        'apply. Compact this session (/compact) or switch model/session '
+        'instead of retrying the unchanged request.',
+        provider: 'copilot',
+        model: 'gemini-4-argon',
+      );
+      expect(c.category, ProviderErrorCategory.probableOverflow);
+      expect(c.consoleLine, startsWith('error: probable overflow:'));
+      expect(c.consoleLine, contains('(copilot/gemini-4-argon)'));
+      expect(
+        c.consoleLine,
+        contains('compact this session (/compact) or switch model/session'),
+        reason: 'exactly one matching recovery action',
+      );
+      // The misdirecting transient advice never renders on this class.
+      expect(c.consoleLine, isNot(contains('try again later')));
+      expect(
+        c.consoleLine.split('\n').length,
+        1,
+        reason: 'the single-line console grammar',
+      );
+    });
+
+    test('a probable-overflow-looking body WITHOUT the marker stays '
+        'unclassified — the marker is the class boundary', () {
+      final c = classifyProviderFailure(
+        'Provider call failed after 3 attempt(s) — the history itself is '
+        'the likely poison: retrying it unchanged cannot succeed. '
+        'Compact this session (/compact) or switch model/session.',
+      );
+      expect(c.category, ProviderErrorCategory.unclassified);
+    });
+
     test('every classified line keeps the `error: ` headless grammar '
         '(issue #2119 AC5)', () {
       final lines = [
