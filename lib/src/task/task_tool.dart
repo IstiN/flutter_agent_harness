@@ -345,6 +345,7 @@ final class TaskToolConfig {
     this.contextWindowRegistry,
     this.contextWindowCap,
     this.misuseBreaker = true,
+    this.identicalCallExemptTools = const <String>{},
     this.deliverableRedactor,
     this.replyAutoSpill,
     this.deliverableArtifactSink,
@@ -440,6 +441,11 @@ final class TaskToolConfig {
   /// every spawned child agent gets a breaker wired into its loop.
   final bool misuseBreaker;
 
+  /// Tools exempt from the identical-call loop guard (gh-2461,
+  /// `agent.identicalCallExemptTools`): wired into every spawned child —
+  /// a child running a watch command needs the same escape hatch.
+  final Set<String> identicalCallExemptTools;
+
   /// Pre-persistence redaction gate for deliverable artifacts (issue
   /// #1829, I3) — the host's redaction pipeline applied to report text
   /// before it lands in the output store. Null = no pipeline wired.
@@ -480,6 +486,7 @@ final class TaskToolConfig {
     contextWindowRegistry: contextWindowRegistry,
     contextWindowCap: contextWindowCap,
     misuseBreaker: misuseBreaker,
+    identicalCallExemptTools: identicalCallExemptTools,
     deliverableRedactor: deliverableRedactor,
     // gh-1951 AC3/AC6: resumed-run completions ride the SAME async-result
     // envelope a background spawn gets — the publisher is wired here, so

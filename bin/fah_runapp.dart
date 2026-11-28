@@ -1850,6 +1850,7 @@ Future<void> _runApp(List<String> args) async {
         agentMode: harnessMode,
         loadMode: loadMode,
         misuseBreaker: saved.misuseBreaker,
+        identicalCallExemptTools: saved.identicalCallExemptTools.toSet(),
         compactionEngine: compactionEngine,
         compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
         compactionTuning: compactionTuning,
