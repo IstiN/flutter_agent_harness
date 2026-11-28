@@ -404,6 +404,15 @@ class AgentService extends ChangeNotifier
     final tools = product.webTools;
     if (tools == null) return WebSearchConfig(secrets: secrets);
     final hostBaseUrl = product.hostConnection?.baseUrl.toString();
+    if (hostBaseUrl == null) {
+      // Review digest (#2469): gateway endpoints without a hostConnection
+      // mean no bridged Bearer — surface the misconfiguration at boot
+      // instead of silently riding the host unauthenticated.
+      debugPrint(
+        'fa: product profile declares tools.webSearch/webFetch urls but no '
+        'hostConnection — host web tools run WITHOUT a session Bearer',
+      );
+    }
     return WebSearchConfig(
       secrets: secrets,
       hostSearchUrl: tools.webSearchUrl,

@@ -62,6 +62,14 @@ Future<ToolExecutionResult> _executeWebFetch(
   final url = (arguments['url'] as String).trim();
   final uri = _parseFetchUri(url);
 
+  // The cube gate applies to the TARGET url on BOTH routes (ai-teammate
+  // review, gh-2391 addendum 9): a branded profile with an active cube
+  // policy must not turn the host relay into an unrestricted fetch
+  // bypass. The denial fires BEFORE any request to the host.
+  final gate = config.networkGate;
+  final denial = gate?.denialFor(uri);
+  if (denial != null) return ToolExecutionResult.text(denial);
+
   // The product profile's host gateway (gh-2391 addendum 9 item 3): the
   // server fetches (SSRF-guarded), the client never touches the target —
   // browser CORS made the direct path unusable. Raw body comes back for
@@ -69,10 +77,6 @@ Future<ToolExecutionResult> _executeWebFetch(
   if (config.hostFetchUrl != null) {
     return executeHostWebFetch(config, uri, cancelToken);
   }
-
-  final gate = config.networkGate;
-  final denial = gate?.denialFor(uri);
-  if (denial != null) return ToolExecutionResult.text(denial);
 
   final base = config.httpClient ?? http.Client();
   final client = gate == null ? base : GatedHttpClient(base, gate);

@@ -29,12 +29,10 @@ Future<ToolExecutionResult> executeHostWebSearch(
   CancelToken? cancelToken,
 }) async {
   cancelToken?.throwIfCancelled();
-  final response = await _postHostJson(
-    config,
-    config.hostSearchUrl!,
-    {'query': query, 'max_results': count},
-    cancelToken,
-  );
+  final response = await _postHostJson(config, config.hostSearchUrl!, {
+    'query': query,
+    'max_results': count,
+  }, cancelToken);
   final results = response['results'];
   if (results is! List) {
     throw StateError('Host web search returned no results array');
@@ -43,17 +41,14 @@ Future<ToolExecutionResult> executeHostWebSearch(
     for (final entry in results)
       if (entry is Map && entry['url'] is String)
         WebSearchSource(
-          title: (entry['title'] as String?)?.trim().isNotEmpty == true
-              ? entry['title'] as String
+          title: _asString(entry['title'])?.trim().isNotEmpty == true
+              ? _asString(entry['title'])!
               : entry['url'] as String,
           url: entry['url'] as String,
-          snippet: entry['snippet'] as String?,
+          snippet: _asString(entry['snippet']),
         ),
   ];
-  final searchResponse = WebSearchResponse(
-    provider: 'host',
-    sources: sources,
-  );
+  final searchResponse = WebSearchResponse(provider: 'host', sources: sources);
   if (!searchResponse.hasRenderableContent) {
     return ToolExecutionResult.text('No results found for: $query');
   }
@@ -70,27 +65,29 @@ Future<ToolExecutionResult> executeHostWebFetch(
   CancelToken? cancelToken,
 ) async {
   cancelToken?.throwIfCancelled();
-  final response = await _postHostJson(
-    config,
-    config.hostFetchUrl!,
-    {'url': uri.toString()},
-    cancelToken,
-  );
-  final finalUrl = Uri.tryParse(response['url'] as String? ?? '') ?? uri;
+  final response = await _postHostJson(config, config.hostFetchUrl!, {
+    'url': uri.toString(),
+  }, cancelToken);
+  final finalUrl = Uri.tryParse(_asString(response['url']) ?? '') ?? uri;
   final page = WebPage(
     url: uri,
     finalUrl: finalUrl,
     statusCode: 200,
-    contentType: ((response['content_type'] as String?) ?? '')
+    contentType: (_asString(response['content_type']) ?? '')
         .split(';')
         .first
         .trim()
         .toLowerCase(),
-    body: response['body'] as String? ?? '',
+    body: _asString(response['body']) ?? '',
     truncated: response['truncated'] == true,
   );
   return ToolExecutionResult.text(renderWebPageForHost(page, config));
 }
+
+/// Tolerant string read for host payloads (ai-teammate review): a
+/// malformed-but-200 body (`"snippet": 42`) degrades the field instead of
+/// crashing the tool with a raw cast TypeError.
+String? _asString(Object? value) => value is String ? value : null;
 
 /// One POST to the host endpoint with the live bridged Bearer, decoding
 /// the JSON body. Failures surface as ordinary tool errors: 401 reads as

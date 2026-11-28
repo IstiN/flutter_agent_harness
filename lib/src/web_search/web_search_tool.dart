@@ -229,6 +229,9 @@ AgentTool webSearchTool({required WebSearchConfig config}) {
 
       // The product profile's host gateway is the ONLY provider when
       // declared (gh-2391 addendum 9 item 3) — no chain, no key prompts.
+      // Note: the host contract ({query, max_results, search_type?}) has
+      // no `site` field, so a `site:` restriction rides inside the query
+      // text; the host engine may honor or ignore the operator.
       if (config.hostSearchUrl != null) {
         return executeHostWebSearch(
           config,

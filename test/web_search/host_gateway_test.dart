@@ -106,7 +106,8 @@ void main() {
 
     test('non-200 surfaces the status and the host error message', () async {
       final client = _hostOnlyClient(<http.Request>[], {
-        _searchUrl: (_) => http.Response('{"error":"insufficient balance"}', 402),
+        _searchUrl: (_) =>
+            http.Response('{"error":"insufficient balance"}', 402),
       });
       final tool = webSearchTool(
         config: WebSearchConfig(
@@ -207,6 +208,97 @@ void main() {
       );
       expect(_textOf(result), contains('plain host text'));
     });
+  });
+
+  group('review fixes (ai-teammate on #2469)', () {
+    test(
+      'a deny-all cube rejects the TARGET url BEFORE the host relay',
+      () async {
+        final log = <http.Request>[];
+        final client = _hostOnlyClient(log, {
+          _fetchUrl: (_) => throw StateError('the host must never be called'),
+        });
+        final tool = webFetchTool(
+          config: WebSearchConfig(
+            httpClient: client,
+            hostFetchUrl: Uri.parse(_fetchUrl),
+            networkGate: CubeNetworkGate(
+              () => CubeSpec(
+                name: 'l1-core',
+                tools: const CubeToolPolicy(allow: {'git'}),
+                network: const CubeNetworkPolicy(allow: []),
+              ),
+            ),
+          ),
+        );
+        final result = await tool.execute(
+          {'url': 'https://example.com/page'},
+          null,
+          null,
+        );
+        expect(
+          _textOf(result),
+          contains(
+            "fa_cube[l1-core]: network access to 'example.com:443' denied",
+          ),
+        );
+        expect(log, isEmpty, reason: 'zero requests to the host relay');
+      },
+    );
+
+    test(
+      'malformed-but-200 search JSON degrades fields, never TypeError',
+      () async {
+        final client = _hostOnlyClient(<http.Request>[], {
+          _searchUrl: (_) => http.Response(
+            jsonEncode({
+              'results': [
+                {'title': 42, 'url': 'https://example.com/a', 'snippet': 42},
+                {'url': 'https://example.com/b', 'snippet': 'ok'},
+              ],
+            }),
+            200,
+          ),
+        });
+        final tool = webSearchTool(
+          config: WebSearchConfig(
+            httpClient: client,
+            hostSearchUrl: Uri.parse(_searchUrl),
+          ),
+        );
+        final result = await tool.execute({'query': 'x'}, null, null);
+        final text = _textOf(result);
+        // A non-string title falls back to the url; a non-string snippet
+        // is dropped; the good row is untouched.
+        expect(text, contains('https://example.com/a'));
+        expect(text, contains('ok'));
+      },
+    );
+
+    test(
+      'malformed-but-200 fetch JSON degrades fields, never TypeError',
+      () async {
+        final client = _hostOnlyClient(<http.Request>[], {
+          _fetchUrl: (_) => http.Response(
+            jsonEncode({'url': 42, 'content_type': 42, 'body': 42}),
+            200,
+          ),
+        });
+        final tool = webFetchTool(
+          config: WebSearchConfig(
+            httpClient: client,
+            hostFetchUrl: Uri.parse(_fetchUrl),
+          ),
+        );
+        final result = await tool.execute(
+          {'url': 'https://example.com/page'},
+          null,
+          null,
+        );
+        // Non-string body → empty → the stock "no readable content" notice.
+        expect(_textOf(result), contains('No readable content'));
+      },
+    );
   });
 
   test('withNetworkGate preserves the host fields', () {
