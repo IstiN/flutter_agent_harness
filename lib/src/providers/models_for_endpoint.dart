@@ -12,6 +12,7 @@ import 'package:http/http.dart' as http;
 import 'package:meta/meta.dart';
 
 import '../session/uuid.dart';
+import 'aiin_auth.dart' show isAiinBaseUrl;
 import 'chatgpt_codex_models.dart';
 import 'chatgpt_oauth.dart';
 import 'codemie_sso.dart';
@@ -286,7 +287,12 @@ Future<ModelsFetchReport> fetchModelsForEndpointReport(
     }
   }
   return ModelsFetchReport(
-    info: (const <String>[], const <String, int>{}, const <String, int>{}),
+    info: (
+      const <String>[],
+      const <String, int>{},
+      const <String, int>{},
+      const <String, List<String>>{},
+    ),
     diagnostic: ModelsFetchDiagnostic(
       stage: ModelsFetchDiagnostic.stageModels,
       message: 'no model-list dialect handles this endpoint',
@@ -295,6 +301,16 @@ Future<ModelsFetchReport> fetchModelsForEndpointReport(
 }
 
 http.Client? _dispatchHttpClientForTesting;
+
+/// The empty [ModelsEndpointInfo] — the dialect contract's any-error
+/// answer (ids, windows, caps, modalities all empty).
+ModelsEndpointInfo _emptyInfo() =>
+    (
+      const <String>[],
+      const <String, int>{},
+      const <String, int>{},
+      const <String, List<String>>{},
+    );
 
 /// Test seam — routes every dialect's HTTP through [client] so widget
 /// tests can pump the production dispatch path (no [ModelsEndpointFetcher]
@@ -321,9 +337,14 @@ final class _CodeMieDialect extends ModelListDialect {
   }) async {
     try {
       final ids = await fetchCodeMieModels(baseUrl, apiKey, client: client);
-      return (ids, const <String, int>{}, const <String, int>{});
+      return (
+        ids,
+        const <String, int>{},
+        const <String, int>{},
+        const <String, List<String>>{},
+      );
     } on Object {
-      return (const <String>[], const <String, int>{}, const <String, int>{});
+      return _emptyInfo();
     }
   }
 }
@@ -348,9 +369,9 @@ final class _DialDialect extends ModelListDialect {
         apiKey,
         client: client,
       );
-      return (ids, windows, maxTokens);
+      return (ids, windows, maxTokens, const <String, List<String>>{});
     } on Object {
-      return (const <String>[], const <String, int>{}, const <String, int>{});
+      return _emptyInfo();
     }
   }
 }
@@ -395,6 +416,7 @@ final class _CodexDialect extends ModelListDialect {
         ids,
         _knownLimits(ids, chatGptCodexContextWindows),
         _knownLimits(ids, chatGptCodexMaxTokens),
+        const <String, List<String>>{},
       );
     } on Object {
       onBundledFallback?.call();
@@ -411,6 +433,7 @@ final class _CodexDialect extends ModelListDialect {
     chatGptCodexModels,
     Map<String, int>.from(chatGptCodexContextWindows),
     Map<String, int>.from(chatGptCodexMaxTokens),
+    const <String, List<String>>{},
   );
 
   /// Codex backend headers: [apiKey] for chatgpt accounts is the encoded
@@ -486,9 +509,11 @@ final class _GoogleDialect extends ModelListDialect {
           )
           .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200) {
-        return (const <String>[], const <String, int>{}, const <String, int>{});
+        return _emptyInfo();
       }
-      final (ids, windows, maxTokens) = parseModelsResponse(response.body);
+      final (ids, windows, maxTokens, modalities) = parseModelsResponse(
+        response.body,
+      );
       final stripped = [for (final id in ids) id.replaceFirst('models/', '')];
       final strippedWindows = {
         for (final entry in windows.entries)
@@ -498,9 +523,18 @@ final class _GoogleDialect extends ModelListDialect {
         for (final entry in maxTokens.entries)
           entry.key.replaceFirst('models/', ''): entry.value,
       };
-      return (stripped, strippedWindows, strippedMaxTokens);
+      final strippedModalities = {
+        for (final entry in modalities.entries)
+          entry.key.replaceFirst('models/', ''): entry.value,
+      };
+      return (
+        stripped,
+        strippedWindows,
+        strippedMaxTokens,
+        strippedModalities,
+      );
     } on Object {
-      return (const <String>[], const <String, int>{}, const <String, int>{});
+      return _emptyInfo();
     } finally {
       if (gOwnsClient) gClient.close();
     }
@@ -886,7 +920,12 @@ final class _CopilotDialect extends ModelListDialect {
   }
 }
 
-const _emptyCopilotInfo = (<String>[], <String, int>{}, <String, int>{});
+const _emptyCopilotInfo = (
+  <String>[],
+  <String, int>{},
+  <String, int>{},
+  <String, List<String>>{},
+);
 
 /// The individual-tier API host (no-proxy-ep tokens serve from here).
 final _individualApiHost = Uri.parse(copilotIndividualBaseUrl).host;
@@ -959,7 +998,7 @@ _parseCopilotModelsResponse(String body, {required bool individualTier}) {
   }
   ids.sort();
   return (
-    (ids, windows, maxTokens),
+    (ids, windows, maxTokens, const <String, List<String>>{}),
     data.length,
     dropped,
     true,
@@ -1086,11 +1125,17 @@ final class _OpenAiCompatibleDialect extends ModelListDialect {
           )
           .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200) {
-        return (const <String>[], const <String, int>{}, const <String, int>{});
+        return _emptyInfo();
       }
-      return parseModelsResponse(response.body);
+      final info = parseModelsResponse(response.body);
+      // gh-2466: the AIN gateway stamps a blanket ≈1M context window on
+      // every unverified id — the curated per-family correction applies
+      // HERE (the shared dispatch every picker rides), so the CLI, the
+      // app and the window registry inherit the same per-model numbers
+      // (gh-1742: ONE window per model identity everywhere).
+      return isAiinBaseUrl(baseUrl) ? normalizeAiinModelInfo(info) : info;
     } on Object {
-      return (const <String>[], const <String, int>{}, const <String, int>{});
+      return _emptyInfo();
     } finally {
       if (ownsClient) httpClient.close();
     }

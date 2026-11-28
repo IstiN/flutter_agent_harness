@@ -95,7 +95,8 @@ AgentConfig? _restore(
     modelId: connection.modelId,
     baseUrl: baseUrl,
     apiKey: key,
-    supportsImages: modelIdSuggestsVision(connection.modelId),
+    supportsImages:
+        connection.supportsImages ?? modelIdSuggestsVision(connection.modelId),
   );
   return _bootOutcome(registry, config);
 }

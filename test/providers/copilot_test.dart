@@ -1290,7 +1290,7 @@ void main() {
         }),
       );
 
-      final (ids, windows, caps) = await fetchModelsForEndpoint(
+      final (ids, windows, caps, _) = await fetchModelsForEndpoint(
         'https://api.githubcopilot.com',
         apiKey: 'gh-1',
         provider: 'copilot',
@@ -1318,7 +1318,7 @@ void main() {
         jsonEncode({'data': []}),
       );
 
-      final (ids, _, _) = await fetchModelsForEndpoint(
+      final (ids, _, _, _) = await fetchModelsForEndpoint(
         'https://api.business.githubcopilot.com',
         apiKey: 'gh-1',
         client: client,
@@ -1333,7 +1333,7 @@ void main() {
         (_) async => http.Response('{"message": "Bad credentials"}', 401),
       );
 
-      final (ids, windows, caps) = await fetchModelsForEndpoint(
+      final (ids, windows, caps, _) = await fetchModelsForEndpoint(
         'https://api.githubcopilot.com',
         apiKey: 'gh-1',
         provider: 'copilot',
@@ -1519,7 +1519,7 @@ void main() {
         );
       });
 
-      final (ids, windows, caps) = await fetchModelsForEndpoint(
+      final (ids, windows, caps, _) = await fetchModelsForEndpoint(
         'https://api.business.githubcopilot.com',
         apiKey: 'github_pat_MODELS1',
         provider: 'copilot',
@@ -1653,7 +1653,7 @@ void main() {
         );
       });
 
-      final (ids, _, _) = await fetchModelsForEndpoint(
+      final (ids, _, _, _) = await fetchModelsForEndpoint(
         'https://api.enterprise.githubcopilot.com',
         apiKey: 'gh-1',
         provider: 'copilot',

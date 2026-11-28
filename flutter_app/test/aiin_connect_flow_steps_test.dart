@@ -107,10 +107,12 @@ void main() {
             ),
           );
         },
-        aiinModelsFetcher: (baseUrl, {required apiKey}) async => [
-          'moonshotai/kimi-k2',
-          'deepseek-ai/deepseek-v3',
-        ],
+        aiinModelsFetcher: (baseUrl, {required apiKey}) async => (
+          const ['moonshotai/kimi-k2', 'deepseek-ai/deepseek-v3'],
+          const <String, int>{},
+          const <String, int>{},
+          const <String, List<String>>{},
+        ),
       );
 
       // The model picker opens with the fetched list; pick one.
@@ -138,7 +140,12 @@ void main() {
         aiinOpenPopupFn: () => true,
         aiinNavigatePopupFn: (_) {},
         aiinWebTimeout: const Duration(milliseconds: 200),
-        aiinModelsFetcher: (baseUrl, {required apiKey}) async => [],
+        aiinModelsFetcher: (baseUrl, {required apiKey}) async => (
+          const <String>[],
+          const <String, int>{},
+          const <String, int>{},
+          const <String, List<String>>{},
+        ),
       );
 
       // No callback arrives — the timeout lands in the paste-key path.
@@ -229,9 +236,12 @@ void main() {
           ),
           email: 'user@aiin.by',
         ),
-        aiinModelsFetcher: (baseUrl, {required apiKey}) async => [
-          'moonshotai/kimi-k2',
-        ],
+        aiinModelsFetcher: (baseUrl, {required apiKey}) async => (
+          const ['moonshotai/kimi-k2'],
+          const <String, int>{},
+          const <String, int>{},
+          const <String, List<String>>{},
+        ),
       );
 
       // The opening snackbar names the browser hop; then the picker.
@@ -354,9 +364,12 @@ void main() {
             service: null,
             lastConnectionStore: LastConnectionStore.inMemory(),
             aiinHttpClient: _mockBackend(),
-            aiinModelsFetcher: (baseUrl, {required apiKey}) async => [
-              'moonshotai/kimi-k2',
-            ],
+            aiinModelsFetcher: (baseUrl, {required apiKey}) async => (
+              const ['moonshotai/kimi-k2'],
+              const <String, int>{},
+              const <String, int>{},
+              const <String, List<String>>{},
+            ),
           ).then((_) {}, onError: (Object _) {}),
         );
 
@@ -522,9 +535,12 @@ void main() {
           ),
           email: 'user@aiin.by',
         ),
-        aiinModelsFetcher: (baseUrl, {required apiKey}) async => [
-          'moonshotai/kimi-k2',
-        ],
+        aiinModelsFetcher: (baseUrl, {required apiKey}) async => (
+          const ['moonshotai/kimi-k2'],
+          const <String, int>{},
+          const <String, int>{},
+          const <String, List<String>>{},
+        ),
       );
       await tester.pumpAndSettle();
       expect(find.text('AIIN model'), findsOneWidget);

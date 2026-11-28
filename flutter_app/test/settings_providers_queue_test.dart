@@ -34,7 +34,13 @@ ProviderQueueResolution _res(
 Future<ModelsEndpointInfo> _someModels(
   String baseUrl, {
   required String apiKey,
-}) async => (const ['m-1', 'm-2'], const <String, int>{}, const <String, int>{});
+}) async =>
+    (
+      const ['m-1', 'm-2'],
+      const <String, int>{},
+      const <String, int>{},
+      const <String, List<String>>{},
+    );
 
 /// Drives the two-step flow opened by [open]: provider list → model list →
 /// Save with [model].

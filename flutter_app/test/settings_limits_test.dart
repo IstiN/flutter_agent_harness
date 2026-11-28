@@ -57,6 +57,7 @@ void main() {
         ['m-big'],
         {'m-big': 262144},
         {'m-big': 65536},
+        const <String, List<String>>{},
       ), (c) => config = c);
       // Let the debounced fetch land.
       await tester.pump(const Duration(milliseconds: 500));
@@ -77,6 +78,7 @@ void main() {
         const <String>[],
         const <String, int>{},
         const <String, int>{},
+        const <String, List<String>>{},
       ), (c) => config = c);
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pumpAndSettle();

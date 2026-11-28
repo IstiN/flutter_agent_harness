@@ -32,6 +32,12 @@ const _documentedExemptions = <String, String>{
       'flow dispatch helpers; the settings analytics (screenOpened and '
       'the section events, including reset_apps) live in the main file — '
       'the helpers fire no new user paths of their own.',
+  'lib/ui/screens/settings_web_llm.dart':
+      'Part file of settings.dart (gh-1232 god-file ceiling): the '
+      'on-device WebLLM / transformers.js cache-verification helpers '
+      'extracted so the host file stays under the loc gate; the settings '
+      'analytics (screenOpened and the section events) live in the main '
+      'file — the helpers fire no user paths of their own.',
   'lib/ui/screens/onboarding_mockups.dart':
       'Part file of onboarding_screen.dart (pure mockup widgets); the '
       'onboarding analytics (started/completed/skipped/screenOpened) live '

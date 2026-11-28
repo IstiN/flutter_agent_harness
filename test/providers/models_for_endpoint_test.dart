@@ -21,7 +21,7 @@ void main() {
             200,
           );
         });
-        final (ids, windows, caps) = await fetchModelsForEndpoint(
+        final (ids, windows, caps, _) = await fetchModelsForEndpoint(
           'https://api.example.com/v1/',
           apiKey: 'sk-1',
           client: client,
@@ -45,7 +45,7 @@ void main() {
             200,
           );
         });
-        final (ids, _, _) = await fetchModelsForEndpoint(
+        final (ids, _, _, _) = await fetchModelsForEndpoint(
           'https://org.example.com/code-assistant-api/v1',
           apiKey: 'cookie-string',
           provider: 'dial', // must be ignored — the marker wins
@@ -77,7 +77,7 @@ void main() {
           idToken: 'it-1',
           accountId: 'acc-1',
         ).encode();
-        final (ids, windows, caps) = await fetchModelsForEndpoint(
+        final (ids, windows, caps, _) = await fetchModelsForEndpoint(
           'https://chatgpt.com/backend-api/codex',
           apiKey: blob,
           provider: 'chatgpt',
@@ -109,7 +109,7 @@ void main() {
         final client = http_testing.MockClient(
           (request) async => http.Response('unauthorized', 401),
         );
-        final (ids, windows, _) = await fetchModelsForEndpoint(
+        final (ids, windows, _, _) = await fetchModelsForEndpoint(
           'https://chatgpt.com/backend-api/codex',
           apiKey: 'irrelevant',
           client: client,
@@ -126,7 +126,7 @@ void main() {
         final client = http_testing.MockClient(
           (request) async => http.Response('<html>challenge</html>', 200),
         );
-        final (ids, _, _) = await fetchModelsForEndpoint(
+        final (ids, _, _, _) = await fetchModelsForEndpoint(
           'https://chatgpt.com/backend-api/codex',
           apiKey: 'irrelevant',
           provider: 'chatgpt-codex',
@@ -140,7 +140,7 @@ void main() {
       final client = http_testing.MockClient(
         (request) async => http.Response('{"data":[]}', 200),
       );
-      final (ids, _, _) = await fetchModelsForEndpoint(
+      final (ids, _, _, _) = await fetchModelsForEndpoint(
         'https://chatgpt.com/backend-api/codex',
         apiKey: 'irrelevant',
         provider: 'chatgpt',
@@ -157,7 +157,7 @@ void main() {
           seen = request;
           return http.Response('{"data":[]}', 200);
         });
-        final (ids, _, _) = await fetchModelsForEndpoint(
+        final (ids, _, _, _) = await fetchModelsForEndpoint(
           'https://chatgpt.com/backend-api/codex',
           apiKey: 'raw-token',
           provider: 'chatgpt',
@@ -181,7 +181,7 @@ void main() {
             200,
           );
         });
-        final (ids, windows, caps) = await fetchModelsForEndpoint(
+        final (ids, windows, caps, _) = await fetchModelsForEndpoint(
           'https://dial.example.com',
           apiKey: 'dial-key',
           provider: 'dial',
@@ -207,7 +207,7 @@ void main() {
             200,
           );
         });
-        final (ids, _, _) = await fetchModelsForEndpoint(
+        final (ids, _, _, _) = await fetchModelsForEndpoint(
           'https://generativelanguage.googleapis.com/v1beta',
           apiKey: 'google-key',
           client: client,
@@ -260,7 +260,7 @@ void main() {
           ),
         ];
         for (final run in cases) {
-          final (ids, windows, caps) = await run();
+          final (ids, windows, caps, _) = await run();
           expect(ids, isEmpty);
           expect(windows, isEmpty);
           expect(caps, isEmpty);
@@ -279,7 +279,7 @@ void main() {
           seen = request;
           return http.Response('unauthorized', 401);
         });
-        final (ids, _, _) = await fetchModelsForEndpoint(
+        final (ids, _, _, _) = await fetchModelsForEndpoint(
           'https://proxy.example.com/api',
           apiKey: 'raw-token',
           provider: 'chatgpt-codex',
@@ -323,7 +323,7 @@ void main() {
         final liveBody =
             '{"data":[${chatGptCodexModels.map((id) => '{"id":"$id"}').join(',')}]'
             '}';
-        final (ids, _, _) = await run(
+        final (ids, _, _, _) = await run(
           http_testing.MockClient(
             (request) async => http.Response(liveBody, 200),
           ),
@@ -375,7 +375,7 @@ void main() {
             200,
           );
         });
-        final (ids, windows, _) = await fetchModelsForEndpoint(
+        final (ids, windows, _, _) = await fetchModelsForEndpoint(
           'https://api.enterprise.githubcopilot.com',
           apiKey: 'gh-token',
           provider: 'copilot',
