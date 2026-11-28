@@ -1,0 +1,191 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-28T22:21:59.045Z",
+  "ticketKey": "gh-2466",
+  "headSha": "e4c6b57d96ff9bc65fcf69ff6c006c6fb739edc6",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "merge_conflicts.md": {
+      "hash": "fnv1a64:6cb39fa8a0857ea6",
+      "size": 6042
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:cd427446be63cbf5",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:33353f8227935e70",
+      "size": 22305
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:3cc175febe69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:cb82bf25eb8fb364",
+      "size": 5610
+    },
+    "request.md": {
+      "hash": "fnv1a64:7e68b44701c89b4b",
+      "size": 3668
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:a9caef0ac9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:5c165b008952a659",
+      "size": 3749
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:7e68b44701c89b4b",
+      "size": 3668
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:14dfe9f3",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the AIN app connect flow never passes `supportsImages` — the added parameter is inert, the onboarding config still derives vision from the name heuristic**\n\n`_registerAiinProvider` gained `bool? supportsImages` and forwards it into the reconnect config, but its only call site (`_finishAiinConnect`, `aiin_connect_flow.dart:736-745`) does not pass it, and `_pickAiinModel` returns only the chosen id — the `/v1/models` payload (with its `input_modalities`) is discarded at `aiin_connect_flow.dart:829` (`.$1`). So a user onboarding through the AIN connect flow who picks a heuristic-invisible multimodal id (`mistralai/mistral-large-4-0`, `meta/muse-*`) still gets `supportsImages: null` → `modelIdSuggestsVision` heuristic → the image-attachment lock gh-2466(2) targets stays locked on this surface.\n\nThe PR description lists \"AgentConfig.supportsImages in the AIN app flow\" among the wired surfaces — as shipped, only the settings form's custom-provider flow (`settings_flows.dart:386`, covered by `flutter_app/test/endpoint_modalities_vision_test.dart`) and the pickers derive vision from endpoint modalities.\n\n**Fix**: return the fetched info from the model pick (or re-look the id up in `fetchModelsForEndpoint(aiinDefaultChatBaseUrl).$4`) and pass `modalities[modelId]?.contains('image')` into `_registerAiinProvider`; add the connect-flow case to `flutter_app/test/endpoint_modalities_vision_test.dart`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:b43cae56",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the `supportsImages` doc comment states the opposite of the implemented precedence**\n\nThe doc says *\"a false NEVER overrides a heuristic true — an endpoint that answers modalities at all is more specific than a name matcher\"*, but the implementation below does exactly the override it forbids:\n\n```dart\nbool get visionCapable =>\n    supportsImages ?? modelIdSuggestsVision(modelId);\n```\n\nWith `supportsImages == false` (endpoint reported `[text]`), `??` returns `false` — overriding a heuristic `true` (e.g. `gpt-4o`-shaped ids). Every other surface in this PR implements endpoint-wins-**including-false**: `settings.dart::_onModelIdChanged` (\"a reported text-only list unchecks it\"), the CLI's `_switchInputModalities`, and the PR description itself (\"prefer endpoint modalities with the heuristic as fallback\"). So the code is right and the comment is wrong — and this precedence is the crux rule of gh-2466, so the next reader may \"fix\" the code to match the comment and invert it.\n\n**Fix**: reword the doc to \"a reported verdict wins (true *or* false); only `null` falls back to the id heuristic.\""
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:55384250",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "**Fixed** — the modality cache is now cleared at every provider/session reset point, and the switch flows can no longer bake a previous provider's verdict into the model they build.\n\n**The five reset points** (six blocks — `_switchProvider` has two), mirroring the `_modelContextWindows`/`_modelMaxTokens` siblings:\n\n- `lib/src/cli/provider_models.dart:1381` (`_switchToCustomModel`)\n- `lib/src/cli/provider_commands.dart:2069` and `:2108` (`_switchProvider`, roles + non-roles branches)\n- `lib/src/cli/codemie_provider_commands.dart:372`\n- `lib/src/cli/provider_codemie_sso.dart:207`\n- `lib/src/cli/session_commands.dart:1994` (`_finishRestoreBinding`)\n\n**Build-before-reset ordering**: in three flows the switch builds the `Model` (via `_switchInputModalities`) *before* the reset, so clearing after the build would only have protected *later* switches — the switch's own model would still carry the stale verdict. The clear block now runs before `buildCatalogModel` in `_switchProvider` (non-roles branch), `codemie_provider_commands.dart`, and `provider_codemie_sso.dart` (the catalog builder is pure — it reads no CLI caches — so the move is side-effect free; `_refreshModelCache()` stays after the model assignment, as it must).\n\n**The `isNotEmpty` guard is kept deliberately** (the reviewer's \"and/or\" — the resets are the sufficient half): `_fetchOpenAiCompatibleModels` (and `_fetchCopilotModelsAndLimits`) is also the fetch path for *other* saved and env-keyed providers during the cross-provider `/models` refresh. Making the assignment unconditional there would let a modality-less endpoint's background answer wipe the *active* provider's verdicts mid-session — the same leak class in the opposite direction. With the resets in place the guard is safe: a stale verdict cannot outlive the provider switch (the map is cleared at the switch), and a same-endpoint re-fetch re-reports the same data.\n\n**Regression test** (TDD, red before the fix): `test/cli/aiin_models_switch_test.dart` — *\"a provider switch drops the previous provider modality verdicts\"* — boots on the AIN answer (`mistralai/mistral-large-4-0` → `[text, image]`), takes the id on AIN, then switches to a modality-less plain endpoint whose list shares the same id and asserts the rebuilt model and a subsequent `/model` pick both carry the heuristic's `['text']`. Before the fix it failed exactly as the thread's repro predicts (`['text', 'image']` baked into the switched-to model); after the fix it passes, alongside the full CLI provider/restore suites."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:245d6396",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "**Fixed** — the connect flow now threads the endpoint's modalities verdict into the onboarding config; the `supportsImages` parameter is no longer inert.\n\n- `aiinModelsFetcher` is widened to `Future<ModelsEndpointInfo> Function(String baseUrl, {required String apiKey})?` — the same injectable shape the settings form's `modelsFetcher` already uses — so the `/v1/models` payload (ids, windows, caps, `input_modalities`) reaches the flow in one fetch.\n- `_pickAiinModel` now returns `(String, bool?)?`: the chosen id plus `modalities[modelId]?.contains('image')` (null when the endpoint reported nothing for the id — the host's heuristic keeps owning unreported ids). Network errors still degrade to an empty listing (manual id, heuristic verdict).\n- `_finishAiinConnect` destructures the pick and passes the verdict into `_registerAiinProvider(supportsImages:)`, which already forwarded it into the reconnect `AgentConfig`. The AIN onboarding surface now applies the same endpoint-wins rule as the settings form, the CLI switches, and the fa_ui picker.\n\n**Tests** (the connect-flow case this thread asked for): two new `testWidgets` cases in `flutter_app/test/endpoint_modalities_vision_test.dart`, driving `runAiinConnectFlow` (desktop hop, linux override) against a recording `AgentService`:\n\n- the heuristic-missed multimodal id (`mistralai/mistral-large-4-0`, reported `[text, image]`) → `reconfigured.supportsImages` is `true`;\n- a heuristic-matching id reported text-only (`gpt-4o-2024-11-20`, reported `[text]`) → `reconfigured.supportsImages` is `false` (endpoint-wins-including-false).\n\nThe existing nine `aiinModelsFetcher` injections across `aiin_mobile_connect_test.dart`, `aiin_connect_fallback_test.dart`, and `aiin_connect_flow_steps_test.dart` were widened mechanically (same id lists, empty window/cap/modality maps) — no behavior change to those tests; all three suites pass."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:0a9cbc64",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "**Fixed** — the doc comment now states the implemented precedence instead of inverting it. The code was right (as the thread concluded) and is unchanged:\n\n```dart\nbool get visionCapable =>\n    supportsImages ?? modelIdSuggestsVision(modelId);\n```\n\nThe `supportsImages` doc now reads: *\"A reported verdict wins — true *or* false (a reported text-only list unchecks a heuristic-matching id, same rule as the settings form and the CLI switches); only null falls back to the id heuristic.\"* — matching `_onModelIdChanged` in `settings.dart`, the CLI's `_switchInputModalities`, and the PR description's \"prefer endpoint modalities with the heuristic as fallback\".\n\n**Precedence guard test**: `packages/fa_ui/test/unified_model_picker_fetch_test.dart` — *\"a reported text-only verdict overrides a heuristic match (gh-2466 review: endpoint-wins-including-false)\"* — the picker fetches a `gpt-4o`-shaped id (the name heuristic says vision) with a reported `[text]` modality list and asserts no `vision ✓` marker is shown and the applied config carries `supportsImages: false`. If a future reader \"fixed\" the code to match the old comment, this test would catch the inversion.\n\n**Opportunistic nit (🪶, same file)**: the now-unreferenced `visionMarkerText` helper (`unified_model_picker.dart:685`) is removed — the PR's `visionCapable` rewrite orphaned it (zero references repo-wide), and the `'vision ✓'` literal now exists only at the one render site."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:9b45e659",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the AIN endpoint's vision verdict is session-scoped on the app surface — it is lost at the next boot, and the image-attachment lock gh-2466(2) targets re-locks**\n\nThis hunk correctly threads the endpoint's modalities verdict into the onboarding `AgentConfig` — but the verdict lives only in the in-memory config. Nothing persists it, and nothing re-derives it from the endpoint at boot:\n\n- `LastConnection` has no `supportsImages` field (`flutter_app/lib/services/last_connection.dart` — the record carries only `providerKind`/`modelId`/`baseUrl`/preset ids), so `saveFromConfig` drops the verdict on the floor.\n- The boot restore re-derives vision from the id heuristic: `boot_config_codec.dart:96-98` — `AgentConfig(..., supportsImages: modelIdSuggestsVision(connection.modelId))`.\n- Nothing fetches `/models` at boot (`EndpointModelsController.inputModalities` populates only when the settings screen loads its list).\n- The restored heuristic-only verdict gates image input: `agent_service.dart:659-661` (`_config?.supportsImages ?? modelIdSuggestsVision(...)`) → the main-connection vision gate in `video_tool.dart:193-198` (no vision-slot override ⇒ `fromOverride: false` ⇒ the main model is checked). Session restore has the same gap: `agent_service_sessions.dart:470` rebuilds with `input: inputModalitiesFor(sessionModel.modelId)` (heuristic only).\n\nNet effect for the PR's flagship id: connect with `mistralai/mistral-large-4-0` (endpoint-reported `[text, image]`) → images work → restart the app → attach an image → *\"The connected model does not accept images\"*. Ticket AC 2 (\"the image-attachment UX unlocks for those models\") holds only within the session. The CLI does not have this gap: its boot cache-warm re-fetches `/models`, so `_modelInputModalities` repopulates from the live endpoint every session.\n\n**Fix**: persist the verdict — add `supportsImages` to `LastConnection.toJson`/`fromJson` + `fromConfig`, and have `_restore` prefer the persisted verdict with the id heuristic as fallback (`supportsImages: connection.supportsImages ?? modelIdSuggestsVision(connection.modelId)`). A boot-time `/models` re-fetch would also close `agent_service_sessions.dart:470`, but the persisted field is the minimal change. The existing two connect-flow widget tests cover the in-session half; a restore round-trip assertion would cover the new field."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:f7dc1ec9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# ⚠️ session-scoped vision verdict → persisted in `LastConnection`\n\n**Fixed** — the verdict now survives the boot boundary; the image-attachment lock no longer re-locks at restart.\n\n- `LastConnection` carries `bool? supportsImages` (`flutter_app/lib/services/last_connection.dart`): captured in `fromConfig` (`config.supportsImages` — the connect flow's threaded endpoint verdict reaches the record), parsed in `fromJson` (`as bool?` — a legacy record without the field restores `null`), and persisted conditionally in `toJson` (no explicit nulls, matching the record's absent-fields-stay-absent convention). The field doc states the rule: a persisted verdict wins true *or* false; only `null` falls back to the heuristic.\n- `_restore` (`flutter_app/lib/boot/boot_config_codec.dart:98`) now reads `supportsImages: connection.supportsImages ?? modelIdSuggestsVision(connection.modelId)` — the persisted verdict (true *or* false) beats the id heuristic; legacy records keep the pre-change behavior.\n- `agent_service_sessions.dart:470` (the session-restore rebuild) is left as is per the thread's own \"optional\" note — it covers continuing an in-flight session, while the boot path (the reported repro: connect → restart → attach) is the one the persisted field closes. A boot `/models` re-fetch would be the heavier alternative; not taken here to keep the change minimal.\n\n**Tests (TDD — red before the fix)**: a 5-case group in `flutter_app/test/endpoint_modalities_vision_test.dart` (\"boot restore keeps the persisted vision verdict\"):\n\n1. `fromConfig` + `toJson`/`fromJson` round-trip for the flagship id (`mistralai/mistral-large-4-0`, verdict `true`) and a text-only verdict (`false`) — before the fix this failed to compile (\"No named parameter with the name 'supportsImages'\"), which is the finding: nothing persisted the verdict.\n2. a legacy record (no field in the JSON) restores `supportsImages: null` — the heuristic keeps owning old records;\n3. `restorableBootConfig` prefers the persisted `true` over the heuristic (the reported repro's fix assertion: heuristic says text-only, restore boots vision-capable);\n4. a persisted `false` wins over a heuristic-matching id (`gpt-4o-2024-11-20`) — endpoint-wins-including-false holds across the boot boundary too;\n5. a legacy record falls back to the heuristic (`gpt-4o-2024-11-20` → `true`).\n\nAll five pass, alongside the file's existing two connect-flow widget cases."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:20955a33",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The `/models` modality parsing and the AIN per-family window normalization are solid and well-tested, but the new CLI modality cache leaks across provider switches, the AIN app connect flow never wires its new `supportsImages` parameter, and the unified picker's doc comment inverts the implemented precedence.\n\n**Key Issues**:\n- 🚨 `lib/src/cli/provider_models.dart:1000` — `_modelInputModalities` is never cleared at the five provider/session switch reset points and only overwritten when non-empty → stale cross-provider verdicts are applied at `/model` switches (BLOCKING).\n- ⚠️ `flutter_app/lib/services/aiin_connect_flow.dart:851` — dead `supportsImages` param: AIN onboarding still saves a heuristic-derived vision config, contrary to the PR description.\n- ⚠️ `packages/fa_ui/lib/src/providers/unified_model_picker.dart:46` — doc comment says \"a false NEVER overrides a heuristic true\"; `visionCapable => supportsImages ?? heuristic` does the opposite.\n- Digest: `packages/fa_ui/lib/src/providers/unified_model_picker.dart:685` — `visionMarkerText` is now unreferenced; remove it or reuse it instead of duplicating the `'vision ✓'` literal (🪶).\n- Digest: `lib/src/providers/models_endpoint.dart` — `ainCuratedContextWindow` matches families by substring (`contains('claude')`); deliberate per its doc, but any future id embedding the token silently inherits the curated window (💡).\n\n**Next Steps**:\n1. Clear `_modelInputModalities` alongside `_modelContextWindows`/`_modelMaxTokens` at `provider_models.dart:1379`, `provider_commands.dart:2066` + `:2126`, `codemie_provider_commands.dart:381`, `provider_codemie_sso.dart:224`, `session_commands.dart:1992`.\n2. Thread endpoint modalities through `_pickAiinModel` → `_registerAiinProvider(supportsImages:)` and cover the connect flow in `flutter_app/test/endpoint_modalities_vision_test.dart`.\n3. Reword the `visionCapable` doc; drop the dead `visionMarkerText`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:cab89490",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: `_modelInputModalities` survives provider switches — stale cross-provider modality verdicts are applied at `/model` switches**\n\nThe new cache is only overwritten when the *new* endpoint reports modalities — `if (modalities.isNotEmpty) _modelInputModalities = modalities;` here and in `_fetchCopilotModels` (`provider_models.dart:951`) — so an endpoint that answers without modality metadata (plain OpenAI-compatible, CodeMie, Copilot — the Copilot dialect always returns an empty modality map) leaves the *previous* provider's map in place. And no provider/session switch clears it: five reset sites clear the sibling caches with the comment \"The cached model list belongs to the previous provider/endpoint\" and `_modelInputModalities` is missing from all of them:\n\n- `lib/src/cli/provider_models.dart:1379-1381`\n- `lib/src/cli/provider_commands.dart:2066-2067` and `:2126-2127`\n- `lib/src/cli/codemie_provider_commands.dart:381-382`\n- `lib/src/cli/provider_codemie_sso.dart:224-225`\n- `lib/src/cli/session_commands.dart:1992-1993`\n\n`_switchInputModalities` (`provider_models.dart:1047`) then consults the stale map *first*.\n\n**Repro**: connect AIN (`/models` reports `claude-* → [text,image]`) → switch to an endpoint without modality fields whose list shares any id with the AIN answer (gateways commonly proxy the same upstream ids) → `/model <id>` saves the model with the AIN verdict's `input` modalities. Wrong `input` on the active model is exactly the defect class gh-2466 fixes — reintroduced via provider switching.\n\n**Fix**: clear `_modelInputModalities = const {}` at the five reset points (mirroring `_modelContextWindows`/`_modelMaxTokens`), and/or drop the `isNotEmpty` guard in `_fetchOpenAiCompatibleModels` so a fresh answer always replaces the map (that path already assigns windows/caps unconditionally)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-28:5099429c",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 rework arm withheld on head 52c8a3a80b6a8170c3c5eb92ca39d5b512892649 — 3/3 red arming attempts left the head unchanged (gh-917). The rework leg keeps closing without a fix (a violation class the agent cannot repair without the local toolchain) — the machine stops retrying here. A human owns this PR: push a fix (a NEW head restarts the budget and validation) or resolve the violation at its source."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:b43092a2",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: All three previously raised findings are verifiably fixed in this head (the modality cache now clears at every provider/session reset with a passing regression test, the AIN connect flow threads the endpoint's vision verdict into the onboarding config with widget tests, and the picker doc now matches the implemented precedence). One new ⚠️ remains: on the app surface the endpoint's vision verdict is session-scoped — the boot restore re-derives it from the id heuristic, so the image-attachment lock re-locks after an app restart for exactly the multimodal ids gh-2466(2) targets.\n\n**Key Issues**:\n- ⚠️ `flutter_app/lib/services/aiin_connect_flow.dart:745` — the connect flow's `supportsImages` verdict never reaches the next boot: `LastConnection` cannot carry it and `boot_config_codec.dart:98` re-derives vision from `modelIdSuggestsVision` — AC 2's \"image-attachment UX unlocks\" is session-only on the app surface.\n\n**Digest**:\n- `flutter_app/lib/ui/screens/settings_web_llm.dart` — the rework carries an unrelated gh-1232 loc-split (WebLLM cache helpers out of `settings.dart` into a new part file); verified behavior-preserving (`_formSetState` is a `setState` alias) and registered in the analytics-guard exemptions — fine, just a scope note.\n- SSO AC-1 status note (not a defect): the `provider` login-URL hint is client-complete; until the AIN-side companion change ships, the hosted page still shows its own picker — the PR documents this honestly.\n\n**Next Steps**:\n1. Persist the vision verdict: add `supportsImages` to `LastConnection` (toJson/fromJson/fromConfig) and prefer it over the heuristic in `_restore` (`boot_config_codec.dart:98`), heuristic as fallback.\n2. Optionally close the session-restore path (`agent_service_sessions.dart:470`) the same way or via a boot `/models` re-fetch.\n3. Add a restore round-trip assertion to `flutter_app/test/endpoint_modalities_vision_test.dart` for the persisted field."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:dd8951b7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "# Automated Code Review — APPROVE\n\n**Summary**: The rework at `2f04156` verifiably closes finding F4 — the AIN endpoint's vision verdict is now persisted in `LastConnection.supportsImages` (fromConfig/fromJson/toJson) and the boot restore prefers the persisted verdict over the id heuristic (`boot_config_codec.dart:98-99`), so the image-attachment lock no longer re-locks at restart. All four registry findings (F1–F4) are fixed with citable hunks and tests; 9/9 cases pass locally in `endpoint_modalities_vision_test.dart` (5 new boot-restore cases cover the round-trip, both verdict polarities and the legacy-record fallback). No open 🚨/⚠️ findings remain; the cycle converges.\n\n**Key Issues**: none open.\n\n**Digest** (advisory notes on frozen surfaces — not threads, no action required for merge):\n- `flutter_app/lib/ui/widgets/quick_model_chip.dart:229-234` — the quick model chip builds its config without `supportsImages`, so a model switch through it stays heuristic-gated in-session and persists `null` at boot. Uniform behavior (not worse than `origin/main`), frozen surface — worth the same endpoint-modalities treatment in a follow-up if the chip becomes a primary switch path.\n- `flutter_app/lib/services/agent_service_sessions.dart:470` — session restore rebuilds `Model.input` from the id heuristic; declared out-of-scope in the F4 thread reply (the boot path is the reported repro). Same follow-up bucket.\n- SSO AC-1 remains client-complete with the `provider` login-URL hint; the hosted page's own picker stays until the AIN-side companion change ships — documented in the PR notes, tracked in the companion issue.\n\n**Next Steps**:\n1. Merge — no rework required; CI green, ticket ACs satisfied client-side (AC-2's persistence gap closed by this rework).\n2. Follow-up (non-blocking): consider threading endpoint modalities through the quick model chip and the session-restore rebuild for verdict parity across all app switch surfaces."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-28:034c340e",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ silent-update failure — attempt 1 at 2026-11-28T22:07:15.326Z"
+    }
+  ]
+}
