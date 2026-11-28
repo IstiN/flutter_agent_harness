@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-28T12:36:26.911Z",
+  "ticketKey": "gh-2461",
+  "headSha": "a09c5f2595af6c13e85b12e0fb98a34b2d7d1f98",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_classification.json": {
+      "hash": "fnv1a64:bd60491a8a1e4999",
+      "size": 204
+    },
+    "ci_failures.md": {
+      "hash": "fnv1a64:d0984e8b16a6ad24",
+      "size": 169612
+    },
+    "ci_failures_full.log": {
+      "hash": "fnv1a64:395a792240304059",
+      "size": 2760042
+    },
+    "ci_violations.json": {
+      "hash": "fnv1a64:b85f296906131a4f",
+      "size": 749
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:b31b8c754171be1e",
+      "size": 12302
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:4048c0679b16f39f",
+      "size": 14380
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:ce13a22bbe69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:6cbf458b1c8e8e46",
+      "size": 4732
+    },
+    "request.md": {
+      "hash": "fnv1a64:32848bf3d2324a45",
+      "size": 5295
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:e834a334c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:44b132be490c50ca",
+      "size": 5388
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:32848bf3d2324a45",
+      "size": 5295
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:b1a9fde9",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the streak resets on machine context notices, not only on user/steering messages**\n\nThe guard's documented reset evidence is a *user/steering* message (this comment block, `loop_guard.dart` class docs, and the ticket's defensive-feature spec: \"N consecutive identical tool calls with no **user/steering** message in between\"). But the code resets on `pendingMessages.isNotEmpty` *after* the gh-2423 pending context notices have already been merged into that same list (line 1256–1258):\n\n```dart\nfinal pendingNotices = currentConfig.takePendingNotices?.call() ?? const <Message>[];\nif (pendingNotices.isNotEmpty) {\n  pendingMessages = [...pendingMessages, ...pendingNotices];\n}\nif (pendingMessages.isNotEmpty) {\n  loopGuard?.resetStreak(); // ← fires for machine notices too\n}\n```\n\n`takePendingNotices` drains `_pendingContextNotices` (`agent.dart:884`) — machine-generated `<system-notice>` records hosts queue via `queueContextNotice` (post-hide/near-limit compaction notices: `cli/agent_cli_context_notices.dart:140`, child-agent records: `task_executor.dart:960,1001,1032`). None of it is user evidence.\n\nWhy it matters: near-limit/post-hide notices fire exactly in the incident shape — a degenerate read loop growing its context (the Argon loop ran at ~236k of ~240k tokens). Each queued notice silently buys the loop up to 5 fresh identical calls before the notice/abort ladder re-arms, weakening the guard where it is needed most.\n\nFix: capture the steering-only verdict before the notices merge, e.g.\n\n```dart\nfinal steeringArrived = pendingMessages.isNotEmpty; // before merging notices\nif (steeringArrived) loopGuard?.resetStreak();\nif (pendingNotices.isNotEmpty) {\n  pendingMessages = [...pendingMessages, ...pendingNotices];\n}\n```\n\nand add a guard test pinning that a context notice does **not** reset the streak."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:1caf1e6e",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the abort error directs users to a config key that does not exist**\n\nThe terminal text says:\n\n> If this repetition is intentional (a watch or polling command), declare the tool in `agent.identicalCallExemptTools` to opt it out per call site.\n\n`agent.identicalCallExemptTools` is not a real setting: `grep -rn identicalCall lib/src/config lib/src/hosts lib/src/task lib/src/cli bin` returns zero hits — the only opt-out surface is the programmatic `AgentLoopConfig.identicalCallExemptTools` field, which **nothing in the repo passes** (not `_createLoopConfig` in `agent.dart`, not task wiring, not host wiring). A user (or an unattended workflow) who hits the honest abort on a legitimate polling loop has no reachable remedy, in any shipped host — the error text sends them to a dead key.\n\nThe sibling breaker set the precedent the text assumes: `agent.misuseBreaker` is a real config key (`config_service.dart:1572`). The ticket AC likewise asks the opt-out to be usable for \"intentional polling loops … e.g. watch commands\".\n\nFix (either):\n1. Wire the key the text names — `agent.identicalCallExemptTools` in `config_service.dart` (a string-list setting next to `misuseBreaker`) and pass it through `_createLoopConfig`/host wiring; or\n2. If no config knob is intended this round, reword the text to the programmatic field (`AgentLoopConfig.identicalCallExemptTools`) and file the config-key follow-up.\n\nOption 1 is preferable: today the CLI's polling users would be aborted at 8 identical calls with no escape hatch at all."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:7c4300f4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the constructor's \"≤ 0 disables\" contract is only enforced by the loop, not the class**\n\n`IdenticalCallLoopGuard`'s doc says \"[noticeThreshold] ≤ 0 disables the whole guard\", but the class itself only asserts `noticeThreshold != 0` — and asserts are debug-only. In a release build, a directly constructed `IdenticalCallLoopGuard(noticeThreshold: -1)` passes the assert and then fires the notice on the **first** turn of every streak (`_streak >= noticeThreshold` → `1 >= -1`), the exact opposite of the documented disable. The shipped loop is unaffected (`agent_loop.dart:1216` guards with `> 0` before constructing), but the class is exported from the public barrel (`flutter_agent_harness.dart:14`), so SDK consumers can construct it directly.\n\nCompare the abort side, which does handle it defensively (`_streak >= abortThreshold && abortThreshold > 0`).\n\nFix: `assert(noticeThreshold > 0)` (and mirror the abort-side `> 0` check for the notice arm), so the class honors its own documented ≤ 0 disable semantics regardless of caller."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:3781dc22",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **Fixed — the streak now resets only on real steering; machine notices are transparent.**\n\n`lib/src/agent/agent_loop.dart` (the injection slot, ~line 1257): the steering-only verdict is now captured **before** the gh-2423 notices merge into `pendingMessages`, exactly as proposed:\n\n```dart\nfinal steeringArrived = pendingMessages.isNotEmpty; // steering only\nfinal pendingNotices =\n    currentConfig.takePendingNotices?.call() ?? const <Message>[];\nif (steeringArrived) {\n  // gh-2461: a user/steering message joined between turns ends the\n  // unattended stretch — the identical-call streak evidence resets.\n  // The verdict is captured BEFORE the gh-2423 machine notices merge\n  // into the list: a context notice is not user evidence, and a\n  // reset on it would buy a degenerate loop 5 fresh identical calls\n  // exactly where notices fire most (near-limit reads).\n  loopGuard?.resetStreak();\n}\nif (pendingNotices.isNotEmpty) {\n  pendingMessages = [...pendingMessages, ...pendingNotices];\n}\n```\n\nA queued `<system-notice>` still rides the request (delivery unchanged) but no longer re-arms the ladder, so a near-limit compaction notice firing inside a degenerate read loop — the incident shape — can no longer buy the loop 5 fresh identical calls.\n\n**Regression test** (RED-first): `test/agent/loop_guard_test.dart` — \"a queued context notice does NOT reset the streak — machine notices are not steering evidence\". It queues one notice at the turn-5 boundary of a 9-identical-read run and pins the differential: the honest abort lands on the **8th** identical exchange (`executed == 8`, `StopReason.error`). Under the reset bug this run walked all 9 scripted reads to a clean stop (the test failed against the pre-fix loop exactly that way, `executed: 9`).\n\nFixed in the rework commit on `ai/gh-2461`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:95ac5b7f",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **Fixed — option 1: the key the abort text names now exists, end-to-end.**\n\n`agent.identicalCallExemptTools` is now a real, wired setting (a list of tool-name strings next to `agent.misuseBreaker`, following the gh-1572 wiring precedent):\n\n- **yaml schema** — `lib/src/cli/cli_config.dart`: `_parseAgentSection` accepts `identicalCallExemptTools` (strict: a list of tool-name strings; scalars and non-string entries throw `ConfigException`), stored on `_AgentSection` and `CliConfig` (`final List<String> identicalCallExemptTools`), threaded through `copyWith`, and rendered by the emitter (`_agentSectionYaml`) only when non-empty — the file's defaults-never-written rule.\n- **strict mirror** — `lib/src/config/config_service.dart`: `_agentKeyValidators['identicalCallExemptTools']` mirrors the boot parser's rule by value (the file cannot import `cli_config.dart`), so `fa config check` accepts exactly what the boot accepts and the emitter↔validator parity holds.\n- **host wiring** — `bin/fah_runapp.dart` (`saved.identicalCallExemptTools.toSet()` → `AgentCliConfig`) → `lib/src/cli/agent_cli.dart` (`AgentWiringSpec` for the main agent **and** `SubagentServices` for children) → `lib/src/hosts/host_agent_wiring.dart` (`AgentWiringSpec` → `Agent`, and `SubagentServices` → `TaskToolConfig`) → `lib/src/agent/agent.dart` (`_createLoopConfig` passes `identicalCallExemptTools` into every `AgentLoopConfig`).\n- **child wiring** — `lib/src/task/task_tool.dart` + `lib/src/task/task_executor.dart`: the set reaches every spawned child at both spawn sites, next to the misuse breaker — a child running a watch command gets the same escape hatch (the issue-#862 precedent).\n\nThe abort text at `loop_guard.dart` needed no edit: `agent.identicalCallExemptTools` is now true, and a CLI polling user hitting the 8-call abort has a reachable remedy in the shipped host.\n\n**Tests** (RED-first, all failed against the pre-fix tree at compile/assert stage):\n- `test/cli/cli_config_test.dart` — parses the list, defaults to empty when absent, rejects a scalar with the exact message `\"agent.identicalCallExemptTools\" must be a list of tool names`, rejects a non-string entry.\n- `test/config/config_service_test.dart` — mirror-parity test (boot reject ⇔ validator reject ⇔ good parse) plus the new shape in the mechanical emitter↔validator parity list.\n- `test/hosts/host_agent_wiring_test.dart` — `identicalCallExemptTools` threads through `AgentWiringSpec` to `Agent` (asserted on `stack.agent`), and the default stays empty.\n\nFixed in the rework commit on `ai/gh-2461`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:8669cb8d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **Fixed — the class now enforces its own documented ≤ 0 disable.**\n\n`lib/src/agent/loop_guard.dart` (`IdenticalCallLoopGuard` constructor + `acceptTurn`), both halves of the suggested fix:\n\n1. The assert is tightened to `assert(noticeThreshold > 0, ...)` — in debug/test builds a non-positive threshold can no longer construct the guard at all.\n2. The notice arm mirrors the abort side's defensive check:\n\n```dart\nif (_streak >= noticeThreshold &&\n    noticeThreshold > 0 &&\n    !_noticeDeliveredThisStreak) {\n```\n\nso in a **release** build (asserts off) a directly constructed `IdenticalCallLoopGuard(noticeThreshold: -1)` now honors the documented disable — `1 >= -1` can no longer arm the notice on the first turn of every streak. `abortThreshold ≤ 0` keeps its existing \"disables only the abort\" semantics.\n\nThe shipped loop was already null-guarding (`agent_loop.dart` constructs the guard only when `identicalCallNoticeThreshold > 0`), so CLI/SDK behavior through `AgentLoopConfig` is byte-identical; this closes the direct-construction hole the barrel export leaves open.\n\n**Test** (RED-first): `test/agent/loop_guard_test.dart` — \"unit: threshold contract\": `IdenticalCallLoopGuard(noticeThreshold: 0)` and `(-1)` both throw `AssertionError`. The `-1` case failed against the pre-fix tree (the old `!= 0` assert let it construct and arm). The release-side runtime mirror is exercised by the same construction contract it guards; the loop-level disable stays pinned by the existing \"the guard is fully disabled with noticeThreshold 0\" test.\n\nFixed in the rework commit on `ai/gh-2461`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:7283d6bc",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The gh-2461 loop guard is well-built (provider-agnostic streak detection, outcome-aware verdicts, 26 targeted tests pass, format/analyze clean), but two important issues weaken it: the streak resets on machine context notices, not only user/steering input, and the abort error directs users to `agent.identicalCallExemptTools` — a config key that does not exist anywhere in the repo.\n\n**Key Issues**:\n- ⚠️ `agent_loop.dart:1262` — reset fires for gh-2423 machine notices merged into `pendingMessages`, not just user/steering input; near-limit notices fire exactly in the incident shape and buy the loop 5 more identical calls per notice.\n- ⚠️ `loop_guard.dart:237` — the honest abort names `agent.identicalCallExemptTools`, which no host/CLI/task/config wiring provides; legitimate polling loops have no reachable opt-out in any shipped host.\n- 💡 `loop_guard.dart` — constructor lets a negative `noticeThreshold` arm the notice on the first turn; the documented ≤ 0 disable holds only via the loop's own null-guard.\n\n**Digest** (below thread bar, no action required):\n- `misuse_breaker.dart:52` — pre-existing: `argsKey` uses order-sensitive `arguments.toString()`; the new guard's canonical JSON is strictly better — worth sharing.\n- `agent_loop.dart:1332` — the notice injection block duplicates `_injectPendingMessages`'s body verbatim; the helper call would do.\n- Ticket AC note (accepted deviation, documented in the PR): the pre/post-upgrade REG A/B on the recorded session window was not executable (owner-local 6.3 GB assets); constructed replay/projection windows pin the same invariants instead.\n\n**Next Steps**:\n1. Reset the streak only on real steering (capture before notices merge into `pendingMessages`) + pin it with a test.\n2. Either wire `agent.identicalCallExemptTools` through `config_service`/host wiring or reword the abort text to the programmatic field.\n3. Tighten the constructor assert to `noticeThreshold > 0`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:20dce17d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (re-review round 2)\n\n**Summary**: All three round-1 findings are fixed in the rework with citable hunks and pin tests; the re-review of the new hunks (+339/−10 across 16 files) surfaced no new issues — 309 targeted tests pass, format and analyzer clean.\n\n**Key Issues**: None open.\n\n- F1 ✅ fixed — `agent_loop.dart:1257-1268`: `steeringArrived` is captured before the gh-2423 machine notices merge into `pendingMessages`, so only real user/steering input resets the streak; pinned by `loop_guard_test.dart` \"a queued context notice does NOT reset the streak\" (9 reads + mid-streak notice → honest abort at 8).\n- F2 ✅ fixed — `agent.identicalCallExemptTools` is now a real, reachable setting end-to-end: strict yaml parser (`cli_config.dart`), by-value validator mirror (`config_service.dart`, `fa config check` parity pinned), emitter, `CliConfig` → `AgentCliConfig` (`fah_runapp.dart:1853`), main agent (`agent_cli.dart:928`) and every spawned child (`SubagentServices`/`task_executor`/`task_tool`/`host_agent_wiring`). The abort text's remedy is now deliverable.\n- F3 ✅ fixed — `loop_guard.dart:129`: `assert(noticeThreshold > 0)` plus the release-side runtime mirror in `acceptTurn`; construction-time test pins the contract.\n\n**Next Steps**: Merge. No rework needed; remaining polish is optional and non-blocking."
+    }
+  ]
+}
