@@ -121,6 +121,10 @@ const rootSpecs = <PromptSpec>[
     constName: 'contextHygienePrompt',
   ),
   PromptSpec(
+    source: 'prompts/compaction/pinned_steering.md',
+    constName: 'pinnedSteeringPrompt',
+  ),
+  PromptSpec(
     source: 'prompts/cli/mode_code.md',
     constName: 'cliCodeModePrompt',
     requiredToken: '{{cwd}}',

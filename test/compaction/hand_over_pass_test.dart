@@ -876,7 +876,12 @@ void main() {
         'tool output quoted the fold:\n[expand 3-140]',
         '[quoted] see [expand 5-6]',
         'see [expand 5-6] then [expand 6-7]',
-        'one two three four five six seven [expand 3-140]',
+        // gh-2492 C4/C5: the engine label budget grew (the collapsed
+        // ledger markers carry a tool histogram — 14 words at the cap),
+        // so the negative sample grows past it: genuine content one line
+        // ending in a quoted pointer with a 17-word head is no marker.
+        'one two three four five six seven eight nine ten eleven twelve '
+            'thirteen fourteen fifteen sixteen seventeen [expand 3-140]',
       ]) {
         expect(isCompactionMarkerText(text), isFalse, reason: text);
       }

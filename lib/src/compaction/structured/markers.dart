@@ -171,10 +171,16 @@ final RegExp _recordTagPrefix = RegExp(r'^m\d+ ');
 /// hand_over.dart, mirrored here).
 final RegExp _expandPointerPattern = RegExp(r'\[expand \d+(?:-\d+)?\]\s*$');
 
-/// Mirrors the hide-label budget the engine enforces before it ever
-/// renders a label into a marker (`sanitizeHideLabel`).
-const int _markerLabelMaxChars = 48;
-const int _markerLabelMaxWords = 6;
+/// The label budget an ENGINE-written marker may carry before its
+/// pointer (gh-2492 C4/C5): the collapsed ledger markers and the hide
+/// histogram labels (`bash ×61 · read ×40 · 12:41–13:44`) are wider than
+/// the judge's hide labels — the head the marker predicate accepts grows
+/// to cover every ENGINE shape. Model-written labels stay at the tight
+/// `sanitizeHideLabel` budget (48 chars / 6 words); a sanitizer output
+/// always fits this predicate (a subset), so tool-pairing repair and the
+/// operative-pin detector keep resolving every label the engine renders.
+const int _markerLabelMaxChars = 96;
+const int _markerLabelMaxWords = 20;
 
 bool _isEngineExpandPointer(String body) {
   final match = _expandPointerPattern.firstMatch(body);

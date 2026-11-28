@@ -166,7 +166,9 @@ void main() {
         // composition class as the recall contract) ride after it.
         expect(
           capturedSystemPrompt,
-          'CONFIG HEADLESS PROMPT\n\n$workingSetPrompt\n\n$contextHygienePrompt',
+          // gh-2492 C7: the pinned-steering include rides beside them.
+          'CONFIG HEADLESS PROMPT\n\n$workingSetPrompt\n\n$contextHygienePrompt'
+          '\n\n$pinnedSteeringPrompt',
         );
       },
     );

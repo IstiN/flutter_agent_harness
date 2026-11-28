@@ -19,6 +19,8 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:meta/meta.dart';
+
 import '../agent/auto_compactor.dart';
 import '../agent/agent.dart';
 import '../agent/misuse_breaker.dart';
@@ -53,6 +55,7 @@ import 'subagent.dart';
 import 'subagent_manager.dart';
 import 'subagent_scope.dart';
 import 'subagent_tools.dart';
+import 'steering_pins.dart';
 import 'task_types.dart';
 
 /// Lifecycle phases reported through [TaskSpawnProgressCallback].
@@ -463,6 +466,17 @@ final class TaskExecutor {
       final (:promptText, :since) = _resumePrompt(mail, fallback: message);
       deliveryStage(id, 'consumed', since: since);
       final session = await _resumeSession(id, handle);
+      // gh-2492 C2 resume belt: a pre-card session gains its pins once —
+      // the first prompt record and the newest steering record, never
+      // un-hiding anything already hidden.
+      await _ensureChildSessionPins(id, session);
+      // gh-2492 C2: the RESUME prompt is the parent's newest steering —
+      // the joined warm-wake mail (or the fallback message). It pins on
+      // its first transcript flush; the previous delivery's pins release.
+      final resumePrompt = UserMessage.text(promptText);
+      _pinsFor(id)
+        ..pendingPrompt = null
+        ..queueSteering([resumePrompt]);
       final prior = await session.buildContextMessages();
       _childSessions[id] = session;
       _childSessionWrites[id] = await _appendedMessageCount(session);
@@ -517,7 +531,12 @@ final class TaskExecutor {
       // same scope a fresh spawn publishes (gh-970) — reply/agent_message
       // and schedule_message attribute to THIS child, never a concurrent
       // sibling on the shared executor stack.
-      await runWithSubagentScope(id, () => agent.prompt(promptText));
+      await runWithSubagentScope(
+        id,
+        // gh-2492 C2: promptMessage keeps the exact message object the
+        // pending steering pin names (prompt(text) re-wraps the text).
+        () => agent.promptMessage(resumePrompt),
+      );
       deliveryStage(id, 'reply', since: since);
       resumeCancel.token.throwIfCancelled();
       // The agent loop surfaces provider failures as an error-tagged final
@@ -840,6 +859,7 @@ final class TaskExecutor {
     if (session == null) return false;
     final before = est - incomingTokens;
     final pass = await _runChildCompactionPass(
+      id: id,
       session: session,
       child: child,
       window: window,
@@ -900,6 +920,30 @@ final class TaskExecutor {
   /// gh-2423 C3: the near-limit notice latch, per child id (armed at the
   /// child's start, re-armed by every hide — one notice per cycle).
   final _childNearLimitLatches = <String, ContextNoticeLatch>{};
+
+  /// gh-2492 C2: pending pin bookkeeping per child id — see
+  /// [_ChildSteeringPinState].
+  final _childSteeringPins = <String, _ChildSteeringPinState>{};
+
+  /// gh-2492 C2: the pin bookkeeping for [id], created on demand.
+  _ChildSteeringPinState _pinsFor(String id) =>
+      _childSteeringPins.putIfAbsent(id, _ChildSteeringPinState.new);
+
+  /// gh-2492 C2 resume belt: a child resumed from a pre-card session has
+  /// no pin records — ensure the first prompt record and the newest
+  /// steering record are pinned once per resume, never un-hiding anything
+  /// already hidden. Best-effort: a failed append leaves the session
+  /// exactly as the previous run left it.
+  Future<void> _ensureChildSessionPins(String id, Session session) async {
+    try {
+      final targets = ensureChildPinTargets(await session.getBranch());
+      if (targets.isEmpty) return;
+      await session.appendSegmentPin(recordIds: targets, pinned: true);
+    } on Object {
+      // Best-effort by contract — the resume proceeds unpinned rather
+      // than failing on the belt.
+    }
+  }
 
   /// The resumed child's first prompt and its wake stamp (issue #647 warm
   /// wake): the drained mail attributed per sender, or the parent's own
@@ -1117,6 +1161,7 @@ final class TaskExecutor {
   /// round 1) — a gate-declined no-op is a healthy non-attempt.
   Future<({bool ok, bool attempted, String? error, int hiddenRecords})>
   _runChildCompactionPass({
+    required String id,
     required Session session,
     required Agent child,
     required int window,
@@ -1138,6 +1183,9 @@ final class TaskExecutor {
         state: child.state,
         window: window,
         settings: settings,
+        // gh-2492 C2: the child's pinned records ride the mechanical
+        // trim valve too — a pinned record never leaves the LIVE context.
+        pinnedMessages: await _childPinnedValveMessages(id, session),
         sources: AutoCompactorSources(
           smolStream: smol?.stream,
           // Invariant 2 (gh-1742 review round 1, comment 6): compaction
@@ -1177,6 +1225,29 @@ final class TaskExecutor {
         fallback: hooks.hiddenRecords,
       ),
     );
+  }
+
+  /// gh-2492 C2: the child's pinned messages for the mechanical trim
+  /// valve — every MessageRecord the session's pin replay currently pins
+  /// (the task prompt, the newest steering). Empty when the session
+  /// cannot be read (best-effort by contract) or nothing is pinned.
+  Future<List<Message>> _childPinnedValveMessages(
+    String id,
+    Session session,
+  ) async {
+    if (_childSteeringPins[id] == null) return const [];
+    try {
+      final branch = await session.getBranch();
+      final pinned = pinnedRecordIdsOf(branch);
+      if (pinned.isEmpty) return const [];
+      return [
+        for (final record in branch)
+          if (record is MessageRecord && pinned.contains(record.id))
+            record.message,
+      ];
+    } on Object {
+      return const [];
+    }
   }
 
   /// The hide-record ids of [session] (null when the session cannot be
@@ -1415,7 +1486,12 @@ final class TaskExecutor {
     // on the FIRST transcript flush — never at spawn time. Subagents that
     // finish with no transcript leave no session file behind.
     try {
-      await child.prompt(await _buildUserPrompt(item, id));
+      // gh-2492 C2: the task prompt record pins on its first transcript
+      // flush — promptMessage keeps the exact message object the pending
+      // pin names (prompt(text) would re-wrap the text into a new one).
+      final taskPrompt = await _buildUserPrompt(item, id);
+      _pinsFor(id).pendingPrompt = UserMessage.text(taskPrompt);
+      await child.promptMessage(_pinsFor(id).pendingPrompt!);
       unawaited(_flushChildTranscript(id, child));
       cancelToken?.throwIfCancelled();
       return await _completeChildRun(
@@ -1855,10 +1931,17 @@ final class TaskExecutor {
         since: DateTime.tryParse(queued.first.sentAt),
       );
     }
-    return [
+    final messages = [
       for (final message in queued)
         UserMessage.text('from ${message.fromId}: ${message.text.trim()}'),
     ];
+    // gh-2492 C2: this delivery's records pin on their first transcript
+    // flush; the previous delivery's release then (one steering pinned at
+    // a time — the newest).
+    if (messages.isNotEmpty) {
+      _pinsFor(subagentId).queueSteering(messages);
+    }
+    return messages;
   }
 
   /// Resolves [agentName] to its definition or throws listing the available
@@ -1936,9 +2019,13 @@ final class TaskExecutor {
     // and the context-hygiene rules — `working_set` is in every child's
     // surface (read tier, no availability id), and children run the
     // hide-only compaction path the rules are written for.
+    // gh-2492 C7: the pinned-steering contract rides beside them — the
+    // child's task prompt and newest steering are pinned (C2), and the
+    // folded ledger reads itself through the engine labels (C4/C5).
     final systemPrompt = StringBuffer(definition.systemPrompt.trim())
       ..write('\n\n$workingSetPrompt')
-      ..write('\n\n$contextHygienePrompt');
+      ..write('\n\n$contextHygienePrompt')
+      ..write('\n\n$pinnedSteeringPrompt');
     if (context.trim().isNotEmpty) {
       systemPrompt
         ..writeln()
@@ -2347,6 +2434,13 @@ final class TaskExecutor {
   /// fire-and-forget flushes would otherwise interleave session records.
   final _childFlushChains = <String, Future<void>>{};
 
+  /// Test seam: awaits the per-child flush chain so a caller observes the
+  /// child's session file AFTER the fire-and-forget boundary/final flushes
+  /// landed (the flush serializes per child; pins append inside it).
+  @visibleForTesting
+  Future<void> settleChildFlushForTest(String id) =>
+      _childFlushChains[id] ?? Future<void>.value();
+
   /// Appends the child's NEW transcript messages (beyond the flush counter)
   /// to its session file, serialized per child so concurrent flushes never
   /// interleave records. Idempotent — safe to call at every turn boundary
@@ -2405,11 +2499,38 @@ final class TaskExecutor {
     final written = _childSessionWrites[id] ?? 0;
     try {
       for (var i = written; i < messages.length; i++) {
-        await session.appendMessage(messages[i]);
+        // gh-2492 C2: the returned record id resolves a pending steering
+        // pin (best-effort; a null return means the record did not land).
+        final recordId = await session.appendMessage(messages[i]);
+        _childSteeringPins[id]?.observe(messages[i], recordId);
       }
       _childSessionWrites[id] = messages.length;
+      await _flushChildSteeringPins(id, session);
     } on Object {
       // A failed flush must not affect the child's result.
+    }
+  }
+
+  /// gh-2492 C2: the pin writes a completed flush cycle owes — release
+  /// the previous steering delivery's records, then pin the prompt (once)
+  /// and the newest delivery's records. Best-effort: a failed pin append
+  /// leaves the pins pending (the next flush retries; the session is
+  /// untouched).
+  Future<void> _flushChildSteeringPins(String id, Session session) async {
+    final pins = _childSteeringPins[id];
+    if (pins == null) return;
+    final (:release, :pin) = pins.takeForFlush();
+    try {
+      if (release.isNotEmpty) {
+        await session.appendSegmentPin(recordIds: release, pinned: false);
+      }
+      if (pin.isNotEmpty) {
+        await session.appendSegmentPin(recordIds: pin, pinned: true);
+      }
+    } on Object catch (error) {
+      // Best-effort by contract.
+      // ignore: avoid_print
+      print('PIN FLUSH FAILED: release=$release pin=$pin error=$error');
     }
   }
 
@@ -2456,4 +2577,95 @@ final class _SilentCompactionHooks extends AutoCompactorHooks {
 
   @override
   void onBothRolesFailed(Object lastError) {}
+}
+
+/// gh-2492 C2: the pinned-steering bookkeeping for ONE child — the
+/// transcript flush (the session's single writer) resolves the pending
+/// message objects to record ids and appends the `segment_pin` records.
+///
+/// Why identity, not indexes: steering messages and context notices are
+/// injected by the agent loop at turn boundaries in an order the executor
+/// does not control, and a post-compaction flush cursor restart resets
+/// message indexes (#387) — object identity survives both.
+final class _ChildSteeringPinState {
+  /// The run's prompt message awaiting its record id: the task prompt of
+  /// a fresh spawn (pinned once, never released) or a resume prompt (a
+  /// steering delivery — the joined warm-wake mail). Cleared only by
+  /// [observe] — a flush that runs before the message joined the live
+  /// transcript must not drop it.
+  Message? pendingPrompt;
+
+  /// The prompt record's pin has been written.
+  bool promptPinned = false;
+
+  /// Steering messages awaiting their record ids, in queue order (a
+  /// delivery's records resolve as the flush persists them). A message
+  /// that never persists (cap-exhausted steering requeued by the loop)
+  /// stays here unresolved — it has no record to protect, so it never
+  /// pins; the entries hold object references only.
+  final pendingSteering = <Message>[];
+
+  /// Queues a steering delivery's messages for the pin-on-flush pass.
+  void queueSteering(List<Message> messages) {
+    pendingSteering.addAll(messages);
+  }
+
+  /// The record ids pinned so far for steering (the newest PERSISTED
+  /// delivery); released when the next steering pin lands.
+  List<String> pinnedSteeringRecordIds = const [];
+
+  /// The flush calls this per appended message: [recordId] resolves a
+  /// pending pin target when [message] is the exact object queued.
+  void observe(Message message, String recordId) {
+    if (!promptPinned && identical(message, pendingPrompt)) {
+      pendingPrompt = null;
+      promptPinned = true;
+      _pinOnFlush.recordIds.add(recordId);
+      return;
+    }
+    for (var i = 0; i < pendingSteering.length; i++) {
+      if (identical(message, pendingSteering[i])) {
+        pendingSteering.removeAt(i);
+        _pinOnSteering.recordIds.add(recordId);
+        return;
+      }
+    }
+  }
+
+  /// Pins resolved by [observe] since the last flush cycle.
+  final _pinOnFlush = _ResolvedPin();
+  final _pinOnSteering = _ResolvedPin();
+
+  /// The pin writes the completed flush cycle must append, in replay
+  /// order: release the previous delivery's records first, then pin the
+  /// new ones (the LAST pin per id wins, so ordering matters only for
+  /// readability of the file — correctness rides the release-before-pin
+  /// pair staying adjacent). Unresolved pending targets stay pending —
+  /// they resolve on a later flush cycle, never expire.
+  ({List<String> release, List<String> pin}) takeForFlush() {
+    // Copy BEFORE reset(): the resolved lists are mutated in place, and an
+    // aliased return would spread an already-cleared list (the steering
+    // pins would silently vanish between cycles).
+    final steeringPin = List.of(_pinOnSteering.recordIds);
+    final promptPin = List.of(_pinOnFlush.recordIds);
+    _pinOnFlush.reset();
+    _pinOnSteering.reset();
+    // A release rides a new steering pin only — the release-then-pin pair
+    // swaps one pinned steering delivery for the next. A standalone
+    // release would unpin the newest steering with nothing replacing it.
+    if (steeringPin.isEmpty) {
+      return (release: const [], pin: promptPin);
+    }
+    final release = pinnedSteeringRecordIds;
+    pinnedSteeringRecordIds = steeringPin;
+    return (release: release, pin: [...promptPin, ...steeringPin]);
+  }
+}
+
+/// The record ids one flush cycle resolved for a pin target.
+final class _ResolvedPin {
+  final List<String> recordIds = [];
+
+  /// Empties the resolved set (the flush consumed it).
+  void reset() => recordIds.clear();
 }

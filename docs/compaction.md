@@ -665,3 +665,100 @@ user bubble); HEP emits a `context_notice` frame
 `{kind: post-hide|near-limit, tokens, window, hidden?}` — numbers only
 (see `docs/hep.md`). Children get the same texts through the task
 executor (the same queued notice before their next request).
+
+## Pinned steering for task children (gh-2492, C2)
+
+The #2423 audit's second worker failure: a task child whose own
+compaction buried its task prompt kept re-deriving the assignment, and
+a steering delivery that folded mid-run left the child executing a
+superseded instruction. The protection channel is the one every host
+already shares — `SegmentPinRecord`s in the child's OWN session file
+(`lib/src/task/steering_pins.dart`); nothing else changes:
+
+- **What pins.** The task-executor writes the pins through the
+  transcript flush (the session's single writer): the task prompt record
+  pins ONCE (its first flush, never released); every steering delivery —
+  the boundary-drained mail and a resume's joined warm-wake prompt —
+  pins its records and releases the previous delivery's (one steering
+  delivery pinned at a time; the newest). Message objects queue as pin
+  targets and resolve to record ids when the flush persists them
+  (identity matching — robust against notice interleaving and the
+  post-compaction flush-cursor reset, #387).
+- **The resume belt.** A child resumed from a pre-card session (no pin
+  records) gains "ensure pins" once per resume: the first prompt record
+  and the newest steering record — never un-hiding anything already
+  hidden (a pin on a hidden record just shields it from FUTURE passes).
+- **The mechanical valve honours pins.** `localTrimValve` takes
+  `pinnedMessages` (`lib/src/agent/auto_compactor.dart`): the pinned
+  task prompt and newest steering re-home behind the trim marker like
+  the boundary summaries and unanswered mail already do, so the
+  summarizer-down valve cannot take them out of the LIVE context either.
+  The child compaction pass derives the pinned set from the session's
+  pin replay; hosts without pins pass nothing and the valve is
+  byte-identical.
+- **Mail stays data (REG-6).** `isSyntheticUserText` semantics are
+  untouched — the pins protect the record, the classifier still reads it
+  as machine content. The steering predicate anchors on the same
+  `isAgentMailText` shape the renderer writes.
+
+## The hidden-ledger budget (gh-2492, C4) and the consolidated labels (C5)
+
+The hidden-record MARKERS a request carries are the compaction ledger's
+render cost: one marker per hidden record (~19 tokens with the preview)
+adds up — after several hide passes the ledger alone can cost more than
+the checkpoint it replaced (the measured ≈18k rejection case: five
+cycles × ~280 records).
+
+- **C5 — write time.** Every bare hide writer (judge hide,
+  deterministic fallback, LRU re-hide, `EmergencyRelief`) now writes its
+  batch CONSOLIDATED: one `hidden_range` record with `consolidated: true`
+  and an engine-generated per-batch label — the tool-event histogram and
+  time span over the covered records (`bash ×61 · read ×40 · edit ×12 ·
+  12:41–13:44`), computed by `hideBatchLabels` /
+  `toolHistogramLabel` (`lib/src/compaction/ledger_budget.dart`). No
+  model text, no injection surface. The projection renders the batch as
+  ONE marker at its carrier — `<label> [expand a-b]` — instead of a
+  per-record marker run. The engine-marker predicate's label budget
+  grows to the engine's own shapes (96 chars / 16 words); model-written
+  hide labels stay at the tight `sanitizeHideLabel` budget (48 chars /
+  6 words) — a sanitizer output always fits the predicate.
+- **C4 — render time.** Still, five passes leave five pointers. The
+  dedicated ledger budget (`hiddenLedgerBudgetTokens` = 1000, over ALL
+  hidden markers of ONE request) collapses OLDEST-FIRST: each merge
+  turns the two oldest adjacent markers into one collapsed pointer
+  (`N records hidden · <label> [expand a-b]`) until under budget — the
+  newest run keeps its per-record detail. Enforcement is RENDER-TIME
+  only (no file rewrite): the session file keeps every bare range, and a
+  rebuild derives the same collapsed view from the same records —
+  deterministic by construction (the labels derive from the covered
+  records, never from live state). Under the budget the markers render
+  byte-identically. The projection runs the pass two-phase
+  (collect → budget → emit) so the record-tag alignment stays
+  consistent, and the expandable set never changes: every id a collapsed
+  pointer names is still hidden in the session file — the door resolves.
+  Checkpoint markers and tool_result pair markers are out of the budget
+  (they are content, not ledger).
+
+## The one-window check (gh-2492, C6)
+
+One window per model identity, everywhere (`test/compaction/
+one_window_test.dart`): the compaction trigger, the loop's over-window
+guard, BOTH context notices and the ctx meter resolve the SAME value for
+a catalog-only identity, a registry-pinned one (endpoint report and user
+pin, mid-session shrink included) and an owner-capped one. No production
+change was needed — every consumer already funnels
+`resolveCompactionHostWiring` / `effectiveContextWindow` /
+`withRegisteredContextWindow`; the test pins the invariant so a
+divergence cannot return. The one-off live model probe the #2423 C6
+ticket also asked for (a glm-5.4 endpoint report driving the registry on
+a real session) needs live provider credentials and is NOT part of this
+change — the provider catalog is untouched.
+
+### The pinned-steering include (gh-2492, C7)
+
+`prompts/compaction/pinned_steering.md` rides the mode prompt (CLI) and
+every task child's system prompt beside the working-set and
+context-hygiene includes: what the pins protect, why the parent must not
+re-send steering to keep it visible (the newest delivery is already
+pinned — re-sending just spends window), how to read the engine-labelled
+folded ledger, and that the notices carry the harness's honest numbers.

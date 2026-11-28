@@ -121,17 +121,24 @@ void main() {
     final hid = await compactor.run();
 
     final messages = state.messages;
-    // The whole read pair is hidden: the carrier became a user-role
-    // marker and its result — orphaned by the hidden carrier — became
-    // one too (wire safety), both addressable by their line ids.
+    // gh-2492 C5: the whole read pair is hidden and the batch
+    // consolidates — ONE engine-labelled pointer renders at the carrier
+    // (`<histogram> [expand 3-4]`), replacing the per-record marker run.
+    // Every id stays expandable through the door.
     final markers = messages
         .whereType<UserMessage>()
         .map((m) => m.content as String)
-        .where((text) => text.contains(':hidden'))
+        .where((text) => text.contains('[expand'))
         .toList();
-    expect(markers, hasLength(2));
-    expect(markers.first, startsWith('[3:hidden'));
-    expect(markers.last, startsWith('[4:hidden·tool_result'));
+    expect(markers, hasLength(1));
+    expect(markers.single, contains('[expand 3-4]'));
+    expect(markers.single, contains('read ×'));
+    expect(
+      messages.where(
+        (m) => m is UserMessage && (m.content as String).contains(':hidden'),
+      ),
+      isEmpty,
+    );
     // The pair did not split on the wire.
     expect(validateToolPairing(messages), isEmpty);
     // Nothing was checkpointed: hides alone relieved the pressure.

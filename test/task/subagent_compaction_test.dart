@@ -91,17 +91,19 @@ final int _contractTokens = () {
       _overheadDeltaTokens;
 }();
 
-/// gh-2423 (C1/C7): the two system-prompt includes (`working_set`,
-/// `context_hygiene`) ride every child prompt. The same measured-delta
-/// calibration as [_contractTokens]: the fixtures are calibrated to the
-/// pre-gh-2423 trajectory, so the child window grows by the includes' own
-/// request footprint. MEASURED through the estimator itself (the same
-/// call the pressure gate runs): the gh-2411 estimator prices system-prompt
-/// text at the dense `overheadCharsPerToken`, not the transcript heuristic,
-/// so a hand-derived `chars / 4` under-measures the delta and the
-/// crossings shift under the fixtures.
+/// gh-2423 (C1/C7) + gh-2492 (C7): the three system-prompt includes
+/// (`working_set`, `context_hygiene`, `pinned_steering`) ride every child
+/// prompt. The same measured-delta calibration as [_contractTokens]: the
+/// fixtures are calibrated to the pre-gh-2423 trajectory, so the child
+/// window grows by the includes' own request footprint. MEASURED through
+/// the estimator itself (the same call the pressure gate runs): the
+/// gh-2411 estimator prices system-prompt text at the dense
+/// `overheadCharsPerToken`, not the transcript heuristic, so a
+/// hand-derived `chars / 4` under-measures the delta and the crossings
+/// shift under the fixtures.
 final int _contextIncludesTokens = estimateRequestOverheadTokens(
-  '\n\n$workingSetPrompt\n\n$contextHygienePrompt',
+  '\n\n$workingSetPrompt\n\n$contextHygienePrompt'
+  '\n\n$pinnedSteeringPrompt',
   const [],
 );
 

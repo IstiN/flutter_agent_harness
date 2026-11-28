@@ -46,6 +46,7 @@ import 'token_estimation.dart' show estimateRequestTokens;
 import 'structured/engine.dart' show classicTransform, refreshAgentState;
 import 'structured/judge.dart' show hideProtectTailEntries;
 import 'structured/ledger.dart';
+import 'ledger_budget.dart' show hideBatchLabels;
 import 'structured/projection.dart';
 
 /// Keep-N-recent defaults per tool class (gh-209): the newest N pair
@@ -224,8 +225,22 @@ final class EmergencyRelief {
     var hiddenRecords = 0;
     if (ids.isNotEmpty) {
       try {
-        await session.appendHiddenRange(recordIds: ids.toList()..sort());
-        hiddenRecords = ids.length;
+        // gh-2492 C5: the relief's hide batch consolidates with its
+        // engine label — same shape as the structured engine's writers.
+        final reliefHidden = ids.toList()..sort();
+        final reliefView = view;
+        await session.appendHiddenRange(
+          recordIds: reliefHidden,
+          labels: hideBatchLabels(
+            reliefHidden,
+            recordAt: (id) {
+              final seq = reliefView?.seqs.seqOf(id);
+              return seq == null ? null : reliefView?.seqs.recordAt(seq);
+            },
+          ),
+          consolidated: true,
+        );
+        hiddenRecords = reliefHidden.length;
       } on Object {
         // Failure-safety (the quality tier's contract): a failed append
         // writes nothing — the transcript is re-anchored unchanged and
