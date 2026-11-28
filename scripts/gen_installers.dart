@@ -48,6 +48,40 @@ final _generatedHeader =
 '''
         .trim();
 
+/// gh-1945 mojibake follow-up: GitHub Pages serves the .ps1 without a
+/// charset, so Windows PowerShell 5.1 decodes the `irm | iex` body as
+/// ISO-8859-1 and every non-ASCII glyph reaches the user as mojibake
+/// (the FA banner prints as garbage). The .ps1 artifacts are
+/// decode-invariant: known typographic glyphs map to ASCII shells, and
+/// any survivor is a generation error - never silent mojibake.
+final String _generatedHeaderPs = _generatedHeader.replaceAll('\u2550', '=');
+
+String _asciiForPs(String text) {
+  const map = <String, String>{
+    '\u2550': '=', // box-drawing double horizontal
+    '\u2500': '-', // box-drawing light horizontal
+    '\u2014': '-', // em dash
+    '\u2013': '-', // en dash
+    '\u2192': '->', // rightwards arrow
+    '\u2714': '[ok]', // check mark
+    '\u2718': '[x]', // heavy ballot X
+    '\u26a0': '[!]', // warning sign
+    '\u2022': '*', // bullet
+    '\u2019': "'", // right single quote
+  };
+  var out = text;
+  map.forEach((k, v) => out = out.replaceAll(k, v));
+  final survivors = out.runes.where((r) => r > 0x7F).toSet();
+  if (survivors.isNotEmpty) {
+    throw StateError(
+      'non-ASCII survived the .ps1 sanitize: '
+      '${survivors.map((r) => 'U+${r.toRadixString(16).toUpperCase()}').join(', ')} '
+      '- extend the _asciiForPs map or drop the glyph',
+    );
+  }
+  return out;
+}
+
 /// Renders every generated installer artifact WITHOUT touching the
 /// filesystem. Keys are repo-relative paths, values are the exact bytes to
 /// commit (gh-1945: the .ps1 entries are BOM-less — see [main]).
@@ -103,7 +137,7 @@ Map<String, String> renderInstallers() {
 
   final ps = File(_psTemplatePath)
       .readAsStringSync()
-      .replaceFirst('# {{GENERATED_HEADER}}', _generatedHeader)
+      .replaceFirst('# {{GENERATED_HEADER}}', _generatedHeaderPs)
       .replaceFirst('{{BANNER}}', psBanner)
       .replaceFirst('{{SETUP_RECIPE}}', psRecipe)
       .replaceFirst('{{PROVIDER_MENU}}', _psProviderMenu(providers))
@@ -143,7 +177,7 @@ Map<String, String> renderInstallers() {
 
   final psSetup = File(_psSetupTemplatePath)
       .readAsStringSync()
-      .replaceFirst('# {{GENERATED_HEADER}}', _generatedHeader)
+      .replaceFirst('# {{GENERATED_HEADER}}', _generatedHeaderPs)
       .replaceFirst('{{PROVIDER_MENU}}', _psProviderMenu(providers))
       .replaceFirst('{{PROVIDER_SWITCH}}', _psProviderSwitch(providers))
       .replaceFirst('{{MODE_MENU}}', _psModeMenu(modes))
@@ -159,8 +193,8 @@ Map<String, String> renderInstallers() {
     // `irm | iex` path decodes the served bytes as ISO-8859-1, where a BOM
     // becomes literal `ï»¿` text. The golden test asserts bytes 0-2 are NOT
     // a BOM (see test/site/installer_golden_test.dart).
-    _psOut: ps,
-    _psSetupOut: psSetup,
+    _psOut: _asciiForPs(ps),
+    _psSetupOut: _asciiForPs(psSetup),
   };
 }
 
@@ -174,8 +208,9 @@ void main() {
     // `ï»¿` glued to line 1, the leading `#` stops being a comment, and the
     // install fails with "The term 'ï»¿#' is not recognized". A BOM-less
     // file starts with plain ASCII `#`, which is decode-invariant in every
-    // ANSI code page; the non-ASCII glyphs sit inside comments/string
-    // literals, where a Latin-1 mis-decode is cosmetic, never syntactic.
+    // ANSI code page; the whole artifact stays pure ASCII - _asciiForPs
+    // maps the typographic glyphs and hard-errors on unmapped survivors
+    // (the banner is where the mojibake actually bites).
     // (The BOM's parse-time benefit only applied to `powershell -File`
     // execution, which no documented flow uses; PS 7 decodes UTF-8 either
     // way. Golden test: test/site/installer_golden_test.dart.)
@@ -656,7 +691,10 @@ String _shBanner(YamlMap install) {
 String _psBanner(YamlMap install) {
   final b = StringBuffer();
   b.writeln(r'Write-Host ""');
-  for (final line in install['banner'] as YamlList) {
+  // ps_banner is the ASCII-only Windows flavour (gh-1945 mojibake);
+  // the Unicode art in the yaml stays for the sh installers.
+  for (final line
+      in install['ps_banner'] as YamlList? ?? install['banner'] as YamlList) {
     b.writeln('Write-Host "$line"');
   }
   b.writeln(r'Write-Host ""');
