@@ -57,10 +57,13 @@ invariant), and CI stamps the real version at every edge:
   and the stage-time stamper (`scripts/stamp_staged_release.sh`) writes the
   tag version into the staged pubspec, guards staged == tag pre-upload, and
   PREPENDS the tag's generated changelog section to the staged CHANGELOG
-  (the repo file is never mutated). CHANGELOG.md in-repo is curated-only:
-  PRs add lines under `## Unreleased`; `scripts/release_notes.sh` picks
-  curated `## <version>` → curated `## Unreleased` body → conventional
-  commits since the previous tag. The pub.dev 262144-byte changelog cap is
+  (the repo file is never mutated). Changelog curation is per-entry files
+  (gh-2463): PRs add `changelog/entries/<issue-or-pr>-<slug>.md` (YAML
+  frontmatter + 1–3 user-facing bullets) — never the shared/generated
+  CHANGELOG.md; `scripts/release_notes.sh` picks curated `## <version>`
+  section → `changelog/entries/` aggregate (`scripts/gen_changelog.dart`)
+  → legacy curated `## Unreleased` body → conventional commits since the
+  previous tag. The pub.dev 262144-byte changelog cap is
   enforced on the STAGED file (oldest staged sections trim), so it can
   never block a release again — the publish job's repo-file check is
   ADVISORY (`::warning::` pointing at `CHANGELOG_ARCHIVE.md`), never a
@@ -351,11 +354,14 @@ No orphan drafts, one naming scheme, a truthful `Latest`, useful notes:
   release another path created first). Guards and the sweeper only ever
   delete — a failed run can never capture the badge.
 - **Notes** — `scripts/release_notes.sh` renders the curated CHANGELOG.md
-  `## <version>` section when one exists, else the curated `## Unreleased`
-  body (gh-1522: the release folds Unreleased into the tag's section at
-  stage time, never in-repo), else conventional commits since the
-  previous tag grouped Features/Fixes/Maintenance (capped at 50 +
-  "…and N more"), with a clean "No changes" body for re-tags. The literal
+  `## <version>` section when one exists, else the `changelog/entries/`
+  aggregate (gh-2463: pending per-entry files via
+  `scripts/gen_changelog.dart`; a broken entry fails loud instead of
+  silently shipping notes missing that change), else the legacy curated
+  `## Unreleased` body (gh-1522: the release folds Unreleased into the
+  tag's section at stage time, never in-repo), else conventional commits
+  since the previous tag grouped Features/Fixes/Maintenance (capped at
+  50 + "…and N more"), with a clean "No changes" body for re-tags. The literal
   `Release vX.Y.Z` filler bodies are gone.
 
 One-time cleanup (this card): the 3-week-old draft `v0.1.190` that sat
