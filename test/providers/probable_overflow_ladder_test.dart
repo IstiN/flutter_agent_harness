@@ -292,8 +292,7 @@ void main() {
     });
 
     test('an identical transient transport wording re-dials too — the '
-        'stale keep-alive pool is the reported restart-cures shape',
-        () async {
+        'stale keep-alive pool is the reported restart-cures shape', () async {
       var recoveries = 0;
       transientConnectionRecovery = () => recoveries++;
       final wrapped = transientRetryStreamFunction((
@@ -336,15 +335,13 @@ void main() {
 
     test('the genuine large-request case keeps its verdict: the re-dial '
         'cannot cure a poisonous history — the probable-overflow terminal '
-        'still classifies it, with the recovery spent exactly once',
-        () async {
+        'still classifies it, with the recovery spent exactly once', () async {
       var recoveries = 0;
       transientConnectionRecovery = () => recoveries++;
-      final wrapped = transientRetryStreamFunction((
-        model,
-        context, {
-        cancelToken,
-      }) => finishReasonError(model, context, cancelToken: cancelToken));
+      final wrapped = transientRetryStreamFunction(
+        (model, context, {cancelToken}) =>
+            finishReasonError(model, context, cancelToken: cancelToken),
+      );
 
       final message = await wrapped(poisonedModel, largeContext()).result;
 
@@ -355,8 +352,7 @@ void main() {
     });
 
     test('the default recovery action drops the shared provider client '
-        'so the next dial builds a fresh pool (the production seam)',
-        () async {
+        'so the next dial builds a fresh pool (the production seam)', () async {
       // Run the DEFAULT action (the saved tear-off, restored over the
       // no-op test double): the cached generation is dropped and the
       // next sharedProviderHttpClient() rebuilds — the fresh dial.
