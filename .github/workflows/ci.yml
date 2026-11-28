@@ -643,6 +643,37 @@ jobs:
           python3 scripts/check_root_allowlist.py --self-test
           python3 scripts/check_root_allowlist.py
 
+      # gh-2463: the changelog is per-entry files now — a PR must ADD its
+      # changelog/entries/<issue-or-pr>-<slug>.md (or carry the
+      # `no-changelog` label); CHANGELOG.md edits must be byte-identical
+      # to the regenerated output, and archive history (CHANGELOG_ARCHIVE.md
+      # / changelog/archive/**) must never be rewritten (additions ok).
+      # `--validate` is the documented CI lint (review thread 2): a broken
+      # entry (unknown/missing type:, empty/bullet-less body, unterminated
+      # frontmatter) must red the PR, not the release train at cut time.
+      # Gated on the entries dir existing — the post-release housekeeping
+      # arm legitimately has none (git drops an emptied dir), same
+      # fail-safe direction as release_notes.sh preference 1b.
+      # BASE_REF/HEAD_REF + labels ride the pull_request event; other arms
+      # fall back to merge-base(origin/main, HEAD) inside the script (the
+      # checkout above is fetch-depth: 0). Fixture self-test pinned like
+      # the other static guards; dart-test wiring pin:
+      # test/ci_changelog_entry_guard_test.dart.
+      - name: Changelog entries guard (gh-2463)
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.sha }}
+          CHANGELOG_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          CHANGELOG_PR_CONTEXT: ${{ github.event_name == 'pull_request' }}
+        run: |
+          python3 scripts/check_changelog_entry.py --self-test
+          python3 scripts/check_changelog_entry.py
+          if [ -d changelog/entries ]; then
+            dart scripts/gen_changelog.dart --validate
+          else
+            echo "no changelog/entries/ dir (nothing pending) — entry validation skipped"
+          fi
+
       # Issue #1234: the ≤2800-line file guard MOVED into crap4dart's loc
       # gate (crap4dart.yaml, wc -l parity verified by the maintainer
       # recipe in the issue) — enforced whole-tree by the

@@ -276,10 +276,10 @@ void main() {
       'master-secret client enrolls; the issued secret reconnects',
       () async {
         final stateFile = File(
-          '\${Directory.systemTemp.path}/hub_e2e_state_\${DateTime.now().microsecondsSinceEpoch}.json',
+          '${Directory.systemTemp.path}/hub_e2e_state_${DateTime.now().microsecondsSinceEpoch}.json',
         );
         final clientConfigFile =
-            '\${Directory.systemTemp.path}/hub_e2e_client_\${DateTime.now().microsecondsSinceEpoch}.json';
+            '${Directory.systemTemp.path}/hub_e2e_client_${DateTime.now().microsecondsSinceEpoch}.json';
         addTearDown(() async {
           if (await stateFile.exists()) await stateFile.delete();
           final f = File(clientConfigFile);
