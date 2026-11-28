@@ -55,6 +55,7 @@ import 'key_event.dart';
 import 'key_status.dart';
 import 'model_presets.dart' show knownModelPresets;
 import 'provider_error_text.dart';
+import '../probable_overflow.dart' show isProbableOverflowError;
 import 'sigint_action.dart';
 import '../agent/agent_loop.dart';
 import '../agent/empty_completion.dart';
@@ -2623,6 +2624,13 @@ class AgentCli {
   /// for the current user prompt (reset at every non-auto-continue
   /// [_runPrompt] entry).
   bool _overWindowAutoResumed = false;
+
+  /// Whether the armed context-stop continuation follows a probable-
+  /// overflow refusal (gh-2470) rather than the guard's own stop: picks
+  /// the continuation notice class — the refusal story, not the
+  /// "request was NOT sent" story. Set by [_maybeOverWindowContinue],
+  /// consumed once by the notice builder.
+  bool _contextStopIsProbableOverflow = false;
 
   /// The context-stop turn end stashed by `_logEventForensics` — logged
   /// when the run settles, not when the turn ends (gh-241 #5e, E2).
