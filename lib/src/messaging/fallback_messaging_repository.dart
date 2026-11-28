@@ -36,6 +36,31 @@ abstract interface class RoutingMessagingRepository {
   Future<String?> resolveTarget(String toId);
 }
 
+/// Capability of a primary repository that knows when its routing roster
+/// is trustworthy. A hub primary's roster cannot answer ownership
+/// questions right after (re)connect: a hub restart empties the registry
+/// and peers re-hello on their own reconnect backoff, so an early snapshot
+/// legitimately lacks peers that are about to return. Implementations
+/// report `rosterSettled` false until the roster can confirm a miss
+/// (their own re-welcome plus a warm-up window is the restart witness).
+/// Primaries that do not advertise the capability are treated as settled.
+abstract interface class RosterSettleness {
+  /// Whether misses from [RoutingMessagingRepository.resolveTarget] are
+  /// conclusive ownership evidence right now. False while the roster is
+  /// still warming up after (re)connection.
+  bool get rosterSettled;
+}
+
+/// How long after a primary's own (re)welcome its hub roster cannot
+/// answer ownership questions. A hub restart empties the registry and
+/// every peer re-hellos on its own reconnect backoff (1s → 2s → 4s …),
+/// so a roster snapshot taken seconds after a restart legitimately lacks
+/// peers that are about to return (gh-2471: the fabric flushed queued
+/// mail off such a snapshot and stranded it in the file inbox). Five
+/// seconds rides out the first three backoff steps; misses after it are
+/// conclusive ownership evidence again (the collision guard).
+const Duration hubRosterWarmup = Duration(seconds: 5);
+
 /// A [MessagingRepository] composing a primary (hub) transport with a
 /// fallback (file) fabric. See the library docs for the routing rules.
 // ignore_for_file: prefer_initializing_formals
@@ -67,6 +92,16 @@ final class FallbackMessagingRepository
       _primary is RoutingMessagingRepository
       ? _primary as RoutingMessagingRepository
       : null;
+
+  /// Whether the router's roster can settle ownership right now. A
+  /// primary that does not advertise [RosterSettleness] is trusted
+  /// (today's behavior); a hub primary fresh off a (re)welcome reports
+  /// unsettled — a hub restart empties the registry and peers re-hello
+  /// on their own backoff, so an early "recipient absent" is not
+  /// evidence the file fabric owns the mail (gh-2471 strand).
+  bool get _rosterSettled =>
+      _router is! RosterSettleness ||
+      (_router as RosterSettleness).rosterSettled;
 
   /// The composite routes as its primary routes: connected only when the
   /// hub is, resolvable only for hub roster targets (or channels). This is
@@ -169,12 +204,18 @@ final class FallbackMessagingRepository
       final recipient = entry.key;
       final (target, queryFailed) = await _resolveOrQueryFailure(recipient);
       if (target == null) {
-        if (!queryFailed) {
-          // Connected, and the roster answered without this recipient: the
-          // file fabric owns this mail — stop tracking, never forward it.
+        if (!queryFailed && _rosterSettled) {
+          // Connected, the roster answered without this recipient, and
+          // the roster is in a state to know: the file fabric owns this
+          // mail — stop tracking, never forward it. An unsettled roster
+          // (fresh off a hub restart) cannot confirm a miss: peers are
+          // still re-helloing, so the queue survives for the next
+          // connected call (gh-2471: the mail used to be untracked here
+          // and stranded forever).
           _pendingForward.remove(recipient);
         }
         // A failed roster query is "unknown, retry later" — keep tracking.
+        // An unsettled miss is the same: unknown, retry later.
         continue;
       }
       final pending = await _safePeek(recipient);

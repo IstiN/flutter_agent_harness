@@ -89,13 +89,15 @@ final class HubMessagingRepository
     implements
         MessagingRepository,
         RoutingMessagingRepository,
+        RosterSettleness,
         SelectiveMessagingRepository {
   /// Builds a repository for the hub at [url]. [identity] defaults to a
   /// fresh one — hosts that need a stable address persist the seeds and
   /// pass them back (see `lib/io.dart`). [token] is the pairing token for
   /// a protected hub (rides the upgrade as `?dap_token=`, the browser-safe
   /// form). [onLog] receives soft diagnostics (decrypt failures, protocol
-  /// errors) — never required.
+  /// errors) — never required. [rosterWarmup] overrides how long after a
+  /// (re)welcome the roster cannot confirm a recipient miss.
   HubMessagingRepository({
     required Uri url,
     // ignore: prefer_initializing_formals
@@ -106,6 +108,7 @@ final class HubMessagingRepository
     this.clientSecret,
     this.backoff = defaultHubBackoff,
     this.onLog,
+    this.rosterWarmup = hubRosterWarmup,
   }) : _dialUrl = url,
        // ignore: prefer_initializing_formals
        _transport = transport,
@@ -132,6 +135,14 @@ final class HubMessagingRepository
   /// Reconnect backoff schedule (injectable: tests shrink it).
   final Duration Function(int attempt) backoff;
 
+  /// How long after our own (re)welcome the roster cannot confirm a miss
+  /// (a hub restart empties the registry; peers re-hello on their own
+  /// backoff — gh-2471).
+  final Duration rosterWarmup;
+
+  /// Our last accepted welcome, or null before the first one.
+  DateTime? _lastWelcomeAt;
+
   /// Soft diagnostics sink (null = drop).
   void Function(String message)? onLog;
 
@@ -152,6 +163,13 @@ final class HubMessagingRepository
 
   @override
   bool get isConnected => _state == HubLinkState.connected;
+
+  @override
+  bool get rosterSettled {
+    final last = _lastWelcomeAt;
+    if (last == null) return false; // never welcomed — untrust
+    return DateTime.now().difference(last) >= rosterWarmup;
+  }
 
   /// The current link state (UI surface).
   HubLinkState get state => _state;
@@ -327,6 +345,7 @@ final class HubMessagingRepository
     // Welcomed: live. Restore channel memberships, reset the backoff and
     // drain the offline mailbox plus everything queued while disconnected.
     _attempt = 0;
+    _lastWelcomeAt = DateTime.now();
     _setState(HubLinkState.connected);
     // Rejoin BEFORE draining queued channel sends; otherwise a reconnect
     // could race send(not_joined) ahead of its membership restoration.
