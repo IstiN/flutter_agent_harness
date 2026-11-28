@@ -77,6 +77,9 @@ void main() {
       final cli = AgentCli(
         config: AgentCliConfig(
           systemPrompt: tinyPrompt,
+          // The forensics fa.log rides the home dir — the guard-class
+          // funnel tests pin the gh-241 #5e contract against it.
+          homeDir: '/home',
           runtimeTools: tinyTools(const ['read', 'bash']),
           // The overstating catalog: 20k advertised, the fake endpoint
           // refuses at ~800 tokens — the loop's own over-window guard
