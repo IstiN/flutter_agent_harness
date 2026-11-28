@@ -316,7 +316,8 @@ Future<void> _probeUntilForwarded(
 /// re-wrapped copy (fresh id, same sender+ts+body) — the duplicated-
 /// delivery fake for the at-least-once dedup proof.
 final class _DuplicatingPrimary
-    implements MessagingRepository, RoutingMessagingRepository {
+    implements
+        MessagingRepository, RoutingMessagingRepository, RosterSettleness {
   _DuplicatingPrimary(this._inner);
 
   final HubFabricRepository _inner;
@@ -324,6 +325,9 @@ final class _DuplicatingPrimary
 
   @override
   bool get isConnected => _inner.isConnected;
+
+  @override
+  bool get rosterSettled => _inner.rosterSettled;
 
   @override
   Future<String?> resolveTarget(String toId) => _inner.resolveTarget(toId);

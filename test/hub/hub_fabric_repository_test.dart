@@ -7,6 +7,7 @@ import 'package:fa_hub_client/fa_hub_client.dart'
     hide AgentMessage, MailboxEntry;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     hide HubIdentity, PluginContext;
+import 'package:flutter_agent_harness/io.dart' show LocalHub;
 import 'package:test/test.dart';
 
 import '../../bin/hub_fabric_repository.dart';
@@ -33,8 +34,12 @@ void main() {
     await hub.stop();
   });
 
-  /// A plugin started against [hub], the adapter over it.
-  Future<(HubFabricRepository, HubPlugin)> newFabric() async {
+  /// A plugin started against [hub], the adapter over it. [rosterWarmup]
+  /// overrides the adapter's warm-up window (default: the production 5s)
+  /// so tests can settle the roster without waiting it out in real time.
+  Future<(HubFabricRepository, HubPlugin)> newFabric({
+    Duration? rosterWarmup,
+  }) async {
     final tmp = await Directory.systemTemp.createTemp('fah-hub-fabric');
     addTearDown(() => tmp.delete(recursive: true));
     final plugin = HubPlugin(
@@ -53,7 +58,13 @@ void main() {
     );
     await plugin.start();
     addTearDown(plugin.dispose);
-    return (HubFabricRepository(plugin), plugin);
+    return (
+      HubFabricRepository(
+        plugin,
+        rosterWarmup: rosterWarmup ?? hubRosterWarmup,
+      ),
+      plugin,
+    );
   }
 
   test('outbound fabric mail rides the hub as the sender identity', () async {
@@ -299,4 +310,86 @@ void main() {
     expect(adapter.isConnected, anyOf(isTrue, isFalse)); // never throws
     expect(plugin.agentId, isNotNull);
   }, timeout: timeout);
+
+  test('rosterSettled: our re-welcome after a hub restart gates the warm-up '
+      'window (gh-2471)', () async {
+    final (adapter, plugin) = await newFabric(
+      rosterWarmup: const Duration(milliseconds: 300),
+    );
+    // Pre-restart: the peer is registered, our client is welcomed.
+    expect(await adapter.resolveTarget(sender.agentId!), sender.agentId);
+
+    // The hub dies (kill -9 shape: no graceful stop) and revives on the
+    // same port. Both clients auto-reconnect on their own backoff.
+    final port = hub.url.port;
+    await hub.stop();
+    final revived = LocalHub(port: port);
+    await _startHubWithRetry(revived);
+    addTearDown(revived.stop);
+
+    // OUR client re-welcomes first — the restart witness.
+    await _waitFor(() => adapter.isConnected);
+    // The roster was just reset: misses are not ownership evidence yet.
+    expect(
+      adapter.rosterSettled,
+      isFalse,
+      reason: 'freshly re-welcomed — the roster cannot confirm a miss',
+    );
+    // A genuinely absent peer still resolves null (the query contract is
+    // unchanged); only the COMPOSITION'S untrack is gated on settledness.
+    expect(await adapter.resolveTarget('ghost-peer'), isNull);
+
+    // A HIT answers fine even while unsettled: the sender re-hellos and
+    // resolves immediately — forwarding must never wait out the warm-up.
+    await _waitFor(() => sender.connected);
+    await revived.waitForHellos(2);
+    expect(await adapter.resolveTarget(sender.agentId!), sender.agentId);
+
+    // After the warm-up window the roster is settled: misses become
+    // conclusive ownership evidence again (the collision guard).
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    expect(adapter.rosterSettled, isTrue);
+    expect(await adapter.resolveTarget('ghost-peer'), isNull);
+  }, timeout: timeout);
+}
+
+/// Bounded bind-retry for a hub reviving its old port (#948 shape: the
+/// freed ephemeral port can be re-grabbed for a few ms by a concurrent
+/// bind(0); LocalHub.start is a deliberately loud plain bind). Only rides
+/// out "address already in use".
+Future<void> _startHubWithRetry(LocalHub hub) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 6));
+  var attempt = 0;
+  while (true) {
+    try {
+      await hub.start();
+      return;
+    } on SocketException catch (e) {
+      final inUse =
+          e.osError?.errorCode == 98 ||
+          e.osError?.errorCode == 48 /* macOS EADDRINUSE */ ||
+          e.osError?.errorCode == 10048 /* Windows */;
+      if (!inUse || attempt >= 8 || DateTime.now().isAfter(deadline)) {
+        rethrow;
+      }
+      await Future<void>.delayed(
+        Duration(
+          milliseconds: 150 * (1 << attempt) > 1200
+              ? 1200
+              : 150 * (1 << attempt),
+        ),
+      );
+      attempt++;
+    }
+  }
+}
+
+/// Short poll loop (bounded at ~5s) for cross-socket readiness.
+Future<void> _waitFor(bool Function() probe) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (DateTime.now().isBefore(deadline)) {
+    if (probe()) return;
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+  }
+  fail('condition not reached within 5s');
 }
