@@ -85,6 +85,7 @@ import 'image_registry.dart';
 import 'message_cap.dart'
     show MessageCapPolicy, coalesceMessagesForCap, kMessageCapDefaultMargin;
 import 'misuse_breaker.dart';
+import 'loop_guard.dart';
 import 'stuck_tool.dart';
 import 'foreground_call_budget.dart';
 import 'tool_pairing.dart';
@@ -431,6 +432,9 @@ final class AgentLoopConfig {
     this.steeringInterruptNotice,
     this.recordSeqs,
     this.requestSnapshots,
+    this.identicalCallNoticeThreshold = defaultIdenticalCallNoticeThreshold,
+    this.identicalCallAbortThreshold = defaultIdenticalCallAbortThreshold,
+    this.identicalCallExemptTools = const <String>{},
   });
 
   /// The model to call each turn.
@@ -604,6 +608,31 @@ final class AgentLoopConfig {
   /// the pre-breaker loop (E5).
   final ToolMisuseBreaker? toolMisuseBreaker;
 
+  /// The identical-call loop guard (gh-2461): after
+  /// [identicalCallNoticeThreshold] consecutive assistant turns issuing the
+  /// byte-identical tool call (same name + recursively normalized
+  /// arguments), ONE enveloped `<system-notice>` ("stop and re-plan")
+  /// rides the next request as a synthetic user message; at
+  /// [identicalCallAbortThreshold] (0 disables) the run ends with an
+  /// honest `StopReason.error` BEFORE the duplicated tool batch executes —
+  /// a model degeneration must never burn unbounded provider calls
+  /// unattended. Tools named in [identicalCallExemptTools] are opted out
+  /// per call site (watch/polling commands whose contract is repetition);
+  /// exempt turns neither advance nor reset the streak. A user/steering
+  /// message between turns resets the streak. [identicalCallNoticeThreshold]
+  /// ≤ 0 disables the guard entirely — behavior byte-identical to the
+  /// pre-gh-2461 loop.
+  final int identicalCallNoticeThreshold;
+
+  /// See [identicalCallNoticeThreshold]. Defaults to 8 (three more
+  /// identical calls after the notice were ignored); 0 or negative
+  /// disables the abort (the notice still fires).
+  final int identicalCallAbortThreshold;
+
+  /// See [identicalCallNoticeThreshold]: tool names whose repetition is
+  /// the tool's contract (watch commands, polling probes).
+  final Set<String> identicalCallExemptTools;
+
   /// Stuck-call supervision (gh-1054): liveness heartbeats for long-running
   /// tool calls plus the autonomous cancel/retry/convert follow-up.
   /// `null` = unsupervised (byte-identical legacy behavior).
@@ -746,6 +775,9 @@ final class AgentLoopConfig {
       steeringInterruptNotice: steeringInterruptNotice,
       recordSeqs: recordSeqs,
       requestSnapshots: requestSnapshots,
+      identicalCallNoticeThreshold: identicalCallNoticeThreshold,
+      identicalCallAbortThreshold: identicalCallAbortThreshold,
+      identicalCallExemptTools: identicalCallExemptTools,
     );
   }
 }
@@ -1179,6 +1211,17 @@ Future<List<Message>> _runAgentLoop({
   // prompt starts from zero consecutive failures.
   config.toolMisuseBreaker?.beginRun();
 
+  // gh-2461: the identical-call loop guard — one streak state per run.
+  // `identicalCallNoticeThreshold <= 0` keeps a null guard: the loop body
+  // then runs byte-identical to the pre-gh-2461 shape.
+  final loopGuard = config.identicalCallNoticeThreshold > 0
+      ? IdenticalCallLoopGuard(
+          noticeThreshold: config.identicalCallNoticeThreshold,
+          abortThreshold: config.identicalCallAbortThreshold,
+          exemptTools: config.identicalCallExemptTools,
+        )
+      : null;
+
   await _emitRunStart(prompts, emit);
 
   var firstTurn = true;
@@ -1215,6 +1258,11 @@ Future<List<Message>> _runAgentLoop({
           currentConfig.takePendingNotices?.call() ?? const <Message>[];
       if (pendingNotices.isNotEmpty) {
         pendingMessages = [...pendingMessages, ...pendingNotices];
+      }
+      if (pendingMessages.isNotEmpty) {
+        // gh-2461: a user/steering message joined between turns ends the
+        // unattended stretch — the identical-call streak evidence resets.
+        loopGuard?.resetStreak();
       }
       await _injectPendingMessages(
         pendingMessages,
@@ -1268,6 +1316,51 @@ Future<List<Message>> _runAgentLoop({
       );
       final toolResults = toolPhase.results;
       hasMoreToolCalls = toolPhase.hasMore;
+
+      // gh-2461: the identical-call loop guard verdict — after the tool
+      // phase so the verdict is OUTCOME-aware (turns whose every call
+      // failed are the tool-misuse breaker's domain, issue #862, and never
+      // advance the streak). The abort ends the run BEFORE TurnEnd and
+      // before the next provider call — the 8th identical call executed
+      // once, the 9th never happens.
+      IdenticalCallVerdict guardVerdict = const IdenticalCallVerdict.none();
+      if (loopGuard != null) {
+        guardVerdict = loopGuard.acceptTurn(
+          message,
+          turnSucceeded: toolResults.any((result) => !result.isError),
+        );
+      }
+      if (guardVerdict.action == IdenticalCallAction.abortRun) {
+        final stop = await _finishWithoutStream(
+          currentContext,
+          emit,
+          _terminalMessage(config.model, StopReason.error, guardVerdict.text),
+        );
+        newMessages.add(stop);
+        return await _terminalRunMessages(
+              stop,
+              newMessages,
+              currentContext.messages,
+              strippedLedgers,
+              currentConfig.finalizeGate,
+              emit,
+            ) ??
+            newMessages;
+      }
+
+      // gh-2461: the armed notice rides AFTER this turn's tool results —
+      // as a synthetic user message at the context tail it is the
+      // model-visible LAST line on the next request (the gh-1603
+      // continuation-nudge emission shape: MessageStart/End lands it in
+      // the transcript and session record, a truthful record of what the
+      // model was told).
+      if (guardVerdict.action == IdenticalCallAction.injectNotice) {
+        final notice = UserMessage.text(guardVerdict.text);
+        await emit(MessageStartEvent(notice));
+        await emit(MessageEndEvent(notice));
+        currentContext.messages.add(notice);
+        newMessages.add(notice);
+      }
 
       final turnResults = List<ToolResultMessage>.unmodifiable(toolResults);
       await emit(TurnEndEvent(message: message, toolResults: turnResults));
