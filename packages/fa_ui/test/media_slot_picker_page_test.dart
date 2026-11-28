@@ -11,6 +11,7 @@ Future<ModelsEndpointInfo> _someModels(
   const ['gpt-image-1', 'dall-e-3', 'gpt-4o'],
   const <String, int>{},
   const <String, int>{},
+  const <String, List<String>>{},
 );
 
 /// Pumps a home button that pushes [page] and captures its pop result.
@@ -435,7 +436,7 @@ void main() {
           slot: MediaSlot.imageGeneration,
           provider: ProviderPreset.openrouter,
           modelsFetcher: (baseUrl, {required apiKey}) async =>
-              (const <String>[], const <String, int>{}, const <String, int>{}),
+              (const <String>[], const <String, int>{}, const <String, int>{}, const <String, List<String>>{}),
         ),
         (_) {},
       );
@@ -792,6 +793,7 @@ void main() {
               const ['gpt-4o', 'claude-sonnet'],
               const <String, int>{},
               const <String, int>{},
+              const <String, List<String>>{},
             );
           },
         ),

@@ -44,7 +44,12 @@ Future<ModelsEndpointInfo> _someModels(
   String baseUrl, {
   required String apiKey,
 }) async =>
-    (const ['acme-1', 'acme-2'], const <String, int>{}, const <String, int>{});
+    (
+      const ['acme-1', 'acme-2'],
+      const <String, int>{},
+      const <String, int>{},
+      const <String, List<String>>{},
+    );
 
 Future<void> _pump(WidgetTester tester, Widget child) {
   return tester.pumpWidget(

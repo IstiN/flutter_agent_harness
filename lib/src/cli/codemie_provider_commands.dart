@@ -361,6 +361,16 @@ extension on AgentCli {
       providerName: providerName,
     );
     _agent.streamFunction = _streamFunction;
+    // The cached model list belongs to the previous provider/endpoint —
+    // clear BEFORE the build so the rebuilt model's input modalities are
+    // derived from THIS endpoint, never the previous provider's verdict
+    // (gh-2466 review: the modalities cache is cleared alongside its
+    // siblings).
+    _modelCache = const [];
+    _modelContextWindows = const {};
+    _modelMaxTokens = const {};
+    _modelInputModalities = const {};
+    _lastModelList = null;
     final builtModel = buildCatalogModel(spec.name, modelId, baseUrl: baseUrl);
     _agent.state.model = Model(
       id: builtModel.id,
@@ -369,7 +379,7 @@ extension on AgentCli {
       provider: builtModel.provider,
       baseUrl: builtModel.baseUrl,
       reasoning: builtModel.reasoning,
-      input: inputModalitiesFor(modelId),
+      input: _switchInputModalities(modelId),
       cost: builtModel.cost,
       contextWindow: builtModel.contextWindow,
       maxTokens: builtModel.maxTokens,
@@ -377,10 +387,6 @@ extension on AgentCli {
       compat: builtModel.compat,
       maxImages: builtModel.maxImages,
     );
-    _modelCache = const [];
-    _modelContextWindows = const {};
-    _modelMaxTokens = const {};
-    _lastModelList = null;
     unawaited(_refreshModelCache());
     await _session?.appendModelChange(
       provider: spec.name,

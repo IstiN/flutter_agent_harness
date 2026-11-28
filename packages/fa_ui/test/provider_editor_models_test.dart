@@ -20,6 +20,7 @@ final class _RecordingFetcher {
       const ['acme-1', 'acme-9'],
       const <String, int>{},
       const <String, int>{},
+      const <String, List<String>>{},
     );
   }
 }

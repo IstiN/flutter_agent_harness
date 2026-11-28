@@ -18,6 +18,7 @@ Future<ModelsEndpointInfo> _fetch(
     const ['acme-1', 'acme-9'],
     const <String, int>{},
     const <String, int>{},
+    const <String, List<String>>{},
   );
 }
 

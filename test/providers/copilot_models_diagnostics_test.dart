@@ -733,7 +733,7 @@ void main() {
       'fetchModelsForEndpoint answers the same ids on healthy tiers',
       () async {
         final (client, _) = fakeCopilot(modelsBody: healthyModelsBody);
-        final (ids, windows, _) = await fetchModelsForEndpoint(
+        final (ids, windows, _, _) = await fetchModelsForEndpoint(
           'https://api.githubcopilot.com',
           apiKey: 'gho_individual',
           provider: 'copilot',
@@ -746,7 +746,7 @@ void main() {
 
     test('fetchModelsForEndpoint stays empty on failures — no throw', () async {
       final (client, _) = fakeCopilot(exchangeStatus: 401);
-      final (ids, windows, caps) = await fetchModelsForEndpoint(
+      final (ids, windows, caps, _) = await fetchModelsForEndpoint(
         'https://api.githubcopilot.com',
         apiKey: 'gho_dead',
         provider: 'copilot',
@@ -826,7 +826,7 @@ void main() {
       final (client, _) = fakeCopilot(
         modelsBody: '<html>captive portal</html>',
       );
-      final (ids, windows, caps) = await fetchModelsForEndpoint(
+      final (ids, windows, caps, _) = await fetchModelsForEndpoint(
         'https://api.githubcopilot.com',
         apiKey: '[REDACTED:Sensitive-Value]',
         provider: 'copilot',
@@ -851,7 +851,12 @@ void main() {
     });
   });
 
-  const testEmptyInfo = (<String>[], <String, int>{}, <String, int>{});
+  const testEmptyInfo = (
+    <String>[],
+    <String, int>{},
+    <String, int>{},
+    <String, List<String>>{},
+  );
 
   group('userFacingReason — the one formatting rule (review DRY)', () {
     test('diagnostic joins its hint; diagnostic-only answers bare', () {

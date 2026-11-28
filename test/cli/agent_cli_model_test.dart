@@ -155,7 +155,7 @@ void main() {
 
   group('parseModelsResponse', () {
     test('reads ids sorted and context windows from all known fields', () {
-      final (ids, windows, _) = parseModelsResponse(
+      final (ids, windows, _, _) = parseModelsResponse(
         '{"data": ['
         '{"id": "z-model", "context_length": 262144},'
         '{"id": "a-model", "context_window": 131072},'
@@ -170,7 +170,7 @@ void main() {
     });
 
     test('reads max completion caps (flat and top_provider nested)', () {
-      final (_, _, caps) = parseModelsResponse(
+      final (_, _, caps, _) = parseModelsResponse(
         '{"data": ['
         '{"id": "flat", "max_completion_tokens": 65536},'
         '{"id": "nested", "top_provider": {"max_completion_tokens": 32768}},'
@@ -183,7 +183,7 @@ void main() {
     });
 
     test('tolerates an empty payload', () {
-      final (ids, windows, caps) = parseModelsResponse('{"data": []}');
+      final (ids, windows, caps, _) = parseModelsResponse('{"data": []}');
       expect(ids, isEmpty);
       expect(windows, isEmpty);
       expect(caps, isEmpty);
