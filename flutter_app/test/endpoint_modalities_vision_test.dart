@@ -2,10 +2,12 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'package:fa/boot/boot_config_codec.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/aiin_connect_flow.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/screens/settings_tiles.dart';
 import 'package:flutter/foundation.dart';
@@ -307,6 +309,127 @@ void main() {
       reason:
           'the endpoint reported text-only — a heuristic true must not '
           'override it',
+    );
+  });
+
+  group('boot restore keeps the persisted vision verdict (gh-2466 review)', () {
+    const ainUrl = 'https://ain.example.com/v1';
+
+    test('fromConfig persists supportsImages; toJson/fromJson round-trip', () {
+      final record = LastConnection.fromConfig(
+        AgentConfig(
+          providerKind: 'openai-completions',
+          modelId: 'mistralai/mistral-large-4-0',
+          baseUrl: ainUrl,
+          apiKey: 'sk-ain-test',
+          supportsImages: true,
+        ),
+      );
+      // The verdict must survive the persistence boundary — the heuristic
+      // cannot re-derive this id (it is heuristic-invisible), so a dropped
+      // field means the image-attachment lock re-locks at the next boot.
+      expect(record.supportsImages, isTrue);
+      expect(record.toJson()['supportsImages'], isTrue);
+      expect(LastConnection.fromJson(record.toJson()).supportsImages, isTrue);
+      final textOnly = LastConnection.fromConfig(
+        AgentConfig(
+          providerKind: 'openai-completions',
+          modelId: 'gpt-4o-2024-11-20',
+          baseUrl: ainUrl,
+          apiKey: 'sk-ain-test',
+          supportsImages: false,
+        ),
+      );
+      expect(textOnly.supportsImages, isFalse);
+      expect(
+        LastConnection.fromJson(textOnly.toJson()).supportsImages,
+        isFalse,
+      );
+    });
+
+    test('a legacy record without the field restores as null', () {
+      final record = LastConnection.fromJson({
+        'providerKind': 'openai-completions',
+        'modelId': 'mistralai/mistral-large-4-0',
+        'baseUrl': ainUrl,
+      });
+      // No persisted verdict → null → the boot heuristic keeps owning the
+      // verdict (the gh-2466 pre-persistence behavior for old records).
+      expect(record.supportsImages, isNull);
+    });
+
+    test(
+      'restore prefers the persisted verdict over the id heuristic',
+      () async {
+        final registry = ProviderRegistry.inMemory();
+        final entry = await registry.add(
+          name: 'AIN',
+          baseUrl: ainUrl,
+          modelId: 'mistralai/mistral-large-4-0',
+        );
+        registry.rememberKey(entry.id, 'sk-ain-test');
+        final config = restorableBootConfig(
+          connection: const LastConnection(
+            providerKind: 'openai-completions',
+            modelId: 'mistralai/mistral-large-4-0',
+            baseUrl: ainUrl,
+            supportsImages: true,
+          ),
+          registry: registry,
+          sessionKeysStore: SessionKeysStore.inMemory(),
+        );
+        expect(config, isNotNull);
+        expect(config!.supportsImages, isTrue);
+      },
+    );
+
+    test(
+      'a persisted text-only verdict wins over a heuristic-matching id',
+      () async {
+        final registry = ProviderRegistry.inMemory();
+        final entry = await registry.add(
+          name: 'AIN',
+          baseUrl: ainUrl,
+          modelId: 'gpt-4o-2024-11-20',
+        );
+        registry.rememberKey(entry.id, 'sk-ain-test');
+        final config = restorableBootConfig(
+          connection: const LastConnection(
+            providerKind: 'openai-completions',
+            modelId: 'gpt-4o-2024-11-20',
+            baseUrl: ainUrl,
+            supportsImages: false,
+          ),
+          registry: registry,
+          sessionKeysStore: SessionKeysStore.inMemory(),
+        );
+        expect(config, isNotNull);
+        expect(config!.supportsImages, isFalse);
+      },
+    );
+
+    test(
+      'a legacy record (no verdict) falls back to the id heuristic',
+      () async {
+        final registry = ProviderRegistry.inMemory();
+        final entry = await registry.add(
+          name: 'AIN',
+          baseUrl: ainUrl,
+          modelId: 'gpt-4o-2024-11-20',
+        );
+        registry.rememberKey(entry.id, 'sk-ain-test');
+        final config = restorableBootConfig(
+          connection: const LastConnection(
+            providerKind: 'openai-completions',
+            modelId: 'gpt-4o-2024-11-20',
+            baseUrl: ainUrl,
+          ),
+          registry: registry,
+          sessionKeysStore: SessionKeysStore.inMemory(),
+        );
+        expect(config, isNotNull);
+        expect(config!.supportsImages, isTrue);
+      },
     );
   });
 }
