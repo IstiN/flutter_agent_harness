@@ -51,6 +51,13 @@ final class EndpointModelsController {
   /// CLI's auto-correction instead of the hardcoded defaults.
   Map<String, int> contextWindows = const {};
   Map<String, int> maxTokens = const {};
+
+  /// Endpoint-reported per-model input modalities (gh-2466): the endpoint's
+  /// word about image input, consulted before the id heuristic — the AIN
+  /// gateway lists ids the heuristic cannot see (`mistralai/mistral-large-4-0`
+  /// is text+image). Empty when the fetcher is overridden (tests) or the
+  /// endpoint reports none.
+  Map<String, List<String>> inputModalities = const {};
   bool loading = false;
 
   /// Whether the model list answered from the bundled offline catalog (the
@@ -99,7 +106,7 @@ final class EndpointModelsController {
               onBundledFallback: () => bundled = true,
             );
       if (generation != _generation) return;
-      final (ids, windows, caps) = report.info;
+      final (ids, windows, caps, modalities) = report.info;
       // reasonText joins the remediation hint (gh-1990) — the one-line
       // user-facing form; null exactly when the dialect named nothing.
       reason = report.diagnostic == null ? null : report.reasonText;
@@ -107,6 +114,7 @@ final class EndpointModelsController {
         models = ids;
         contextWindows = windows;
         maxTokens = caps;
+        inputModalities = modalities;
         fromBundledCatalog = bundled;
         emptyReason = ids.isEmpty ? reason : null;
       });
@@ -117,6 +125,7 @@ final class EndpointModelsController {
         models = const [];
         contextWindows = const {};
         maxTokens = const {};
+        inputModalities = const {};
         fromBundledCatalog = false;
         emptyReason = null;
       });

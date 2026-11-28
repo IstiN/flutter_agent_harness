@@ -595,7 +595,7 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
               provider: modelsDispatchHintForEntry(_entryKind, baseUrl),
               onBundledFallback: () => fromBundledCatalog = true,
             );
-      final (ids, _, _) = report.info;
+      final (ids, _, _, _) = report.info;
       // gh-1990 review (DRY): the canonical formatting rule — no
       // hand-rolled `message — hint` join.
       emptyReason = report.userFacingReason;

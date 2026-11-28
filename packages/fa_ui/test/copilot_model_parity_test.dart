@@ -106,6 +106,7 @@ void main() {
             const ['gpt-4.1'],
             const {'gpt-4.1': 128000},
             const <String, int>{},
+            const <String, List<String>>{},
           ),
         ),
         (_) {},
@@ -182,6 +183,7 @@ void main() {
               const ['gpt-4.1', 'claude-sonnet-4'],
               const <String, int>{},
               const <String, int>{},
+              const <String, List<String>>{},
             );
           },
         ),
@@ -245,7 +247,7 @@ void main() {
 
       // No provider hint — exactly how the pickers call the dispatch for a
       // custom-provider Copilot entry.
-      final (ids, windows, caps) = await fetchModelsForEndpoint(
+      final (ids, windows, caps, _) = await fetchModelsForEndpoint(
         _copilotBaseUrl,
         apiKey: 'gho_github',
         client: client,

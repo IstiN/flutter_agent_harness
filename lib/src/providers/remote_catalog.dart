@@ -272,7 +272,7 @@ ModelsEndpointInfo mergeWithRemoteCatalog({
   List<String> mediaSlot = const [],
 }) {
   final entry = catalog?.providers[providerKind ?? ''];
-  final (_, windows, maxTokens) = endpointInfo;
+  final (_, windows, maxTokens, inputModalities) = endpointInfo;
   if (mediaSlot.isEmpty) {
     // Chat path: the endpoint's id list stays verbatim — the catalog
     // never augments chat ids. No catalog entry = nothing to enrich.
@@ -282,7 +282,9 @@ ModelsEndpointInfo mergeWithRemoteCatalog({
       ...entry.contextWindows,
       ...windows, // endpoint reported limits override catalog defaults
     };
-    return (mergedIds, mergedWindows, {...maxTokens});
+    return (mergedIds, mergedWindows, {...maxTokens}, {
+      ...inputModalities,
+    });
   }
   // Media path: the endpoint's /v1/models answer is DISCARDED — chat ids
   // (MiniMax-M3, glm-5.3-flash) are useless in a media picker. An
@@ -303,7 +305,12 @@ ModelsEndpointInfo mergeWithRemoteCatalog({
           ...entry.contextWindows,
           ...windows, // endpoint reported limits override catalog defaults
         };
-  return (mergedIds, mergedWindows, {...maxTokens});
+  return (
+    mergedIds,
+    mergedWindows,
+    {...maxTokens},
+    {...inputModalities},
+  );
 }
 
 /// The media-model list the picker shows for the slot when no override

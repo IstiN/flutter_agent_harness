@@ -179,8 +179,12 @@ void main() {
     await pumpPicker(
       tester,
       registry: registry,
-      fetcher: (_, {required apiKey}) async =>
-          (const <String>[], const <String, int>{}, const <String, int>{}),
+      fetcher: (_, {required apiKey}) async => (
+        const <String>[],
+        const <String, int>{},
+        const <String, int>{},
+        const <String, List<String>>{},
+      ),
     );
     // The active model is prepended; the provider's own saved-model row
     // is the tile carrying its id.
@@ -235,8 +239,12 @@ void main() {
     await pumpPicker(
       tester,
       registry: registry,
-      fetcher: (_, {required apiKey}) async =>
-          (const <String>[], const <String, int>{}, const <String, int>{}),
+      fetcher: (_, {required apiKey}) async => (
+        const <String>[],
+        const <String, int>{},
+        const <String, int>{},
+        const <String, List<String>>{},
+      ),
     );
     // The provider contributed nothing; the active model row (its label
     // resolves through the same registry) is the only model tile.
@@ -273,16 +281,83 @@ void main() {
     expect(applied.single.contextWindow, fallbackContextWindow);
     expect(applied.single.maxTokens, 4096);
   });
+
+  testWidgets('endpoint modalities drive the entry image verdict (gh-2466)', (
+    tester,
+  ) async {
+    final registry = await registryWithAcme();
+    registry.rememberKey(registry.providers.single.id, 'k-1');
+    await pumpPicker(
+      tester,
+      registry: registry,
+      fetcher: (baseUrl, {required apiKey}) async => (
+        const ['mistralai/mistral-large-4-0', 'sao10k/l3-lunaris-8b'],
+        const <String, int>{},
+        const <String, int>{},
+        const {
+          'mistralai/mistral-large-4-0': ['text', 'image'],
+          'sao10k/l3-lunaris-8b': ['text'],
+        },
+      ),
+    );
+
+    // The heuristic-blind id carries the vision marker (the endpoint
+    // reported image input) and applies with supportsImages: true.
+    expect(find.text('vision ✓'), findsOneWidget);
+    await tester.tap(
+      find.textContaining('mistralai/mistral-large-4-0', findRichText: true),
+    );
+    await tester.pumpAndSettle();
+    expect(applied.single.supportsImages, isTrue);
+  });
+
+  testWidgets('a reported text-only verdict overrides a heuristic match '
+      '(gh-2466 review: endpoint-wins-including-false)', (tester) async {
+    final registry = await registryWithAcme();
+    registry.rememberKey(registry.providers.single.id, 'k-1');
+    await pumpPicker(
+      tester,
+      registry: registry,
+      // The id matches the vision NAME heuristic (gpt-4o), the endpoint
+      // reports text-only: the reported verdict must win — the picker
+      // shows no vision marker and applies supportsImages: false.
+      fetcher: (baseUrl, {required apiKey}) async => (
+        const ['gpt-4o-2024-11-20'],
+        const <String, int>{},
+        const <String, int>{},
+        const {
+          'gpt-4o-2024-11-20': ['text'],
+        },
+      ),
+    );
+
+    expect(find.text('vision ✓'), findsNothing);
+    await tester.tap(
+      find.textContaining('gpt-4o-2024-11-20', findRichText: true),
+    );
+    await tester.pumpAndSettle();
+    expect(applied.single.supportsImages, isFalse);
+  });
 }
 
 /// A two-model listing where m1 reports a window and m2 a cap.
 Future<ModelsEndpointInfo> _windowsCaps(
   String baseUrl, {
   required String apiKey,
-}) async => (const ['m1', 'm2'], const {'m1': 8000}, const {'m2': 4096});
+}) async => (
+  const ['m1', 'm2'],
+  const {'m1': 8000},
+  const {'m2': 4096},
+  const <String, List<String>>{},
+);
 
 /// A two-model listing (no windows, no caps).
 Future<ModelsEndpointInfo> _listing(
   String baseUrl, {
   required String apiKey,
-}) async => (const ['m1', 'm2'], const <String, int>{}, const <String, int>{});
+}) async => (
+  const ['m1', 'm2'],
+  const <String, int>{},
+  const <String, int>{},
+  const <String, List<String>>{},
+);

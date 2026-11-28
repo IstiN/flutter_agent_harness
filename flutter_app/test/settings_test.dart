@@ -94,7 +94,12 @@ Future<ModelsEndpointInfo> _someModels(
   String baseUrl, {
   required String apiKey,
 }) async =>
-    (const ['acme-1', 'acme-2'], const <String, int>{}, const <String, int>{});
+    (
+      const ['acme-1', 'acme-2'],
+      const <String, int>{},
+      const <String, int>{},
+      const <String, List<String>>{},
+    );
 
 /// Sets the provider editor's model through the model selector its model
 /// row opens (the editor itself has no model text field anymore).

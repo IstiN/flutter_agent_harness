@@ -270,7 +270,12 @@ void main() {
       modelsFetcher: (baseUrl, {required apiKey}) async {
         expect(baseUrl, '$aiinApiBaseUrl/v1');
         expect(apiKey, 'sk-aiin-xyz');
-        return (['glm-4'], <String, int>{}, <String, int>{});
+        return (
+          ['glm-4'],
+          <String, int>{},
+          <String, int>{},
+          <String, List<String>>{},
+        );
       },
     );
     final connected = await _run(
@@ -312,6 +317,7 @@ void main() {
         ['gpt-4o', 'GLM-4.6', 'claude-sonnet'],
         <String, int>{},
         <String, int>{},
+        <String, List<String>>{},
       ),
     );
     final connected = await _run(

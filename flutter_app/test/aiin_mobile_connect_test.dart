@@ -179,7 +179,12 @@ void main() {
           aiinHttpClient: _mockBackend(),
           aiinModelsFetcher: (baseUrl, {required apiKey}) async {
             modelsFetched = true;
-            return ['moonshotai/kimi-k2'];
+            return (
+              const ['moonshotai/kimi-k2'],
+              const <String, int>{},
+              const <String, int>{},
+              const <String, List<String>>{},
+            );
           },
         ).then(
           (_) {},
@@ -279,7 +284,12 @@ void main() {
           aiinHttpClient: _mockBackend(),
           aiinModelsFetcher: (baseUrl, {required apiKey}) async {
             modelsFetched = true;
-            return ['moonshotai/kimi-k2'];
+            return (
+              const ['moonshotai/kimi-k2'],
+              const <String, int>{},
+              const <String, int>{},
+              const <String, List<String>>{},
+            );
           },
         ).then(
           (_) {},
@@ -457,7 +467,12 @@ void main() {
       registry: registry,
       service: null,
       lastConnectionStore: LastConnectionStore.inMemory(),
-      aiinModelsFetcher: (baseUrl, {required apiKey}) async => const [],
+      aiinModelsFetcher: (baseUrl, {required apiKey}) async => (
+        const <String>[],
+        const <String, int>{},
+        const <String, int>{},
+        const <String, List<String>>{},
+      ),
     );
 
     await tester.runAsync(() async {
