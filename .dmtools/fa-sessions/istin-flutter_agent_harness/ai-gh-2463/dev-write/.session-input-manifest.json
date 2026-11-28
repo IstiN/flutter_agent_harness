@@ -1,0 +1,191 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-28T20:20:44.875Z",
+  "ticketKey": "gh-2463",
+  "headSha": "065e166842769505976e234d41736c5179cbf4f7",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "merge_conflicts.md": {
+      "hash": "fnv1a64:56b1b9af884fc8fd",
+      "size": 476
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:5e507c26bfe3ff1e",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:561c06d839d7c471",
+      "size": 19352
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:3cc175febe69215f",
+      "size": 113
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:12532342d125c5c9",
+      "size": 4620
+    },
+    "request.md": {
+      "hash": "fnv1a64:1c2a5c7a2cb730c0",
+      "size": 3151
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:76316941f83c6868",
+      "size": 508
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:9488a2e0c9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:38272e078c46766a",
+      "size": 3226
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:1c2a5c7a2cb730c0",
+      "size": 3151
+    }
+  },
+  "comments": [
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:6bc84267",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: `--validate` is documented as \"the CI lint\" but is never wired into CI — a broken entry lands green and reds the release train at cut time**\n\nTwo places of this PR promise PR-time entry validation:\n\n- `docs/agents/commits-releases.md:213` — \"`--validate` is the CI lint\";\n- `scripts/gen_changelog.dart` header — \"`--validate` validate every entry\n  (frontmatter schema, filename convention, non-empty body) — CI\n  static-gate input\".\n\nBut the new `static` job (this hunk) runs only\n`scripts/check_changelog_entry.py`, which checks the **filename pattern**\n(`ENTRY_RE`) plus archive immutability and CHANGELOG byte-equality. The\nbyte-equality path runs `gen_changelog.dart --write-changelog` (which would\nsurface frontmatter errors) **only when the diff touches `CHANGELOG.md`** —\na normal PR adds just an entry file, so a malformed entry (unknown/missing\n`type:`, empty body, unterminated frontmatter) passes CI green, merges, and\nthen fails the release train at cut time (`release_notes.sh` exits 1 on the\naggregation) — the expensive, late failure this change set out to prevent.\n\nFix: one line in this step —\n\n```yaml\nrun: |\n  python3 scripts/check_changelog_entry.py --self-test\n  python3 scripts/check_changelog_entry.py\n  dart scripts/gen_changelog.dart --validate\n```\n\n—and extend the wiring pin at `test/ci_changelog_entry_guard_test.dart:226`\nto assert the ci.yml step carries the validate run."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:3656132c",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: an entry file ending at the closing `---` (no trailing newline) passes validation and publishes raw frontmatter into the release notes**\n\n`scripts/gen_changelog.dart:185`:\n\n```dart\nfinal body = text.substring(text.indexOf('\\n', close + 1) + 1).trim();\n```\n\nWhen the file's frontmatter close is the **last line without a trailing\nnewline** (i.e. the file is exactly `---\\ntype: fix\\nissue: 99\\n---`),\n`text.indexOf('\\n', close + 1)` returns `-1`, `substring(0)` takes the\n**whole file**, and the \"body\" becomes the frontmatter text itself.\nReproduced locally against this branch:\n\n```\n$ printf -- '---\\ntype: fix\\nissue: 99\\n---' > changelog/entries/99-no-newline.md\n$ dart scripts/gen_changelog.dart --validate\nchangelog entries: 1 file(s) valid (1 issue-keyed)   # exit 0\n$ dart scripts/gen_changelog.dart --stdout"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:0a7e8026",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: `--validate` accepts a body with zero bullet lines, breaking the flat-bullets notes shape the AC2 parity test pins**\n\nThe documented entry contract (docs, generator header, PR description) is\n\"frontmatter + **1–3 user-facing bullet lines**\", and the flat aggregate's\nbyte-parity with the old curated `## Unreleased` body is pinned as\nall-`- ` bullets (`test/changelog_gen_test.dart` AC2 parity compares bullet\nsets). But the validator only requires the body to be **non-empty**; a\nprose body with no `- ` lines passes `--validate` and lands bullet-less in\nthe release-notes body, silently diverging from the pinned shape.\n\nAt `scripts/gen_changelog.dart:209` you already count bullets:\n\n```dart\nfinal bullets = body.split('\\n').where((l) => l.startsWith('- ')).length;\n```\n\nMake `bullets == 0` an `EntryProblem` (\"body must be 1–3 `- ` bullet\nlines\") and pin both directions (0 bullets → red, 4 bullets → warn) in the\n`--validate` test group. Cheap to add while you're touching the validator\nfor the no-trailing-newline fix anyway."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:7a5e4dc5",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 **BLOCKING fixed — the changelog corpus is now in the similarity exclude list (commit `1eb9f7b5fa`)**\n\n`crap4dart.yaml` `gates.similarity.exclude` gained, with the gh-1738 AC2 \"BY-DESIGN twins — excluded via glob, never baselined\" justification comment (a baseline entry would silently mask edits to these files):\n\n```yaml\n- 'CHANGELOG.md'          # the GENERATED index — shares preamble/bullets\n                          # with the entry file that produced it\n- 'CHANGELOG_ARCHIVE.md'  # the verbatim-migrated pre-1.0.506 tail\n- 'changelog/**'          # entries/*.md + archive/*.md — verbatim\n                          # per-version copies of each other's format\n```\n\nExcluded, not baselined — exactly per the thread's fix direction. Re-ran the same command CI runs (`dart pub global run crap4dart check --baseline`) against the updated config:\n\n```\n[PASS] similarity: 15 files in 7 similar-file clusters (3316 scanned)\nGates: 4 passed, 1 warned, 22 skipped   # was: 3 passed, 1 failed, 1 warned\n```\n\nAll 9 clusters / 19 files from run 46138697254 are out of the scan corpus (the 7 remaining clusters are the pre-existing baselined set).\n\nOn the other three red checks in this run: they are aggregate/cascade surfaces of the SAME root cause — `Quality gate` failed only on `R_GUARDS` (= this `CRAP + duplication` job), and the `JS engine integration (quickjs-ng)` / `Binaries smoke gate` failure reports are validation aggregates whose tables reference dispatched run 46138697254. With the similarity gate green, the whole chain is green."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:c40e5215",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT fixed — `--validate` is wired into the ci.yml static job (commit `1eb9f7b5fa`)**\n\nThe `Changelog entries guard (gh-2463)` step now runs the documented CI lint:\n\n```yaml\nrun: |\n  python3 scripts/check_changelog_entry.py --self-test\n  python3 scripts/check_changelog_entry.py\n  if [ -d changelog/entries ]; then\n    dart scripts/gen_changelog.dart --validate\n  else\n    echo \"no changelog/entries/ dir (nothing pending) — entry validation skipped\"\n  fi\n```\n\nOne deliberate deviation from the literal one-liner in the thread: the validate run is gated on the entries dir existing. Reason: consumed-entry housekeeping legitimately removes the LAST pending entry after a tag cut, and git drops an emptied directory — on that arm (and any `no-changelog` PR merged in that window) the unconditional `--validate` would exit 1 on `changelog/entries/ does not exist` and false-red the static job. The gate loses nothing the thread asks for: any PR that adds or carries entry files (i.e. every case where a broken entry can exist) runs the full validator at PR time — unknown/missing `type:`, empty/bullet-less body, unterminated frontmatter, and the no-trailing-newline case now red the PR instead of the release train. Same fail-safe direction as `scripts/release_notes.sh` preference 1b (`[ -d changelog/entries ]`).\n\nWiring pin extended: `test/ci_changelog_entry_guard_test.dart` gained `ci.yml static job wires 'gen_changelog.dart --validate' as the lint`, asserting both the validate invocation and the dir gate are present in ci.yml (RED first — it failed on the pre-fix branch; GREEN after the wiring). Verified locally: `dart scripts/gen_changelog.dart --validate` on the repo tree → `changelog entries: 1 file(s) valid (1 issue-keyed)`, exit 0."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:dc725f8a",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ **IMPORTANT fixed — the no-trailing-newline frontmatter case is now a structural problem (commit `1eb9f7b5fa`)**\n\n`scripts/gen_changelog.dart` (`_parseEntry`) no longer blind-`substring`s past the frontmatter close:\n\n```dart\nfinal bodyStart = text.indexOf('\\n', close + 1);\nif (bodyStart < 0) {\n  problems.add(\n    EntryProblem(name, 'no body after the frontmatter close — the file '\n        'ends at `---`; add a blank line + 1–3 `- ` bullet lines after it'),\n  );\n  return null;\n}\nfinal body = text.substring(bodyStart + 1).trim();\n```\n\nThe reviewer's exact repro now fails loudly in both directions:\n\n```\n$ printf -- '---\\ntype: fix\\nissue: 99\\n---' > changelog/entries/99-no-newline.md\n$ dart scripts/gen_changelog.dart --validate\n::error::99-no-newline.md: no body after the frontmatter close — the file ends at `---`; add a blank line + 1–3 `- ` bullet lines after it   # exit 1\n$ dart scripts/gen_changelog.dart --stdout\n::error::99-no-newline.md: no body after the frontmatter close — …          # exit 1\ngen_changelog: 1 broken entry file(s) — run `dart scripts/gen_changelog.dart --validate` for the full list\n```\n\nThe aggregate modes stop loudly too (they already exit 1 on any `EntryProblem`), so the raw `---\\ntype: fix\\nissue: 99\\n---` block can no longer reach `release_notes.sh` preference 1b or the published release page — the \"fails loudly instead of shipping silently\" contract holds.\n\nRegression pin (TDD RED→GREEN): `frontmatter close at EOF (no trailing newline) fails loudly` in the `--validate` red-path group of `test/changelog_gen_test.dart` — asserts exit 1 + `::error::` + the message, and that `--stdout` refuses and prints no `type: fix`. It failed on the pre-fix branch (exit 0) exactly as the thread reproduced."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:12f6fc7b",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 **SUGGESTION picked up — zero-bullet bodies are now an `EntryProblem` (commit `1eb9f7b5fa`)**\n\n`scripts/gen_changelog.dart` (`_parseEntry`), right at the existing bullet count:\n\n```dart\nfinal bullets = body.split('\\n').where((l) => l.startsWith('- ')).length;\nif (bullets == 0) {\n  problems.add(\n    EntryProblem(name, 'body must be 1–3 `- ` bullet lines — prose without '\n        'bullets breaks the flat release-notes shape'),\n  );\n  return null;\n}\nif (bullets > 3) { … ::warning:: … }   // unchanged — warn-and-pass\n```\n\nBoth directions pinned in the `--validate` test group of `test/changelog_gen_test.dart`:\n\n- **0 bullets → red** (new): `bullet-less prose body fails (notes shape is 1–3 `- ` lines)` — a prose body (`Just a prose paragraph with no bullet lines at all.`) now exits 1 with `::error::` naming the file and the message. RED-first verified: exit 0 on the pre-fix branch.\n- **4 bullets → warn** (already pinned, unchanged): `more than 3 bullets warns but passes` asserts exit 0 + `::warning::`.\n\nThe flat-bullets aggregate shape the AC2 parity test pins can no longer be silently diverged from by a prose-only entry."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:8352c450",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: The PR's design is sound (per-entry changelog files, generated index, byte-parity pinned by tests; committed CHANGELOG.md verified byte-identical to regenerated output) but its own CI is red: the similarity gate fails on 19 near-duplicate files this PR adds. Two important issues: the documented `--validate` CI lint is never wired (broken entries land green and red the release train), and a frontmatter edge case publishes raw YAML into release notes.\n\n**Key Issues**:\n1. 🚨 Red CI — `[FAIL] similarity: 19 files in 9 similar-file clusters` (generated CHANGELOG.md ↔ entry file, migrated archive sections) → add `changelog/**`-class globs to the `crap4dart.yaml` similarity exclude list (comment1)\n2. ⚠️ `--validate` documented as \"the CI lint\" (docs/agents/commits-releases.md:213) but not invoked by the new static job (comment2)\n3. ⚠️ Entry file ending at the closing `---` passes `--validate` and ships frontmatter into the release body (reproduced) (comment3)\n4. 💡 `--validate` accepts bullet-less prose bodies, diverging from the AC2-pinned flat-bullets shape (comment4)\n\n**Digest** (accurate, not thread-worthy):\n- `scripts/gen_changelog.dart:99-101` — each entry file is parsed twice; a >3-bullet entry emits its `::warning::` twice\n- `scripts/gen_changelog.dart:287` — `losers.add(incumbent == e ? incumbent : incumbent)` — dead conditional, both branches identical\n\n**Next Steps**:\n1. Fix the red similarity gate (exclude globs for the generated index + migrated archive), re-run the `CRAP + duplication` job green\n2. Add `dart scripts/gen_changelog.dart --validate` to the ci.yml static step + extend the wiring pin test\n3. Reject the no-trailing-newline frontmatter case (fixture in the validate red-path tests)\n4. Require ≥1 bullet line in `--validate`"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:2b90c082",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: Red CI — the similarity (duplication) gate fails on this PR's own new files**\n\nThe `CRAP + duplication` job is red on commit `f3cc5b9c` (run 46138697254):\n\n```\n[FAIL] similarity: 19 files in 9 similar-file clusters (3335 scanned)\n  CHANGELOG.md: similar to changelog/entries/2463-changelog-entries.md —\n    near-duplicate content (jaccard 0.13, containment 0.90)\n  changelog/archive/1.0.510.md: similar to changelog/archive/1.0.511.md —\n    near-duplicate content (jaccard 0.33, containment 0.99)\nGates: 3 passed, 1 failed, 1 warned, 22 skipped  → exit 2\n```\n\nThese are **by-design** near-duplicates this migration creates: the generated\n`CHANGELOG.md` index shares its preamble/bullets with the entry file that\nproduced it, and adjacent migrated archive sections (e.g. `1.0.510.md` ↔\n`1.0.511.md`) are nearly identical verbatim copies. The gate has an explicit\nescape hatch for exactly this class — `crap4dart.yaml:223` `exclude:` with the\ndocumented pattern \"BY-DESIGN twins — excluded via glob per gh-1738 AC2, never\nbaselined\" (used for `firebase_options.template.dart` and gen-l10n outputs) —\nbut `changelog/**` was never added to it.\n\nFix direction (author's call): add globs for the generated index and the\nverbatim-migrated archive bodies to the `similarity.exclude` list in\n`crap4dart.yaml` with that same justification comment (exclude, never a\nbaseline — a baseline entry would silently mask edits to these files). Then\nre-run the gate; CI must be green before merge."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-28:4b180d66",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⏸ ghost-guard defer 93c84d4721f7bd86f161ce8a7f73be8738849b6a — run 46142821218 still queued at 2026-11-28T12:12:52.759Z\n\nGhost-guard bookkeeping (gh-848): a stale validation run was left running because its jobs had not materialized yet — a queued cancel orphans its check-runs as `in_progress` ghosts and the merge gate holds on them forever — and/or its orphaned check-runs were concluded `cancelled` via the Checks API. `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch is recorded for these heads."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:83600ee2",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE\n\n**Summary**: Re-review round: all four previously raised findings are fixed in commit `93c84d47` and re-verified against head `0885c7e6` — the similarity gate is green again (`[PASS] similarity: 15 files in 7 clusters`), `--validate` is wired into the ci.yml static job, and both entry-parser edge cases (frontmatter close at EOF, zero-bullet prose body) now fail loudly with regression pins. New hunks reviewed (plus interaction neighborhood): no new issues.\n\n**Key Issues**: none — 0 blocking / 0 important / 0 suggestion threads.\n\n**Digest** (accurate, pre-existing frozen lines, advisory only — no action required for merge):\n- `scripts/gen_changelog.dart:99-101` — each entry file is parsed twice; a >3-bullet entry emits its `::warning::` twice\n- `scripts/gen_changelog.dart:287` — `losers.add(incumbent == e ? incumbent : incumbent)` — dead conditional, both branches identical\n\n**Verification this round**: 157/157 tests green across the PR's own verify list (changelog_gen, release_notes_entries, ci_changelog_entry_guard, release_hygiene, publish_staging, release_lazy_draft_mint, release_attach_or_create_mint); `check_changelog_entry.py --self-test` + repo run exit 0; committed CHANGELOG.md byte-identical to regenerated output; F3/F4 reviewer repros now exit 1.\n\n**Next Steps**:\n1. Merge — the merge-conflict-by-construction goal and all ticket ACs hold (docs updated in AGENTS.md + docs/agents/commits-releases.md + docs/ci.md; no new doc file, so no docs/README.md indexing owed).\n2. The two digest items above are candidates for a cleanup sweep, not rework."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-28:b546d0a6",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚖️ Verdict reconciliation: the effective review verdict on head `0885c7e686100de6b0274ae55a12be235f2a0ed7` is **APPROVE** (at 2026-11-28T12:29:36.501Z, source: pr_review.json).\n\nRemoving `agent:rework` (suggestions do not justify a rework arm; the approval stands)."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-28:3fca61fe",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ silent-update failure — attempt 1 at 2026-11-28T17:35:11.396Z"
+    }
+  ]
+}
