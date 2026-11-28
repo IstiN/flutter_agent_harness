@@ -774,6 +774,31 @@ void main() {
           },
       );
       expect(config.agentName, 'Fa');
+      expect(
+        config.webTools?.webSearchUrl?.toString(),
+        'https://api.aiin.by/v1/search/perplexity',
+      );
+      expect(
+        config.webTools?.webFetchUrl?.toString(),
+        'https://api.aiin.by/v1/web/fetch',
+      );
+    });
+
+    test('absent tools section stays null; non-https urls are rejected', () {
+      expect(FaProductConfig.fromJson(_valid()).webTools, isNull);
+      expect(FaProductConfig.stock.webTools, isNull);
+      for (final bad in ['http://api.aiin.by/v1', 'not a url', 42]) {
+        expect(
+          () => FaProductConfig.fromJson(
+            _valid()
+              ..['tools'] = {
+                'webSearch': {'url': bad},
+              },
+          ),
+          throwsFormatException,
+          reason: 'url: $bad',
+        );
+      }
     });
 
     test('a credential nested under tools is still rejected', () {

@@ -74,6 +74,7 @@ import 'package:fa/services/video_tool.dart';
 import 'package:fa/services/tools_availability_store.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/product_config_loader.dart';
 import 'package:fa/services/session_parse_factory.dart';
 import 'package:fa/services/session_listing.dart';
 import 'package:fa/services/sessions_root.dart';
@@ -389,6 +390,34 @@ class AgentService extends ChangeNotifier
   /// (media slot `apiKeyName` references) beyond the `.env` secrets store:
   /// user-saved keys (Keychain / `session_keys.json`) and custom-provider
   /// session keys resolve too.
+  /// The `web_search`/`web_fetch` configuration for this host (gh-2391
+  /// addendum 9 item 3): a product profile declaring `tools.webSearch.url`
+  /// / `tools.webFetch.url` routes both tools through the host gateway
+  /// with the live bridged session key as Bearer (the registry's named-key
+  /// seam, so sign-in/sign-out rotates it); stock profiles keep the
+  /// keyless DuckDuckGo-first chain and the client-side fetch.
+  static WebSearchConfig _webSearchConfigFor(
+    SecretsStore secrets,
+    ProviderRegistry? registry,
+  ) {
+    final product = loadInjectedProductConfig();
+    final tools = product.webTools;
+    if (tools == null) return WebSearchConfig(secrets: secrets);
+    final hostBaseUrl = product.hostConnection?.baseUrl.toString();
+    return WebSearchConfig(
+      secrets: secrets,
+      hostSearchUrl: tools.webSearchUrl,
+      hostFetchUrl: tools.webFetchUrl,
+      hostBearerToken: hostBaseUrl == null
+          ? null
+          : () =>
+                registry?.keyValueForName(
+                  ProviderRegistry.keyNameFor(hostBaseUrl),
+                ) ??
+                '',
+    );
+  }
+
   static Future<AgentService> create({
     required AgentConfig config,
     ExecutionEnv? env,
@@ -478,7 +507,7 @@ class AgentService extends ChangeNotifier
       parseExecutor: parseExecutor ?? createSessionParseExecutor(),
       sessionsRoot: resolvedSessionsRoot,
       officeApi: officeApi ?? bootOfficeApi(),
-      webSearchConfig: WebSearchConfig(secrets: secretsStore),
+      webSearchConfig: _webSearchConfigFor(secretsStore, providerRegistry),
       initialApprovalMode: savedApprovalMode,
       approvalModeStore: approvalModeStore,
       initialSkillsAccess: savedSkillsAccess ?? SkillsAccess.granted,

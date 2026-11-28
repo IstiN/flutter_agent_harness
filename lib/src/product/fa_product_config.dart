@@ -16,6 +16,7 @@ final class FaProductConfig {
     required this.productId,
     required this.displayName,
     this.agentName = 'Fa',
+    this.webTools,
     this.description = '',
     this.brandAssets = const {},
     this.themePackId,
@@ -42,6 +43,7 @@ final class FaProductConfig {
     : productId = 'fa',
       displayName = 'Fa',
       agentName = 'Fa',
+      webTools = null,
       description = 'Fa — Flutter Agent Harness: coding agent in your browser.',
       brandAssets = const {},
       themePackId = null,
@@ -75,6 +77,11 @@ final class FaProductConfig {
   /// the skills blurbs. Top-level `agentName` in the profile JSON; stock and
   /// profiles without the key keep "Fa".
   final String agentName;
+
+  /// The host web-tools gateway endpoints (gh-2391 addendum 9 item 3):
+  /// top-level `tools.webSearch.url` / `tools.webFetch.url`. Null = the
+  /// stock DuckDuckGo/Brave/Tavily chain and client-side fetch.
+  final FaHostWebTools? webTools;
 
   final String description;
 
@@ -342,6 +349,7 @@ final class FaProductConfig {
       agentName: json['agentName'] == null
           ? 'Fa'
           : _text(json['agentName'], 'agentName'),
+      webTools: _parseWebTools(json['tools']),
       description: description,
       brandAssets: Map.unmodifiable(assets),
       themePackId: themePackId,
@@ -510,6 +518,37 @@ final class FaProductConfig {
     return parts.join('/');
   }
 
+  /// Parses top-level `tools.webSearch.url` / `tools.webFetch.url` into
+  /// [FaHostWebTools]; absent/empty section = null (stock behavior). The
+  /// recursive secret rejection has already run by this point — `url` is
+  /// endpoint metadata, never a credential.
+  static FaHostWebTools? _parseWebTools(Object? node) {
+    if (node == null) return null;
+    if (node is! Map) throw const FormatException('tools map');
+    Uri? endpoint(String section) {
+      final child = node[section];
+      if (child == null) return null;
+      if (child is! Map) throw FormatException('tools.$section map');
+      final value = child['url'];
+      if (value == null) return null;
+      if (value is! String) {
+        throw FormatException('tools.$section.url must be a URI');
+      }
+      final uri = Uri.tryParse(value);
+      if (uri == null || !_secureEndpoint(uri)) {
+        throw FormatException(
+          'tools.$section.url must be an HTTPS endpoint: $value',
+        );
+      }
+      return uri;
+    }
+
+    final search = endpoint('webSearch');
+    final fetch = endpoint('webFetch');
+    if (search == null && fetch == null) return null;
+    return FaHostWebTools(webSearchUrl: search, webFetchUrl: fetch);
+  }
+
   static void _rejectSecretFields(Object? value) {
     if (value is Map) {
       for (final entry in value.entries) {
@@ -533,6 +572,20 @@ final class FaProductConfig {
       }
     }
   }
+}
+
+/// The host web-tools endpoints (gh-2391 addendum 9 item 3), parsed from
+/// top-level `tools.webSearch.url` / `tools.webFetch.url`. HTTPS-only
+/// (loopback http allowed for development), no credentials — the session
+/// key rides the live bridge at call time.
+final class FaHostWebTools {
+  const FaHostWebTools({this.webSearchUrl, this.webFetchUrl});
+
+  /// `POST {query, max_results}` → Perplexity-shaped results JSON.
+  final Uri? webSearchUrl;
+
+  /// `POST {url}` → `{url, content_type, title?, truncated, body}`.
+  final Uri? webFetchUrl;
 }
 
 /// Verified account/device identity supplied by the host auth layer.
