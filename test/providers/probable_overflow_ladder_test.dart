@@ -107,48 +107,20 @@ AssistantMessageEventStream finishReasonError(
   return stream;
 }
 
-/// A successful turn for the recovery tests: the fresh connection (after
-/// the re-dial) finally serves the request.
-AssistantMessageEventStream succeedWith(Model model, Context context) {
-  final stream = AssistantMessageEventStream();
-  scheduleMicrotask(() {
-    stream.push(
-      DoneEvent(
-        reason: StopReason.stop,
-        message: AssistantMessage(
-          content: [TextContent(text: 'served on the fresh connection')],
-          api: model.api,
-          provider: model.provider,
-          model: model.id,
-          usage: Usage.zero,
-          stopReason: StopReason.stop,
-          timestamp: DateTime.utc(2026),
-        ),
-      ),
-    );
-    stream.end();
-  });
-  return stream;
-}
-
 void main() {
   late Future<bool> Function(Duration, CancelToken?) savedSleeper;
   late TransientRetryNotice? savedNotice;
-  late void Function() savedRecovery;
 
   setUp(() {
     savedSleeper = transientRetrySleeper;
     savedNotice = transientRetryNotice;
-    savedRecovery = transientConnectionRecovery;
     transientRetrySleeper = (delay, token) async => true;
     transientRetryNotice = null;
-    transientConnectionRecovery = () {};
   });
 
   tearDown(() {
     transientRetrySleeper = savedSleeper;
     transientRetryNotice = savedNotice;
-    transientConnectionRecovery = savedRecovery;
   });
 
   group('deterministic per-history failure on a large request', () {
@@ -250,120 +222,6 @@ void main() {
       expect(
         message.errorMessage,
         startsWith('Provider call failed after 3 attempt(s)'),
-      );
-    });
-  });
-
-  group('connection/credential recovery before exhaustion (gh-2470 '
-      'review)', () {
-    test('the 2nd consecutive identical failure re-dials: the cached pool '
-        'is dropped once and the fresh connection succeeds — the ladder '
-        'never fails 3× on the dead connection', () async {
-      var recoveries = 0;
-      transientConnectionRecovery = () => recoveries++;
-      var calls = 0;
-      final wrapped = transientRetryStreamFunction((
-        model,
-        context, {
-        cancelToken,
-      }) {
-        calls++;
-        // The stale pooled connection answers every dial with the same
-        // opaque failure — until the recovery drops it and the fresh
-        // connection serves the turn.
-        if (recoveries == 0) {
-          return finishReasonError(model, context, cancelToken: cancelToken);
-        }
-        return succeedWith(model, context);
-      });
-
-      final message = await wrapped(poisonedModel, smallContext()).result;
-
-      // Two identical failures → the recovery → the re-dialed attempt
-      // succeeds inside the SAME chain (3 calls total, no exhaustion).
-      expect(calls, 3, reason: '2 dead-pool failures + the re-dialed dial');
-      expect(recoveries, 1, reason: 'the recovery fires once per chain');
-      expect(message.stopReason, isNot(StopReason.error));
-      expect(
-        message.errorMessage,
-        isNull,
-        reason: 'the fresh connection served the turn — no terminal',
-      );
-    });
-
-    test('an identical transient transport wording re-dials too — the '
-        'stale keep-alive pool is the reported restart-cures shape', () async {
-      var recoveries = 0;
-      transientConnectionRecovery = () => recoveries++;
-      final wrapped = transientRetryStreamFunction((
-        model,
-        context, {
-        cancelToken,
-      }) {
-        if (recoveries == 0) {
-          return failWith('SocketException: Connection reset by peer');
-        }
-        return succeedWith(model, context);
-      });
-
-      final message = await wrapped(poisonedModel, smallContext()).result;
-
-      expect(recoveries, 1, reason: 'identical failures prove the dead pool');
-      expect(message.stopReason, isNot(StopReason.error));
-    });
-
-    test('a NON-deterministic chain never re-dials (differing texts are '
-        'independent failures, each may heal on its own replay)', () async {
-      var recoveries = 0;
-      transientConnectionRecovery = () => recoveries++;
-      final texts = ['first opaque failure', 'a different opaque failure'];
-      var calls = 0;
-      final wrapped = transientRetryStreamFunction((
-        model,
-        context, {
-        cancelToken,
-      }) {
-        calls++;
-        return failWith(texts[(calls - 1).clamp(0, texts.length - 1)]);
-      });
-
-      final message = await wrapped(poisonedModel, smallContext()).result;
-
-      expect(recoveries, 0, reason: 'the texts differ — no determinism');
-      expect(message.stopReason, StopReason.error);
-    });
-
-    test('the genuine large-request case keeps its verdict: the re-dial '
-        'cannot cure a poisonous history — the probable-overflow terminal '
-        'still classifies it, with the recovery spent exactly once', () async {
-      var recoveries = 0;
-      transientConnectionRecovery = () => recoveries++;
-      final wrapped = transientRetryStreamFunction(
-        (model, context, {cancelToken}) =>
-            finishReasonError(model, context, cancelToken: cancelToken),
-      );
-
-      final message = await wrapped(poisonedModel, largeContext()).result;
-
-      expect(recoveries, 1, reason: 'one re-dial before the exhaustion');
-      expect(message.stopReason, StopReason.error);
-      expect(isProbableOverflowError(message.errorMessage), isTrue);
-      expect(message.errorMessage, contains('/compact'));
-    });
-
-    test('the default recovery action drops the shared provider client '
-        'so the next dial builds a fresh pool (the production seam)', () async {
-      // Run the DEFAULT action (the saved tear-off, restored over the
-      // no-op test double): the cached generation is dropped and the
-      // next sharedProviderHttpClient() rebuilds — the fresh dial.
-      transientConnectionRecovery = savedRecovery;
-      final before = sharedProviderHttpClient();
-      transientConnectionRecovery();
-      final after = sharedProviderHttpClient();
-      expect(
-        identical(before, after),
-        isFalse,
-        reason: 'the cached pool was dropped — the next dial is fresh',
       );
     });
   });

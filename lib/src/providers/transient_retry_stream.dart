@@ -44,9 +44,7 @@ import '../probable_overflow.dart'
         isProbableOverflowLargeRequest,
         probableOverflowMarker;
 import '../types.dart';
-import 'copilot_oauth.dart' show CopilotTokenManager;
-import 'provider_common.dart'
-    show providerStreamIdleTimeout, recycleProviderHttpClientAfterHeal;
+import 'provider_common.dart' show providerStreamIdleTimeout;
 import 'payload_stall.dart' show lastOutboundEstimateBytes, payloadStallLatch;
 import 'provider_tuning.dart'
     show
@@ -251,42 +249,6 @@ Duration transientRetryWrapUpMargin = const Duration(seconds: 120);
 /// The jitter source for [rateLimitBackoffFor]. Injectable for
 /// deterministic tests; defaults to [Random.nextDouble].
 double Function() transientRetryJitter = Random().nextDouble;
-
-/// The stale-connection recovery the ladder fires on the 2nd consecutive
-/// IDENTICAL pre-commit failure (gh-2470 review): drops the cached shared
-/// provider client so the next attempt re-dials a fresh keep-alive pool,
-/// and invalidates every cached Copilot token so the next request
-/// re-exchanges. The issue's restart-cures evidence — the identical
-/// history succeeds after a plain process restart — points at a stale
-/// pooled connection or a stale short-lived token, and every ladder
-/// attempt used to ride the SAME cached client, so a dead pool (or dead
-/// token) burned the whole budget before the exhaustion terminal ever
-/// read it. Injectable so tests fake the pool.
-void _defaultConnectionRecovery() {
-  recycleProviderHttpClientAfterHeal();
-  CopilotTokenManager.invalidateAllForConnectionRecovery();
-}
-
-void Function() transientConnectionRecovery = _defaultConnectionRecovery;
-
-/// The per-chain recovery trigger (see [transientConnectionRecovery]):
-/// fires at most ONCE per retry chain, only when the ladder will
-/// actually run the next attempt (never on an exhaustion, zero-byte or
-/// rate-limit exit — those paths end the call before this runs), and
-/// only for a DETERMINISTIC chain — the identical error text on every
-/// attempt so far. The re-dial cannot cure a poisonous history: a chain
-/// that fails identically even after the fresh dial still exhausts into
-/// the probable-overflow terminal, verdict unchanged. Returns the
-/// re-dial story for the retry notice, or null when nothing fired.
-String? _maybeRecoverConnection(_DriveState state) {
-  if (state.connectionRecovered) return null;
-  final identical = deterministicFailureText(state.failureTexts);
-  if (identical == null) return null;
-  state.connectionRecovered = true;
-  transientConnectionRecovery();
-  return 'identical failure ×${state.failureTexts.length} — dropped the '
-      'pooled connection and cached token; re-dialing fresh';
-}
 
 /// Whether [message] is a transient failure worth replaying: socket-level
 /// drops and gateway 5xx. Rate limits stay with the roles layer (the
@@ -632,12 +594,6 @@ final class _DriveState {
   /// which the display-truncated [attemptLog] cannot prove.
   final failureTexts = <String>[];
 
-  /// Whether the stale-connection recovery already fired in this chain
-  /// (gh-2470 review): one fresh-dial chance per chain, on the 2nd
-  /// identical failure — never re-fired (a poisoned history would churn
-  /// pool recycles for nothing).
-  var connectionRecovered = false;
-
   /// The context the NEXT attempt runs with — the resume anchor after a
   /// mid-stream abort (issue #1126); the caller's token stays THE token.
   Context context;
@@ -855,16 +811,6 @@ Future<bool> _afterTransientFailure(
     );
     return false;
   }
-  // gh-2470 review: the exhaustion gates all passed — this chain WILL
-  // dial again. A 2nd consecutive identical failure is the stale pooled
-  // keep-alive / stale Copilot token signature (the issue's
-  // restart-cures evidence): drop the cached pool + cached token once so
-  // the next attempt re-dials fresh, instead of failing every attempt on
-  // the same dead connection. The notice reason carries the re-dial
-  // story (appended AFTER the provider line — the face classifier
-  // matches patterns anywhere in the text).
-  final redialStory = _maybeRecoverConnection(state);
-  final reasonSuffix = redialStory == null ? '' : ' — $redialStory';
   return _pauseBetweenAttempts(
     out,
     model,
@@ -879,7 +825,7 @@ Future<bool> _afterTransientFailure(
     // full text and truncates display-only, so "429" late in a long
     // structured render still reads as rate limited and records. gh-1617
     // AC5: the watchdog replay names the governing window + its source.
-    '${_noticeReason(watchdogReplay, error, windowStory)}$reasonSuffix',
+    _noticeReason(watchdogReplay, error, windowStory),
   );
 }
 
