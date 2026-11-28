@@ -1050,10 +1050,18 @@ class _P1 extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 20),
-        const Opacity(
+        Opacity(
           opacity: 0.45,
           child: IgnorePointer(
-            child: SizedBox(width: 230, child: _ProviderGhost()),
+            child: SizedBox(
+              width: 230,
+              // A host-only product has no provider zoo to preview — the
+              // ghost advertises the sign-in CTA instead (gh-2391 addendum
+              // 9 item 5a).
+              child: ProductConfigScope.of(context).hostOnlyProviderCatalog
+                  ? const _HostSignInGhost(key: ValueKey('hostSignInGhost'))
+                  : const _ProviderGhost(),
+            ),
           ),
         ),
       ],
@@ -1372,6 +1380,48 @@ class _FeaturesRow extends StatelessWidget {
           ),
           if (label != items.last.$2) const SizedBox(width: 8),
         ],
+      ],
+    );
+  }
+}
+
+/// The host-only page-1 ghost (gh-2391 addendum 9 item 5a): a faded
+/// sign-in CTA preview replacing the provider zoo for branded builds whose
+/// catalog is the host connection alone. Decorative — the call site's
+/// IgnorePointer swallows taps.
+class _HostSignInGhost extends StatelessWidget {
+  const _HostSignInGhost({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final displayName = ProductConfigScope.of(context).displayName;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          l10n.onboardingHostSignInTitle(displayName),
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: _onbInk(context),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          l10n.onboardingHostSignInBody(displayName),
+          style: TextStyle(fontSize: 11.5, color: _onbGray(context)),
+        ),
+        const SizedBox(height: 16),
+        FilledButton.icon(
+          onPressed: () {},
+          icon: const Icon(Icons.open_in_new, size: 16),
+          label: Text(
+            l10n.onboardingHostSignInCta(displayName),
+            style: const TextStyle(fontSize: 12),
+          ),
+        ),
       ],
     );
   }

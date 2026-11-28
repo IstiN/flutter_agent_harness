@@ -605,8 +605,14 @@ abstract class AppLocalizations {
   /// No description provided for @modelPresetHostDescription.
   ///
   /// In en, this message translates to:
-  /// **'Included with your {name} sign-in.'**
+  /// **'Available after you sign in to {name}.'**
   String modelPresetHostDescription(String name);
+
+  /// No description provided for @modelPresetHostDescriptionSignedIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Included with your {name} sign-in.'**
+  String modelPresetHostDescriptionSignedIn(String name);
 
   /// No description provided for @chatStartChat.
   ///
@@ -3433,6 +3439,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Quick model'**
   String get taskModelSmolTitle;
+
+  /// No description provided for @taskModelSubagentTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Subagents model'**
+  String get taskModelSubagentTitle;
 
   /// No description provided for @taskModelUseMain.
   ///
