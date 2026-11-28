@@ -234,6 +234,44 @@ void main() {
   });
 
   group('trajectoryInspectLines', () {
+    test('gh-2476: a failed assistant record renders the provider detail '
+        'as its own expandable section', () {
+      final detail =
+          'Provider finish_reason: error — provider said: '
+          '{"error":{"message":"upstream decode failure","code":"boom"}}';
+      final snapshot = trajectorySnapshotOf([
+        _userRecord('u1'),
+        MessageRecord(
+          id: 'a1',
+          parentId: 'u1',
+          timestamp: _at(1),
+          message: AssistantMessage(
+            content: const [],
+            api: 'openai-completions',
+            provider: 'openai',
+            model: 'gpt-test',
+            usage: Usage.zero,
+            stopReason: StopReason.error,
+            errorMessage: detail,
+            timestamp: _at(1),
+          ),
+        ),
+      ]);
+      final lines = trajectoryInspectLines(snapshot, 2)!;
+      expect(lines.first, contains('ASSISTANT'));
+      expect(lines, contains('status: failed'));
+      // The literal head and the provider's own detail are both visible —
+      // the inspect drill-in is the expandable surface.
+      expect(lines, contains('error: Provider finish_reason: error'));
+      expect(
+        lines,
+        contains(
+          'provider detail: — provider said: '
+          '{"error":{"message":"upstream decode failure","code":"boom"}}',
+        ),
+      );
+    });
+
     test('assistant record shows model, timing, and token sections', () {
       final snapshot = _snapshot();
       final lines = trajectoryInspectLines(snapshot, 2)!;

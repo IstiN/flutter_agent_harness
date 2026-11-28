@@ -14,7 +14,10 @@ import 'dart:convert';
 import '../providers/stall_taxonomy.dart' show classifyProviderStall;
 import '../probable_overflow.dart' show isProbableOverflowError;
 import '../providers/transient_retry_stream.dart'
-    show matchesRateLimitWording, matchesTransientNetworkWording;
+    show
+        matchesRateLimitWording,
+        matchesTransientNetworkWording,
+        providerErrorDetailSeparator;
 import '../types.dart' show classifyFinishReason, FinishReasonClass;
 
 /// Reduces a provider error blob to something readable on one line:
@@ -242,8 +245,16 @@ ClassifiedProviderError classifyProviderFailure(
 
   // The `Provider finish_reason: <word>` family — the same wording
   // [finishReasonRetryClass] keys on, so console and policy agree.
+  // gh-2476: the message may carry the provider's own detail after the
+  // ` — provider said: ` separator (or a newline) — the classification
+  // word is everything BEFORE it, never the payload.
   if (rawMessage.startsWith('Provider finish_reason: ')) {
-    final raw = rawMessage.substring('Provider finish_reason: '.length).trim();
+    final rest = rawMessage.substring('Provider finish_reason: '.length);
+    final separatorAt = rest.indexOf(providerErrorDetailSeparator);
+    final raw = (separatorAt >= 0 ? rest.substring(0, separatorAt) : rest)
+        .split('\n')
+        .first
+        .trim();
     final reasonClass = classifyFinishReason(raw);
     if (reasonClass == FinishReasonClass.terminal) {
       return ClassifiedProviderError._(

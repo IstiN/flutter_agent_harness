@@ -27,7 +27,7 @@ library;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
-import 'openai_completions_test.dart' show sseBody, sseClient;
+import 'openai_completions_fixtures.dart' show sseBody, sseClient;
 
 /// Mirrors the live suite's `_model`: same api/baseUrl shape, reasoning
 /// enabled, Ollama Cloud identity — but every request hits the canned

@@ -356,6 +356,24 @@ typedef TransientRetryNotice =
 /// provider error, display-truncated), `ts`.
 const String rateLimitRetryRecordType = '429_retry';
 
+/// The hidden session-JSONL record type the CLI appends for EVERY replayed
+/// provider attempt that is NOT rate-limit class (gh-2476): the always-on
+/// per-attempt post-mortem surface — a transport replay currently leaves
+/// nothing in the session, so "what did the provider say per attempt" is
+/// unanswerable after the fact. Payload mirrors `429_retry` plus
+/// `status` (the HTTP status when the failure message carries the
+/// `ProviderHttpError` `"<code>: …"` head) and the reason carrying the
+/// provider's own detail (gh-2476 capture).
+const String netRetryRecordType = 'net_retry';
+
+/// The separator between the mapped finish_reason literal and the
+/// provider's own error detail (gh-2476): the composition
+/// `Provider finish_reason: <word> — provider said: <payload>` keeps every
+/// prefix-keyed classifier working (the literal stays the head) while the
+/// detail rides the SAME line into the per-attempt evidence log. The
+/// console classifier and the trajectory TUI split on this exact text.
+const String providerErrorDetailSeparator = ' — provider said: ';
+
 /// The host-visible retry hook (the CLI prints it + logs to fa.log).
 /// Null keeps retries silent. Global like `providerTimeoutsOverride`: the
 /// wrap happens deep inside [providerStreamFunction], far from any host io.

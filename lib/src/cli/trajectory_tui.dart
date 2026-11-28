@@ -11,6 +11,8 @@ library;
 
 import 'dart:convert';
 
+import '../providers/transient_retry_stream.dart'
+    show providerErrorDetailSeparator;
 import '../session/session_record.dart';
 import '../session/session_repo.dart';
 import '../session/session_storage.dart';
@@ -431,7 +433,24 @@ void _inspectAssistant(
   _inspectSection(lines, 'input', r.inputDetail);
   _inspectSection(lines, 'output', r.outputDetail);
   _inspectSection(lines, 'thinking', r.thinkingDetail);
-  if (r.isError == true) _inspectSection(lines, 'error', r.errorMessage);
+  if (r.isError == true) _inspectError(lines, r.errorMessage);
+}
+
+/// The error sections of a failed assistant row (gh-2476): the mapped
+/// literal head and — when the provider explained itself (the
+/// ` — provider said: ` capture) — the detail as its OWN section, so the
+/// expandable inspect view answers "what did the provider say" without
+/// burying it in one line.
+void _inspectError(List<String> lines, String? errorMessage) {
+  final text = errorMessage;
+  if (text == null) return;
+  final cut = text.indexOf(providerErrorDetailSeparator);
+  if (cut <= 0) {
+    _inspectSection(lines, 'error', text);
+    return;
+  }
+  _inspectSection(lines, 'error', text.substring(0, cut).trim());
+  _inspectSection(lines, 'provider detail', text.substring(cut).trim());
 }
 
 /// The request-blob pointers for an assistant row (issue #385 AC9): the
