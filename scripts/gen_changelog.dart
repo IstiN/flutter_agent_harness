@@ -182,7 +182,20 @@ Entry? _parseEntry(String path, String name, List<EntryProblem> problems) {
     return null;
   }
   final fm = text.substring(3, close);
-  final body = text.substring(text.indexOf('\n', close + 1) + 1).trim();
+  // gh-2463 review thread 3: a file ENDING at the closing `---` (no
+  // trailing newline) made indexOf('\n', close + 1) return -1 and
+  // substring(0) hand back the WHOLE file — the raw frontmatter rode the
+  // aggregate verbatim. No newline after the close = no body: a structural
+  // problem, not a parse quirk.
+  final bodyStart = text.indexOf('\n', close + 1);
+  if (bodyStart < 0) {
+    problems.add(
+      EntryProblem(name, 'no body after the frontmatter close — the file '
+          'ends at `---`; add a blank line + 1–3 `- ` bullet lines after it'),
+    );
+    return null;
+  }
+  final body = text.substring(bodyStart + 1).trim();
   final meta = <String, String>{};
   for (final line in fm.split('\n')) {
     final idx = line.indexOf(':');
@@ -207,6 +220,16 @@ Entry? _parseEntry(String path, String name, List<EntryProblem> problems) {
     return null;
   }
   final bullets = body.split('\n').where((l) => l.startsWith('- ')).length;
+  // gh-2463 review thread 4: the notes body is pinned as flat `- ` bullets
+  // (the AC2 parity shape) — a prose body with zero bullet lines would land
+  // bullet-less in the release notes.
+  if (bullets == 0) {
+    problems.add(
+      EntryProblem(name, 'body must be 1–3 `- ` bullet lines — prose without '
+          'bullets breaks the flat release-notes shape'),
+    );
+    return null;
+  }
   if (bullets > 3) {
     stdout.writeln(
       '::warning::$name: $bullets bullets — keep entries to 1–3 '

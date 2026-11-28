@@ -229,6 +229,20 @@ void main() {
     expect(wf, contains('python3 scripts/check_changelog_entry.py'));
   });
 
+  // gh-2463 review thread 2 (IMPORTANT): `--validate` is the documented
+  // "CI lint" (docs/agents/commits-releases.md, generator header) — the
+  // static job must actually run it, or a malformed entry lands green and
+  // reds the release train at cut time. Gated on the entries dir existing:
+  // the post-release housekeeping arm legitimately has none (git drops an
+  // emptied dir), same fail-safe direction as release_notes.sh preference
+  // 1b (`[ -d changelog/entries ]`).
+  test('ci.yml static job wires `gen_changelog.dart --validate` as the lint',
+    () {
+    final wf = File('.github/workflows/ci.yml').readAsStringSync();
+    expect(wf, contains('dart scripts/gen_changelog.dart --validate'));
+    expect(wf, contains('[ -d changelog/entries ]'));
+  });
+
   test('the real repo passes the guard (allow-list carries changelog/)', () {
     final r = Process.runSync(
       'python3',

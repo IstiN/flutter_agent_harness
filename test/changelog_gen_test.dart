@@ -195,6 +195,46 @@ void main() {
           .writeAsStringSync('');
       expect(_gen(['--validate'], dir).exitCode, 0);
     });
+
+    // gh-2463 review thread 3 (IMPORTANT): a file whose frontmatter close
+    // is the LAST line (no trailing newline) used to make
+    // `text.indexOf('\n', close + 1)` return -1 → substring(0) took the
+    // WHOLE file as the "body" → the raw frontmatter rode --validate
+    // (exit 0) and the release-notes aggregate verbatim.
+    test('frontmatter close at EOF (no trailing newline) fails loudly', () {
+      final dir = _fixture('validate-fm-close-eof');
+      _entry(dir, '18-x.md', '---\ntype: fix\nissue: 18\n---');
+      final r = _gen(['--validate'], dir);
+      expect(r.exitCode, 1);
+      expect(r.stdout, contains('::error::'));
+      expect(r.stdout, contains('18-x.md'));
+      expect(r.stdout, contains('no body after the frontmatter close'));
+      // The aggregate modes must fail loudly too — never publish the
+      // frontmatter as the notes body.
+      final agg = _gen(['--stdout'], dir);
+      expect(agg.exitCode, 1);
+      expect(agg.stdout, isNot(contains('type: fix')));
+    });
+
+    // gh-2463 review thread 4 (SUGGESTION): the notes body is pinned as
+    // flat `- ` bullets (the AC2 parity shape) — a prose body with zero
+    // bullet lines used to pass --validate and land bullet-less in the
+    // release notes. (4 bullets → warn-but-pass is pinned above at
+    // 'more than 3 bullets warns but passes'.)
+    test('bullet-less prose body fails (notes shape is 1–3 `- ` lines)', () {
+      final dir = _fixture('validate-no-bullets');
+      _entry(
+        dir,
+        '19-x.md',
+        '---\ntype: fix\nissue: 19\n---\n\n'
+        'Just a prose paragraph with no bullet lines at all.\n',
+      );
+      final r = _gen(['--validate'], dir);
+      expect(r.exitCode, 1);
+      expect(r.stdout, contains('::error::'));
+      expect(r.stdout, contains('19-x.md'));
+      expect(r.stdout, contains('body must be 1–3 `- ` bullet lines'));
+    });
   });
 
   group('--write-changelog (thin generated index)', () {
