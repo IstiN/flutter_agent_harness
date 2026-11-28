@@ -105,12 +105,6 @@ extension AgentCliTestSeams on AgentCli {
   @visibleForTesting
   Set<String> pickerHandlerKeysForTest() => _tuiPickerHandlers.keys.toSet();
 
-  /// Test seam: the settings-hub item keys that have a dispatch target
-  /// (a hub row without one closes silently on Enter).
-  @visibleForTesting
-  Set<String> settingsPickerHandlerKeysForTest() =>
-      _settingsPickerHandlers.keys.toSet();
-
   /// Test seam routing a wizard-picker selection through the live TUI
   /// dispatch (`_tuiPickerSelected`): completes the pending `_pickOption`
   /// answer the way a real picker row does — the settings flows'

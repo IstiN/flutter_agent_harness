@@ -441,6 +441,12 @@ void main() {
             'm3208\nm1494 x', // a tagged line after the stripped alias
             'm3208\n\n\n  отступ сохранён?',
             'm3208\r\nготово',
+            // gh-2472 review round 3: BMP Unicode spaces the regex `\s`
+            // matches — the message-initial alias must strip before each.
+            'm3208\u2003текст', // em space
+            'm3208\u1680текст', // ogham space mark
+            'm3208\u2028текст', // line separator
+            'm3208\u{1F600} x', // a lone surrogate is NOT `\s` — verbatim
             'm1482 Один\nkeep m143 inline\nm9  [expand]\nm3u8 x\nm2',
             'm1482 Один\nm1494\nm1510 Два',
             'm3u8 stream',

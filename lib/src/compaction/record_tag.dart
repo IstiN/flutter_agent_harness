@@ -269,12 +269,14 @@ final class RecordTagEchoStreamFilter {
 bool _isDigit(int ch) => ch >= 0x30 && ch <= 0x39;
 
 /// Whether the code unit matches the `_leadingAlias` lookahead's `\s` —
-/// the same regex class as `record_tag_echo.dart`'s `(?=\s|$)` (ASCII
-/// whitespace plus the Unicode spaces `\s` knows; astral code units are
-/// never `\s`).
+/// the same regex class as `record_tag_echo.dart`'s `(?=\s|$)`: every
+/// BMP whitespace `\s` knows (ASCII spaces, NBSP, ogham, en/em/thin
+/// spaces, line separators, NBSP variants, ideographic space, BOM). A
+/// lone surrogate half is never `\s`, so astral code units split into
+/// two non-matching units — which keeps an alias followed by an emoji
+/// verbatim, exactly like the seam's regex.
 final RegExp _regexSpace = RegExp(r'\s');
-bool _isRegexSpace(int ch) =>
-    ch < 0x100 && _regexSpace.hasMatch(String.fromCharCode(ch));
+bool _isRegexSpace(int ch) => _regexSpace.hasMatch(String.fromCharCode(ch));
 
 /// Whether the code unit is an ECMAScript line terminator — the original
 /// line boundary a stripped alias's trimLeft may reveal.
