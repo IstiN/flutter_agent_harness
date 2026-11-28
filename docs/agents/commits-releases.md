@@ -36,11 +36,14 @@
   `scripts/stamp_staged_release.sh`, staged version == tag guarded
   pre-upload), store/mobile builds stamp `--build-name/--build-number` from
   the derived tag version, `install_local.sh` stamps `version.txt` from
-  `git describe`. CHANGELOG.md is curated-only: PRs add lines under
-  `## Unreleased`; the release folds it into the tag's section AT STAGE
-  TIME (`scripts/release_notes.sh` preference order: curated `## <version>`
-  section → curated `## Unreleased` body → conventional commits since the
-  previous tag). The release PAGE body (never the changelog itself) is
+  `git describe`. Changelog curation is per-entry files (gh-2463): PRs add
+  their OWN `changelog/entries/<issue-or-pr>-<slug>.md` — never the shared
+  file; the release folds the pending entries into the tag's section AT
+  STAGE TIME (`scripts/release_notes.sh` preference order: curated
+  `## <version>` section → `changelog/entries/` aggregate via
+  `scripts/gen_changelog.dart` → legacy curated `## Unreleased` body →
+  conventional commits since the previous tag). The release PAGE body
+  (never the changelog itself) is
   bounded under GitHub's hard 125,000-character release-body cap by
   `scripts/release_notes_cap.sh` at the two release-body writers
   (`release_lazy_draft.sh` + `release_attach_or_create.sh`) — gh-2337:
@@ -188,3 +191,49 @@
   `daily-publish.yml` play leg dispatches `build-mobile.yml` with
   `android_content=all`, so every release train redeploys the listing.
 
+
+## Changelog entries (gh-2463 — per-change files, no shared file)
+
+- ONE Markdown file per change: `changelog/entries/<issue-or-pr>-<slug>.md`
+  (numeric prefix = the sort + rework-dedupe key; slug lowercase-hyphen).
+  Parallel PRs never touch a shared file, so changelog merge conflicts are
+  structurally impossible.
+- Entry format — YAML frontmatter + 1–3 user-facing bullet lines:
+
+  ```
+  ---
+  type: feat|fix|perf|docs|ci|other   # required; `other` is the fallback
+  scope: <short scope, optional>
+  issue: <issue or PR number, optional>
+  ---
+
+  - the user-facing change in 1–3 lines (rides the release notes verbatim)
+  ```
+
+- Aggregation: `dart scripts/gen_changelog.dart` — `--stdout` prints the
+  pending aggregate (flat bullets, entry order — the same shape the old
+  curated `## Unreleased` body had), `--group-by-type` groups under type
+  headings, `--validate` is the CI lint, `--write-changelog` regenerates
+  the thin CHANGELOG.md index (preamble + `## Unreleased` + archive
+  index). Entries sharing an `issue:` are rework duplicates: the LAST file
+  wins, the loser is dropped from the notes (reported on stderr).
+- Release time: `scripts/release_notes.sh` aggregates the pending entries
+  into the release body; `stamp_staged_release.sh` folds them into the
+  tag's `## <version>` section in the STAGED package (gh-1522 — the repo
+  files are never mutated by a release). Pending entries keep
+  accumulating under `## Unreleased` until the tag cuts, exactly like the
+  old curated window — but per-file now, so housekeeping (moving your OWN
+  consumed entry into `changelog/archive/`) is a conflict-free one-file PR.
+- CHANGELOG.md is a GENERATED index: `--write-changelog` writes it, and
+  the CI changelog entries guard (`scripts/check_changelog_entry.py`,
+  ci.yml `static` job) requires every PR to add an entry file (or carry
+  the `no-changelog` label — pure meta/CI/test changes). It also enforces
+  immutability: an edit to CHANGELOG.md must be byte-identical to the
+  regenerated output (hand wording fails), and rewriting/deleting
+  CHANGELOG_ARCHIVE.md or `changelog/archive/**` fails — ADDING archive
+  files is the migration/housekeeping path and stays allowed.
+- History: `changelog/archive/<version>.md` holds one file per version
+  (1.0.506–1.0.551 migrated verbatim from the old CHANGELOG.md;
+  `legacy-unreleased.md` is the retired curated Unreleased body that rode
+  releases 1.0.552+); the pre-1.0.506 tail stays in the root
+  `CHANGELOG_ARCHIVE.md` (gh-1452).
