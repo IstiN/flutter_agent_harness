@@ -345,6 +345,22 @@ Map<String, Object?> _publicProfile(FaProductConfig config) => {
   if (config.signInUrl != null) 'signInUrl': config.signInUrl.toString(),
   if (config.channels != null) 'channels': config.channels,
   if (config.themePicker != null) 'themePicker': config.themePicker,
+  // The agent identity + host web-tools gateway (gh-2391 addendum 9): the
+  // web runtime reads ONLY this emitted profile, so dropping the keys here
+  // silently reverts agentName to "Fa" and the tools to the stock chain.
+  // Stock defaults stay absent to keep stock profiles byte-stable.
+  if (config.agentName != 'Fa') 'agentName': config.agentName,
+  if (config.webTools != null) 'tools': _publicWebTools(config.webTools!),
+};
+
+/// The verbatim public form of the host web-tools endpoints (gh-2391
+/// addendum 9 item 3): runtime urls, never credentials — the session key
+/// rides the live bridge at call time.
+Map<String, Object?> _publicWebTools(FaHostWebTools tools) => {
+  if (tools.webSearchUrl != null)
+    'webSearch': {'url': tools.webSearchUrl.toString()},
+  if (tools.webFetchUrl != null)
+    'webFetch': {'url': tools.webFetchUrl.toString()},
 };
 
 /// The verbatim public form of a validated [HostConnectionConfig].
