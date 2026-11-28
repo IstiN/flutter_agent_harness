@@ -147,6 +147,10 @@ extension _AiinProviderCommands on AgentCli {
     return runAiinConnectCliFlow(
       onStatus: io.writeln,
       shouldOpenBrowserFn: () => shouldLaunchBrowser(noBrowserFlag: noBrowser),
+      // gh-2466: the provider this flow already asked for rides the hosted
+      // login URL as a hint — the page preselects it and skips its own
+      // picker (one selection per sign-in).
+      provider: provider,
       // The configured HTTP client (faked in tests) carries the exchange
       // and key-registration calls; only the loopback callback is a real
       // socket.

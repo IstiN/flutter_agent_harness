@@ -20,7 +20,8 @@ Future<void> _pump(WidgetTester tester, Widget child) {
 Future<ModelsEndpointInfo> _noModels(
   String baseUrl, {
   required String apiKey,
-}) async => (const <String>[], const <String, int>{}, const <String, int>{});
+}) async =>
+    (const <String>[], const <String, int>{}, const <String, int>{}, const <String, List<String>>{});
 
 /// A `/models` fetch reporting image, TTS and vision models (the picker and
 /// capability-hints path).
@@ -31,6 +32,7 @@ Future<ModelsEndpointInfo> _someModels(
   const ['gpt-image-1', 'dall-e-3', 'tts-1', 'gpt-4o'],
   const <String, int>{},
   const <String, int>{},
+  const <String, List<String>>{},
 );
 
 MediaSlotOverride _override({

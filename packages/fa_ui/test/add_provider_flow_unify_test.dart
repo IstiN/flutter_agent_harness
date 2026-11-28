@@ -12,7 +12,7 @@ Future<ModelsEndpointInfo> _noModels(
   String baseUrl, {
   required String apiKey,
 }) async {
-  return (const <String>[], const <String, int>{}, const <String, int>{});
+  return (const <String>[], const <String, int>{}, const <String, int>{}, const <String, List<String>>{});
 }
 
 /// Issue #975: EVERY add-provider entry opens the ONE settings flow —
@@ -200,7 +200,7 @@ void main() {
       required String apiKey,
     }) async {
       fetches++;
-      return (const <String>[], const <String, int>{}, const <String, int>{});
+      return (const <String>[], const <String, int>{}, const <String, int>{}, const <String, List<String>>{});
     }
 
     await tester.pumpWidget(

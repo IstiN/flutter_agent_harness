@@ -235,6 +235,31 @@ void main() {
     });
   });
 
+  group('buildAiinLoginUrl provider hint (gh-2466)', () {
+    test('carries the picked provider so the hosted page skips its picker',
+        () {
+      final url = buildAiinLoginUrl(
+        redirectUri: 'http://127.0.0.1:1/callback',
+        state: 's',
+        provider: 'github',
+      );
+      expect(url.queryParameters['provider'], 'github');
+      // The established query contract stays intact.
+      expect(url.queryParameters['client_redirect_uri'],
+          'http://127.0.0.1:1/callback');
+      expect(url.queryParameters['state'], 's');
+      expect(url.queryParameters['client_type'], 'desktop');
+    });
+
+    test('omits the parameter when no provider is given', () {
+      final url = buildAiinLoginUrl(
+        redirectUri: 'http://127.0.0.1:1/callback',
+        state: 's',
+      );
+      expect(url.queryParameters.containsKey('provider'), isFalse);
+    });
+  });
+
   group('error mapping', () {
     test('non-JSON error bodies still produce an AiinAuthException', () async {
       final client = _client(

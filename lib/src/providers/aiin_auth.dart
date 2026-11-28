@@ -157,6 +157,14 @@ Uri buildAiinLoginUrl({
   String clientType = 'desktop',
   String environment = 'prod',
   String authBaseUrl = aiinAuthBaseUrl,
+
+  /// The identity provider the client surface already picked (gh-2466):
+  /// rides the login URL as a `provider` hint so the hosted page can
+  /// preselect it and skip its own picker — one selection per sign-in.
+  /// The hosted-page side of the contract is the IstiN/aiin companion
+  /// issue; an unrecognised parameter is harmless (the page keeps its
+  /// picker). Omitted by the app surfaces that never ask client-side.
+  String? provider,
 }) {
   return Uri.parse('$authBaseUrl/login').replace(
     queryParameters: {
@@ -164,6 +172,7 @@ Uri buildAiinLoginUrl({
       'state': state,
       'client_type': clientType,
       'environment': environment,
+      if (provider != null && provider.isNotEmpty) 'provider': provider,
     },
   );
 }

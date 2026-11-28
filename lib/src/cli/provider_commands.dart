@@ -222,7 +222,12 @@ extension on AgentCli {
       // parameter drops the chat list and answers exactly the
       // catalog's per-slot media ids.
       final merged = remoteCatalogEnrichment.mergeFor(
-        (ids, const <String, int>{}, const <String, int>{}),
+        (
+          ids,
+          const <String, int>{},
+          const <String, int>{},
+          const <String, List<String>>{},
+        ),
         spec.name,
         mediaSlot: [mediaSlot],
       );
@@ -267,7 +272,7 @@ extension on AgentCli {
     // Identity by kind, not a name literal (issue #772): the branch fires
     // for the catalog name AND the adapter kind.
     if (resolveCliProviderSpec(providerName)?.kind == 'chatgpt-codex') {
-      final (ids, _, _) = await fetchModelsForEndpoint(
+      final (ids, _, _, _) = await fetchModelsForEndpoint(
         baseUrl,
         apiKey: key,
         provider: 'chatgpt',
@@ -2057,9 +2062,11 @@ extension on AgentCli {
           return;
         }
         _streamFunction = _agent.streamFunction;
+        // The cached model list belongs to the previous provider/endpoint.
         _modelCache = const [];
         _modelContextWindows = const {};
         _modelMaxTokens = const {};
+        _modelInputModalities = const {};
         _lastModelList = null;
         await _session?.appendModelChange(
           provider: spec.name,
@@ -2090,6 +2097,16 @@ extension on AgentCli {
         providerName: customName ?? spec.name,
       );
       _agent.streamFunction = _streamFunction;
+      // The cached model list belongs to the previous provider/endpoint —
+      // clear BEFORE the build so the rebuilt model's input modalities are
+      // derived from THIS endpoint (the refresh below re-reports them; the
+      // previous provider's verdict must never ride the switch, gh-2466
+      // review: the modalities cache is cleared alongside its siblings).
+      _modelCache = const [];
+      _modelContextWindows = const {};
+      _modelMaxTokens = const {};
+      _modelInputModalities = const {};
+      _lastModelList = null;
       final builtModel = buildCatalogModel(
         spec.name,
         modelId,
@@ -2104,7 +2121,7 @@ extension on AgentCli {
         reasoning: builtModel.reasoning,
         // The catalog default claims ['text', 'image'] for every model of the
         // provider — the shared heuristic is more accurate per id.
-        input: inputModalitiesFor(modelId),
+        input: _switchInputModalities(modelId),
         cost: builtModel.cost,
         contextWindow: builtModel.contextWindow,
         maxTokens: builtModel.maxTokens,
@@ -2116,11 +2133,6 @@ extension on AgentCli {
         authHeader: authHeader,
         maxImages: builtModel.maxImages,
       );
-      // The cached model list belongs to the previous provider/endpoint.
-      _modelCache = const [];
-      _modelContextWindows = const {};
-      _modelMaxTokens = const {};
-      _lastModelList = null;
       unawaited(_refreshModelCache());
       await _session?.appendModelChange(
         provider: spec.name,

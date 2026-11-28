@@ -157,6 +157,7 @@ void main() {
             const ['m-1', 'm-2'],
             const <String, int>{'m-1': 64000},
             const <String, int>{},
+            const <String, List<String>>{},
           ),
     );
 
