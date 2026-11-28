@@ -292,5 +292,82 @@ void main() {
         expect(hasRecordTag('[3:hidden·tool_result·12]'), isFalse);
       },
     );
+
+    group('gh-2472: RecordTagEchoStreamFilter (render-path echo hygiene)', () {
+      /// Feeds [chunks] through a fresh filter, flushing at the end.
+      String streamed(List<String> chunks) {
+        final filter = RecordTagEchoStreamFilter();
+        return [
+          for (final chunk in chunks) filter.push(chunk),
+          filter.flush(),
+        ].join();
+      }
+
+      test('a whole-delta tag is swallowed without flicker', () {
+        expect(
+          streamed(['m1482 ', 'Принято. Ставлю ватч…']),
+          'Принято. Ставлю ватч…',
+        );
+      });
+
+      test('a tag split across deltas never flickers a fragment', () {
+        // The user-facing contract (gh-2472): the intermediate `m14`
+        // fragment must never be emitted — the classification waits for
+        // the byte that decides tag vs text.
+        expect(streamed(['m14', '82 Принято…']), 'Принято…');
+        expect(streamed(['m', '1', '4', '8', '2', ' ', 'x']), 'x');
+      });
+
+      test('multi-line: every line start is classified independently', () {
+        expect(
+          streamed(['m1482 Один\n', 'm1494\n', 'm1510 Два']),
+          'Один\nm1494\nДва',
+        );
+      });
+
+      test('flush emits an undecided tail verbatim (regex contract)', () {
+        // No trailing space — `^m\d+ ` never matched, so the bytes are the
+        // model's own words and must survive.
+        expect(streamed(['m1494']), 'm1494');
+        expect(streamed(['text\nm2']), 'text\nm2');
+      });
+
+      test('an alias-like opening that is not a tag passes through', () {
+        // The `m3u8` lookahead rule (record_tag_echo.dart): digits followed
+        // by a non-space are ordinary text.
+        expect(streamed(['m3u8 ', 'stream']), 'm3u8 stream');
+        expect(streamed(['m42x ', 'y']), 'm42x y');
+      });
+
+      test('a mid-message newline re-arms the classification', () {
+        expect(streamed(['Принято\n', 'm1482 ', 'Жду PR']), 'Принято\nЖду PR');
+      });
+
+      test('a tagged line with multiple trailing spaces swallows them all', () {
+        expect(streamed(['m7   spaced']), 'spaced');
+      });
+
+      test('flush resets — the next message classifies from a fresh line', () {
+        final filter = RecordTagEchoStreamFilter();
+        expect(filter.push('m1'), '');
+        expect(filter.flush(), 'm1');
+        expect(filter.push('ok'), 'ok');
+        expect(filter.flush(), '');
+        // A new message's leading tag is recognized again after the reset.
+        expect(filter.push('m1482 '), '');
+        expect(filter.push('text'), 'text');
+      });
+
+      test('stripRecordTags and the stream filter agree on whole texts', () {
+        const text = 'm1482 Один\nkeep m143 inline\nm9  [expand]\nm3u8 x\nm2';
+        final filter = RecordTagEchoStreamFilter();
+        var viaStream = filter.push(text);
+        // A complete text ends without a trailing newline: an undecided
+        // tail can only exist when the text ENDS inside `m\d+` — here `m2`
+        // has no trailing space, so flush must keep it (the regex rule).
+        viaStream += filter.flush();
+        expect(viaStream, stripRecordTags(text));
+      });
+    });
   });
 }

@@ -1,4 +1,5 @@
 import '../context.dart';
+import '../compaction/record_tag.dart' show stripRecordTags;
 import '../session/obligations_ledger.dart' show isObligationsLedgerNotice;
 import '../session/session_tree.dart'
     show branchSummaryPrefix, compactionSummaryPrefix;
@@ -233,11 +234,9 @@ List<String> replayLinesTui(
           ).map((line) => line.trim().isEmpty ? line : dim(line)),
         );
       }
-      final texts = content
-          .whereType<TextContent>()
-          .map((b) => b.text)
-          .join('\n')
-          .trim();
+      final texts = stripRecordTags(
+        content.whereType<TextContent>().map((b) => b.text).join('\n'),
+      ).trim();
       var firstText = true;
       if (texts.isNotEmpty) {
         for (final line in texts.split('\n')) {
@@ -322,7 +321,12 @@ List<String>? _replayUserPrelude(Message message) {
   AssistantMessage(:final content) => (
     'fa:  ',
     [
-      content.whereType<TextContent>().map((b) => b.text).join('\n').trim(),
+      // gh-2472: the persisted text renders without the model-facing
+      // `m<N> ` echoes (sessions recorded before the persist-side echo
+      // hygiene still carry them on disk).
+      stripRecordTags(
+        content.whereType<TextContent>().map((b) => b.text).join('\n'),
+      ).trim(),
       for (final call in content.whereType<ToolCall>())
         replayToolRow(
           call,

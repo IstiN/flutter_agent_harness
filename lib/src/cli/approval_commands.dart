@@ -1523,7 +1523,19 @@ extension ApprovalCommands on AgentCli {
   /// end-of-message markdown render. Split out of [_onMessageUpdate] so
   /// the dispatcher stays under the CRAP ratchet.
   void _onTextDelta(TextDeltaEvent assistantMessageEvent) {
-    final delta = assistantMessageEvent.delta;
+    // gh-2472: the delta routes through the echo-hygiene filter FIRST — a
+    // model-facing `m<N> ` record tag at a line start (its bytes split
+    // across deltas included) never reaches a user surface. The tail the
+    // filter releases at message end rejoins the SAME path, unrefiltered
+    // (it is already classified).
+    _emitTextDelta(_recordTagEcho.push(assistantMessageEvent.delta));
+  }
+
+  /// Emits one answer delta (gh-1433 surface grammar: live surfaces
+  /// stream, the styled surfaces buffer for their end-of-message render).
+  /// [delta] arrives already echo-sanitized.
+  void _emitTextDelta(String delta) {
+    if (delta.isEmpty) return;
     if (_useTui || !_buffersAnswer) {
       // Live surfaces.
       if (!_useTui && _postToolHolds.isNotEmpty) {
@@ -1744,6 +1756,12 @@ extension ApprovalCommands on AgentCli {
   /// [_onAssistantMessageEnd] so the stop-reason dispatch stays under the
   /// CRAP ratchet (gh-1198: the thinking-reset branches tipped it over).
   void _flushAssistantStreamAtEnd() {
+    // gh-2472: release a still-undecided line-start tail verbatim (the
+    // regex contract — no trailing space, no tag) through the SAME
+    // emission path, so the streamed faces paint it and the buffered
+    // faces render it; flush resets the filter for the next message.
+    final echoTail = _recordTagEcho.flush();
+    if (echoTail.isNotEmpty) _emitTextDelta(echoTail);
     if (_useTui || !_buffersAnswer) {
       // gh-1933 AC4: the collapsed thinking row emits before any trailing
       // newline — a pure-thinking message still renders its one row.

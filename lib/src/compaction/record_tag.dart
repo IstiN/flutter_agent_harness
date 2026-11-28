@@ -87,6 +87,94 @@ List<ContentBlock> messageBlocks(Message message) => switch (message) {
 /// the wire tags carries none once stored.
 String stripRecordTags(String text) => text.replaceAll(_recordTagEchoLines, '');
 
+/// Streaming-safe echo hygiene for user-facing render paths (gh-2472).
+///
+/// [stripRecordTags] works on COMPLETE texts; a live delta stream must not
+/// show the tag's own bytes even transiently — a prefix split across
+/// deltas (`m14` then `82 При…`) would flicker `m14` onto the screen
+/// before the tag completed. This filter classifies each LINE START
+/// before any of its bytes are emitted: it holds only the undecided `m`
+/// + digits prefix, swallows it (plus the tag's trailing spaces — across
+/// delta boundaries too) when a space confirms the tag, and releases the
+/// bytes verbatim the moment they cannot be a tag. A line start re-arms
+/// the classification, so every line of a multi-line reply is judged
+/// independently — the same semantics as [stripRecordTags]'s `^m\d+ +`
+/// (the gh-2412 contract; a tab is not a tag terminator, `m3u8 ` is not
+/// an alias). [flush] emits an undecided tail verbatim — a text ending
+/// `m2` with no trailing space never matched the rule, so the bytes are
+/// the model's own words — and resets, so the next message classifies
+/// from a fresh line.
+enum _TagScan {
+  /// At a line start: the next byte decides between a candidate alias and
+  /// ordinary text.
+  lineStart,
+
+  /// Inside a `m<digits> ` candidate — bytes held in [_aliasBuffer].
+  alias,
+
+  /// Tag confirmed: swallowing the rule's trailing ` +` run.
+  spaces,
+
+  /// Past the line start: pass-through until the next newline.
+  text,
+}
+
+final class RecordTagEchoStreamFilter {
+  _TagScan _scan = _TagScan.lineStart;
+
+  /// The undecided `m` + digits prefix of the current line.
+  final StringBuffer _aliasBuffer = StringBuffer();
+
+  /// Streams one delta; returns the text safe to render now (possibly
+  /// empty — bytes held back while a line start is still undecided).
+  String push(String delta) {
+    final out = StringBuffer();
+    for (final ch in delta.codeUnits) {
+      switch (_scan) {
+        case _TagScan.lineStart when ch == 0x6D /* m */ :
+          _scan = _TagScan.alias;
+          _aliasBuffer
+            ..clear()
+            ..writeCharCode(ch);
+        case _TagScan.lineStart:
+          out.writeCharCode(ch);
+          _scan = ch == 0x0A /* \n */ ? _TagScan.lineStart : _TagScan.text;
+        case _TagScan.alias when _isDigit(ch):
+          _aliasBuffer.writeCharCode(ch);
+        case _TagScan.alias when ch == 0x20 /* space */ :
+          _scan = _TagScan.spaces;
+        case _TagScan.alias:
+          // Not a tag (`m3u8`, `m42x`, a bare `m` line): release the
+          // held bytes and continue as text.
+          out.write(_aliasBuffer.toString());
+          out.writeCharCode(ch);
+          _scan = ch == 0x0A ? _TagScan.lineStart : _TagScan.text;
+        case _TagScan.spaces when ch == 0x20:
+          break; // the rule strips the whole ` +` run
+        case _TagScan.spaces:
+          out.writeCharCode(ch);
+          _scan = ch == 0x0A ? _TagScan.lineStart : _TagScan.text;
+        case _TagScan.text:
+          out.writeCharCode(ch);
+          if (ch == 0x0A) _scan = _TagScan.lineStart;
+      }
+    }
+    return out.toString();
+  }
+
+  /// End of the message: emits whatever stayed undecided verbatim and
+  /// resets the filter for the next message.
+  String flush() {
+    final held = _scan == _TagScan.alias ? _aliasBuffer.toString() : '';
+    _scan = _TagScan.lineStart;
+    _aliasBuffer.clear();
+    return held;
+  }
+}
+
+/// Whether the code unit is an ASCII digit (a tag alias is `m<digits>`).
+bool _isDigit(int ch) => ch >= 0x30 && ch <= 0x39;
+
 /// One transcript build: the projected messages plus the record alias each
 /// message projects from (aligned by index, `null` = a non-record) and
 /// the file-order index the aliases resolve against — the tag epoch the

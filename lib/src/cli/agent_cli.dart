@@ -138,7 +138,8 @@ import '../compaction/newest_user_turn.dart'
         newestBoundarySummaries,
         newestRealUserTurnIndex;
 import '../compaction/overhead_calibration.dart';
-import '../compaction/record_tag.dart' show TranscriptSeqMap;
+import '../compaction/record_tag.dart'
+    show RecordTagEchoStreamFilter, TranscriptSeqMap, stripRecordTags;
 import '../compaction/soft_window.dart' show SoftWindowNotice, softWindowRegime;
 import '../compaction/tuning.dart';
 import '../compaction/structured/continuation_notice.dart';
@@ -1678,6 +1679,13 @@ class AgentCli {
   /// surfaces (issue #774): line mode and headless cannot repaint, so the
   /// message buffers here and renders once, whole, at message end.
   final StringBuffer _assistantText = StringBuffer();
+
+  /// gh-2472: the streaming echo-hygiene filter — the model-facing `m<N>`
+  /// record tags a reply echoes are classified at LINE boundaries and
+  /// never reach the user-facing output, even when the tag's bytes split
+  /// across deltas. Fed by `_onTextDelta` (approval_commands.dart);
+  /// flushed at message end.
+  final RecordTagEchoStreamFilter _recordTagEcho = RecordTagEchoStreamFilter();
 
   /// The open THINKING window (gh-1933 AC4): on the TUI chrome face the
   /// per-delta dim stream is replaced by ONE collapsed `> Thought for Ns`
