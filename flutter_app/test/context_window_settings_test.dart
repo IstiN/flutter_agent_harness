@@ -12,6 +12,7 @@
 /// - the web stub renders the not-configurable note on both.
 library;
 
+import 'dart:async' show Completer;
 import 'dart:io' as io;
 
 import 'package:fa/services/agent_service.dart';
@@ -385,6 +386,88 @@ void main() {
         expect(applied, [null], reason: 'the live re-cap runs after the write');
       },
     );
+
+    testWidgets('a save in flight blocks re-entry (the sibling pattern)', (
+      tester,
+    ) async {
+      // gh-2479 review: a Save/Clear double-tap used to fire two
+      // concurrent read-modify-write edits of config.yaml. The in-flight
+      // gate (the per-model section's _busy pattern) must let exactly
+      // one write through.
+      final gate = Completer<void>();
+      var firstWriteStarted = false;
+      final writes = <int?>[];
+      await _pump(
+        tester,
+        ContextWindowCapSection(
+          resolve: ({projectDir, homeDir}) =>
+              const AppContextCapResolution(65536, AppContextCapSource.user),
+          write: (value, {required layer, projectDir, homeDir}) async {
+            if (!firstWriteStarted) {
+              firstWriteStarted = true;
+              writes.add(value);
+              await gate.future;
+              return '/home/.fah/config.yaml';
+            }
+            writes.add(value);
+            return '/home/.fah/config.yaml';
+          },
+        ),
+      );
+      await tester.tap(find.text('Save'));
+      await tester.pump();
+      expect(firstWriteStarted, isTrue, reason: 'the first save is in flight');
+      await tester.tap(find.text('Save'));
+      await tester.pump();
+      await tester.tap(find.text('Clear cap'));
+      await tester.pump();
+      gate.complete();
+      await tester.pump();
+      await tester.pump();
+      expect(writes, [
+        65536,
+      ], reason: 'the double-tap fired one read-modify-write, not two');
+    });
+
+    testWidgets('a saved cap refreshes the caption without an ancestor pump', (
+      tester,
+    ) async {
+      // gh-2479 review: _reload() mutated _resolution without setState,
+      // so after a successful save the source caption and the Clear
+      // button stayed stale until an ancestor rebuilt.
+      var resolution = const AppContextCapResolution(
+        65536,
+        AppContextCapSource.user,
+      );
+      await _pump(
+        tester,
+        ContextWindowCapSection(
+          resolve: ({projectDir, homeDir}) => resolution,
+          write: (value, {required layer, projectDir, homeDir}) async {
+            // The write clears the cap at the layer it edited.
+            resolution = const AppContextCapResolution(
+              null,
+              AppContextCapSource.none,
+            );
+            return '/home/.fah/config.yaml';
+          },
+        ),
+      );
+      expect(find.textContaining('user ~/.fah/config.yaml'), findsOneWidget);
+      expect(find.text('Clear cap'), findsOneWidget);
+      await tester.tap(find.text('Clear cap'));
+      await tester.pump();
+      expect(
+        find.textContaining('user ~/.fah/config.yaml'),
+        findsNothing,
+        reason: 'the caption follows the post-save re-resolution',
+      );
+      expect(
+        find.text('Clear cap'),
+        findsNothing,
+        reason: 'the Clear button disappears with the cap',
+      );
+    });
 
     testWidgets('web: the not-configurable note replaces the field', (
       tester,

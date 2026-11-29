@@ -58,6 +58,13 @@ Future<String> writeAppContextWindowCap(
   if (layer == AppContextCapSource.none) {
     throw ArgumentError('none is not a writable layer — pick project or user');
   }
+  if (layer == AppContextCapSource.project && projectDir == null) {
+    // A project-layer write without a directory would interpolate
+    // `null/.fah/config.yaml` (and the ConfigService env would fall back
+    // to the user home) — the "project" choice silently landing in the
+    // user file. The caller contract: project requires a projectDir.
+    throw ArgumentError('layer project requires a projectDir');
+  }
   final home = homeDir ?? desktopHomeDir();
   if (layer == AppContextCapSource.user && home == null) {
     throw const ConfigException(

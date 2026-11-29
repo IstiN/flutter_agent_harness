@@ -1475,6 +1475,15 @@ class AgentService extends ChangeNotifier
     // The endpoint layer contributes only when the carried value carries
     // NEW information: equal to the spec default (or the documented
     // fallback when no spec resolves) it stays on the layer that named it.
+    // The resolver's `remoteCatalog` rung is deliberately left unfed
+    // here: this app never merges `RemoteCatalogEnrichment` windows into
+    // `AgentConfig.contextWindow` (the picker's `EndpointModelsController`
+    // fetch reads the endpoint's `/v1/models` report directly — ain
+    // included, normalized per family since gh-246), so every value this
+    // getter sees is endpoint/preset-shaped and "endpoint report" is the
+    // honest caption. Passing catalog values without that merge would
+    // fabricate provenance, not fix it; the rung stays resolver API for
+    // hosts that merge the catalog.
     final namedByFallback = spec == null && base == fallbackContextWindow;
     final endpoint = (base == spec?.contextWindow || namedByFallback)
         ? null

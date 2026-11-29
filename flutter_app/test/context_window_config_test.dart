@@ -176,6 +176,34 @@ void main() {
         throwsArgumentError,
       );
     });
+
+    test('project layer without a projectDir is refused', () {
+      // gh-2479 review: a project-layer write without a directory would
+      // interpolate `null/.fah/config.yaml` and fall back to the user
+      // file — a wrong-scope write. The guard fires BEFORE any path is
+      // built, on both the set and the clear path.
+      expect(
+        () => writeAppContextWindowCap(
+          200000,
+          layer: AppContextCapSource.project,
+          homeDir: homeDir,
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => writeAppContextWindowCap(
+          null,
+          layer: AppContextCapSource.project,
+          homeDir: homeDir,
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        File('$homeDir/.fah/config.yaml').existsSync(),
+        isFalse,
+        reason: 'the refusal never touches the user file',
+      );
+    });
   });
 
   group('per-model window override', () {

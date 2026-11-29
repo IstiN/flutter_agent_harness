@@ -306,6 +306,11 @@ class _ContextWindowCapSectionState extends State<ContextWindowCapSection> {
   AppContextCapResolution? _resolution;
   late final TextEditingController _cap;
 
+  /// The in-flight save gate (the per-model section's `_busy` pattern):
+  /// a Save/Clear double-tap must not fire two concurrent
+  /// read-modify-write edits of `config.yaml`.
+  bool _busy = false;
+
   @override
   void initState() {
     super.initState();
@@ -351,6 +356,8 @@ class _ContextWindowCapSectionState extends State<ContextWindowCapSection> {
   }
 
   Future<void> _onSave(int? value) async {
+    if (_busy) return;
+    setState(() => _busy = true);
     try {
       final file = await (widget.write ?? _defaultWrite)(
         value,
@@ -359,7 +366,10 @@ class _ContextWindowCapSectionState extends State<ContextWindowCapSection> {
       );
       (widget.apply ?? widget.service?.applyContextWindowCap)?.call(value);
       if (!mounted) return;
-      _reload();
+      // The re-resolution must rebuild the section: the source caption
+      // and the Clear-button visibility follow the saved layer (bare
+      // usage has no ancestor rebuild to lean on).
+      setState(_reload);
       faui.showFahSnack(
         context,
         context.l10n.settingsContextWindowSaved(file),
@@ -372,6 +382,8 @@ class _ContextWindowCapSectionState extends State<ContextWindowCapSection> {
         context.l10n.settingsContextWindowSaveFailed('$error'),
         duration: const Duration(seconds: 6),
       );
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -450,14 +462,14 @@ class _ContextWindowCapSectionState extends State<ContextWindowCapSection> {
             faui.FaButton(
               label: l10n.settingsSaveButton,
               variant: faui.FaButtonVariant.primary,
-              onPressed: () => _onSave(_parsed()),
+              onPressed: _busy ? null : () => _onSave(_parsed()),
             ),
             const SizedBox(width: 12),
             if (resolution?.cap != null)
               faui.FaButton(
                 label: l10n.settingsContextCapClear,
                 variant: faui.FaButtonVariant.ghost,
-                onPressed: () => _onSave(null),
+                onPressed: _busy ? null : () => _onSave(null),
               ),
           ],
         ),
