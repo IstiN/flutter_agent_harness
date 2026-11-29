@@ -414,3 +414,51 @@ extension _SettingsFormFlowHelpers on _AgentSettingsFormState {
     if (mounted) _formSetState(() => _error = e.toString());
   }
 }
+
+/// Category-content helpers of [_SettingsScreenState] (gh-2479 split:
+/// settings.dart sits at the repo's 2800-line god-file ceiling — these
+/// moved out of the class body into the library's extension, same
+/// members, same callers).
+extension _SettingsCategoryHelpers on _SettingsScreenState {
+  /// The connect-a-provider CTA shown only when there is no active
+  /// service AND no saved provider to fall back on — if the user already
+  /// configured one (just hasn't applied it yet) the hint is noise.
+  /// ProvidersSection below carries its own Add-provider row.
+  List<Widget> _noServiceHint(BuildContext context, AgentService? service) {
+    final registry = widget.registry;
+    if (service != null) return const [];
+    if (registry != null && registry.providers.isNotEmpty) return const [];
+    return [
+      _NoServiceSettings(onAddProvider: () => _addProviderFromCta(context)),
+      const SizedBox(height: 16),
+    ];
+  }
+
+  /// The add-provider flow behind the no-service CTA: opens the editor,
+  /// saves the provider, remembers a non-empty key, and reports to
+  /// analytics (issue #702: extracted from build for direct tests).
+  Future<void> _addProviderFromCta(BuildContext context) async {
+    final registry = widget.registry;
+    if (registry == null) return;
+    final result = await Navigator.of(context).push<ProviderEditorResult>(
+      MaterialPageRoute(
+        builder: (_) => ProviderEditorPage(
+          title: context.l10n.settingsAddProvider,
+          modelsFetcher: widget.modelsFetcher,
+        ),
+      ),
+    );
+    if (result == null || result.deleted) return;
+    final provider = await registry.add(
+      name: result.name,
+      baseUrl: result.baseUrl,
+      modelId: result.modelId,
+    );
+    if (result.apiKey.isNotEmpty) {
+      registry.rememberKey(provider.id, result.apiKey);
+      // gh-1378 AC3: the manual add probes the endpoint immediately.
+      QuotaStore.instance.confirmEndpoint(provider.baseUrl);
+    }
+    AppAnalytics.instance.providerSaved('add');
+  }
+}

@@ -13,6 +13,7 @@ import 'package:fa/services/task_models_store.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/ui/screens/model_presets.dart';
 import 'package:fa/ui/screens/providers_section.dart';
+import 'package:fa/ui/screens/context_window_settings.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa/webllm/webllm_types.dart';
@@ -111,6 +112,13 @@ class _ModelsSettingsPageState extends State<ModelsSettingsPage> {
           transformersJsEngine: widget.transformersJsEngine,
           onDeviceConfigStore: onDeviceConfig,
         ),
+        const SizedBox(height: 24),
+        const Divider(),
+        const SizedBox(height: 16),
+        // The active model's context window: effective value + source
+        // layer + the per-model override (gh-2479) — the same
+        // `models.overrides` key the CLI's model-caps flow pins.
+        ModelContextWindowSection(service: widget.service),
         const SizedBox(height: 24),
         const Divider(),
         const SizedBox(height: 16),

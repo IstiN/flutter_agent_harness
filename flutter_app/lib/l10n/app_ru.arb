@@ -1570,5 +1570,105 @@
   "hostSessionRestored": "Сессия хоста восстановлена — попробуйте отправить сообщение ещё раз.",
   "@hostSessionRestored": {
     "description": "The host one-shot 401 re-resolution succeeded — invite a retry"
+  },
+  "settingsContextWindowLabel": "Окно контекста",
+  "@settingsContextWindowLabel": {
+    "description": "Title of the per-model context-window section (gh-2479)"
+  },
+  "settingsContextWindowOverrideLabel": "Переопределение",
+  "@settingsContextWindowOverrideLabel": {
+    "description": "Label of the per-model context-window override field (gh-2479)"
+  },
+  "settingsContextWindowOverrideHelper": "Пусто = наследовать цепочку: отчёт эндпоинта → каталог провайдера → значение по умолчанию.",
+  "@settingsContextWindowOverrideHelper": {
+    "description": "Helper under the override field (gh-2479)"
+  },
+  "settingsContextWindowSaved": "Сохранено в {file}.",
+  "@settingsContextWindowSaved": {
+    "description": "Snackbar after a context-window write (gh-2479)",
+    "placeholders": {
+      "file": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsContextWindowSaveFailed": "Не удалось сохранить окно контекста: {error}",
+  "@settingsContextWindowSaveFailed": {
+    "description": "Snackbar after a refused context-window write (gh-2479)",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsContextWindowCleared": "Переопределение удалено — снова действует цепочка.",
+  "@settingsContextWindowCleared": {
+    "description": "Snackbar after clearing the per-model override (gh-2479)"
+  },
+  "settingsContextWindowMinValue": "Минимум {min} токенов (резерв компакции).",
+  "@settingsContextWindowMinValue": {
+    "description": "Validation message for a below-floor value (gh-2479)",
+    "placeholders": {
+      "min": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsContextWindowInvalid": "Введите положительное целое число.",
+  "@settingsContextWindowInvalid": {
+    "description": "Validation message for a non-numeric value (gh-2479)"
+  },
+  "settingsContextWindowCapped": "глобальный предел {cap} применяется последним",
+  "@settingsContextWindowCapped": {
+    "description": "Caption when the owner cap replaces the chain value (gh-2479)",
+    "placeholders": {
+      "cap": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWindowSourceOverride": "переопределение",
+  "@settingsWindowSourceOverride": {
+    "description": "Source-layer label: the models.overrides pin wins (gh-2479)"
+  },
+  "settingsWindowSourceEndpoint": "отчёт эндпоинта",
+  "@settingsWindowSourceEndpoint": {
+    "description": "Source-layer label: the endpoint /models report (gh-2479)"
+  },
+  "settingsWindowSourceRemoteCatalog": "удалённый каталог",
+  "@settingsWindowSourceRemoteCatalog": {
+    "description": "Source-layer label: the remote fa1.dev catalog (gh-2479)"
+  },
+  "settingsWindowSourceRoleChain": "цепочка ролей",
+  "@settingsWindowSourceRoleChain": {
+    "description": "Source-layer label: a roles-chain entry (gh-2479)"
+  },
+  "settingsWindowSourceCatalog": "каталог провайдера",
+  "@settingsWindowSourceCatalog": {
+    "description": "Source-layer label: the provider spec default (gh-2479)"
+  },
+  "settingsWindowSourceDefault": "значение по умолчанию",
+  "@settingsWindowSourceDefault": {
+    "description": "Source-layer label: no layer named a window (gh-2479)"
+  },
+  "settingsContextCapLabel": "Предел окна контекста",
+  "@settingsContextCapLabel": {
+    "description": "Title of the owner cap section in Agent Config (gh-2479)"
+  },
+  "settingsContextCapHelper": "Ограничивает эффективное окно ПОСЛЕ цепочки для модели: пороги компакции, счётчик контекста и защита от переполнения считают по нему.",
+  "@settingsContextCapHelper": {
+    "description": "Semantics helper under the cap section (gh-2479)"
+  },
+  "settingsContextCapUnset": "Не задан — окно модели без ограничения.",
+  "@settingsContextCapUnset": {
+    "description": "Caption when no cap is configured (gh-2479)"
+  },
+  "settingsContextCapClear": "Убрать предел",
+  "@settingsContextCapClear": {
+    "description": "Button: remove agent.contextWindowCap (gh-2479)"
+  },
+  "settingsContextCapWebNote": "Недоступно на этой платформе — нет ~/.fah/config.yaml.",
+  "@settingsContextCapWebNote": {
+    "description": "Web-unsupported note (gh-2479)"
   }
 }

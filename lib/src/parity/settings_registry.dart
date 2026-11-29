@@ -203,11 +203,6 @@ const cliOnlySettings = <SharedSetting>{
   // power_guard only loads the section read-only and has no controller
   // to re-arm live (issue #397 is the CLI half — per #288's umbrella).
   SharedSetting.sleepPrevention,
-  // The context cap feeds the CLI's compaction math, ctx meter and the
-  // loop's over-window guard — all running in the CLI host process; the
-  // app has no agent loop to re-cap live (issue #394 is the CLI half —
-  // the app keeps consuming the section read-only per #288's umbrella).
-  SharedSetting.contextWindowCap,
   // The TUI palette colors a terminal: the app renders through Flutter's
   // own theming stack (separate system by design — issue #279 non-goal).
   SharedSetting.tuiTheme,
@@ -288,10 +283,6 @@ const cliOnlyJustifications = <SharedSetting, String>{
       'session-open/close hooks) runs inside the CLI host process; the '
       'app\'s power_guard reads the section but has no controller to '
       're-arm live. Configure it in the CLI (issue #397).',
-  SharedSetting.contextWindowCap:
-      'The context cap feeds the CLI agent loop and compaction math '
-      'running in the CLI host process; the app has no agent loop to '
-      're-cap live. Configure it in the CLI (issue #394).',
   SharedSetting.agentMode:
       'Agent modes are CLI REPL prompt presets; the app composes its own '
       'prompts per surface and has no mode presets to switch.',
@@ -706,13 +697,16 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'section read-only.',
   ),
   SharedSetting.contextWindowCap: SettingSurfaces(
-    macos: false,
+    // gh-2479: the desktop app gained the ContextWindowCapSection — the
+    // SAME `agent.contextWindowCap` key the CLI's context-cap flow
+    // writes, applied live through the service seam.
+    macos: true,
     ios: false,
     web: false,
     extensionPanel: false,
     gapWhy:
-        'The cap clamps the CLI agent loop and compaction math in the CLI '
-        'host process; no app surface runs that loop.',
+        'The cap control ships on desktop (gh-2479); phone, web and '
+        'extension surfaces have no Agent Config section yet.',
   ),
   SharedSetting.harnessMode: SettingSurfaces(
     macos: false,
@@ -929,7 +923,9 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
   ),
   SharedSetting.contextWindowCap: _SettingMeta(
     cliRef: 'startContextCapFlow',
-    appRef: null, // exempted — CLI agent loop only (see above).
+    // gh-2479: the app's Agent Config section carries the same control
+    // (resolve + validated surgical write + live re-cap seam).
+    appRef: 'ContextWindowCapSection',
     yamlKeys: ['agent'],
     description: 'Owner-side context cap (issue #394).',
   ),

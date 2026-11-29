@@ -6289,6 +6289,126 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Host session restored — try sending your message again.'**
   String get hostSessionRestored;
+
+  /// Title of the per-model context-window section (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'Context window'**
+  String get settingsContextWindowLabel;
+
+  /// Label of the per-model context-window override field (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'Override'**
+  String get settingsContextWindowOverrideLabel;
+
+  /// Helper under the override field (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'Empty = inherit the chain: endpoint report → provider catalog → documented default.'**
+  String get settingsContextWindowOverrideHelper;
+
+  /// Snackbar after a context-window write (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'Saved to {file}.'**
+  String settingsContextWindowSaved(String file);
+
+  /// Snackbar after a refused context-window write (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save the context window: {error}'**
+  String settingsContextWindowSaveFailed(String error);
+
+  /// Snackbar after clearing the per-model override (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'Override cleared — the chain decides again.'**
+  String get settingsContextWindowCleared;
+
+  /// Validation message for a below-floor value (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'Minimum {min} tokens (the compaction reserve).'**
+  String settingsContextWindowMinValue(String min);
+
+  /// Validation message for a non-numeric value (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a positive integer.'**
+  String get settingsContextWindowInvalid;
+
+  /// Caption when the owner cap replaces the chain value (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'owner cap {cap} applies last'**
+  String settingsContextWindowCapped(String cap);
+
+  /// Source-layer label: the models.overrides pin wins (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'override'**
+  String get settingsWindowSourceOverride;
+
+  /// Source-layer label: the endpoint /models report (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'endpoint report'**
+  String get settingsWindowSourceEndpoint;
+
+  /// Source-layer label: the remote fa1.dev catalog (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'remote catalog'**
+  String get settingsWindowSourceRemoteCatalog;
+
+  /// Source-layer label: a roles-chain entry (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'role chain'**
+  String get settingsWindowSourceRoleChain;
+
+  /// Source-layer label: the provider spec default (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'provider catalog'**
+  String get settingsWindowSourceCatalog;
+
+  /// Source-layer label: no layer named a window (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'documented default'**
+  String get settingsWindowSourceDefault;
+
+  /// Title of the owner cap section in Agent Config (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'Context window cap'**
+  String get settingsContextCapLabel;
+
+  /// Semantics helper under the cap section (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'Clamps the effective window AFTER the per-model chain: compaction thresholds, the ctx meter and the over-window guard all measure against it.'**
+  String get settingsContextCapHelper;
+
+  /// Caption when no cap is configured (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'Not set — the model window rides uncapped.'**
+  String get settingsContextCapUnset;
+
+  /// Button: remove agent.contextWindowCap (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'Clear cap'**
+  String get settingsContextCapClear;
+
+  /// Web-unsupported note (gh-2479)
+  ///
+  /// In en, this message translates to:
+  /// **'Not configurable on this platform — there is no ~/.fah/config.yaml.'**
+  String get settingsContextCapWebNote;
 }
 
 class _AppLocalizationsDelegate

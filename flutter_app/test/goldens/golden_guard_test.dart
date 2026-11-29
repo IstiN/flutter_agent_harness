@@ -26,6 +26,8 @@ const _coverage = <String, String>{
   'lib/ui/network/channel_key_import_dialog.dart':
       'test/goldens/channel_key_import_dialog_golden_test.dart',
   'lib/ui/screens/settings.dart': 'test/goldens/settings_golden_test.dart',
+  'lib/ui/screens/context_window_settings.dart':
+      'test/goldens/settings_golden_test.dart',
   'lib/ui/screens/settings_navigation.dart':
       'test/goldens/wide_layout_shell_golden_test.dart',
   'lib/ui/network/network_chat_page.dart':

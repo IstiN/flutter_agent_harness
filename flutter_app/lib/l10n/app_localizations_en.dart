@@ -3552,4 +3552,77 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get hostSessionRestored =>
       'Host session restored — try sending your message again.';
+
+  @override
+  String get settingsContextWindowLabel => 'Context window';
+
+  @override
+  String get settingsContextWindowOverrideLabel => 'Override';
+
+  @override
+  String get settingsContextWindowOverrideHelper =>
+      'Empty = inherit the chain: endpoint report → provider catalog → documented default.';
+
+  @override
+  String settingsContextWindowSaved(String file) {
+    return 'Saved to $file.';
+  }
+
+  @override
+  String settingsContextWindowSaveFailed(String error) {
+    return 'Could not save the context window: $error';
+  }
+
+  @override
+  String get settingsContextWindowCleared =>
+      'Override cleared — the chain decides again.';
+
+  @override
+  String settingsContextWindowMinValue(String min) {
+    return 'Minimum $min tokens (the compaction reserve).';
+  }
+
+  @override
+  String get settingsContextWindowInvalid => 'Enter a positive integer.';
+
+  @override
+  String settingsContextWindowCapped(String cap) {
+    return 'owner cap $cap applies last';
+  }
+
+  @override
+  String get settingsWindowSourceOverride => 'override';
+
+  @override
+  String get settingsWindowSourceEndpoint => 'endpoint report';
+
+  @override
+  String get settingsWindowSourceRemoteCatalog => 'remote catalog';
+
+  @override
+  String get settingsWindowSourceRoleChain => 'role chain';
+
+  @override
+  String get settingsWindowSourceCatalog => 'provider catalog';
+
+  @override
+  String get settingsWindowSourceDefault => 'documented default';
+
+  @override
+  String get settingsContextCapLabel => 'Context window cap';
+
+  @override
+  String get settingsContextCapHelper =>
+      'Clamps the effective window AFTER the per-model chain: compaction thresholds, the ctx meter and the over-window guard all measure against it.';
+
+  @override
+  String get settingsContextCapUnset =>
+      'Not set — the model window rides uncapped.';
+
+  @override
+  String get settingsContextCapClear => 'Clear cap';
+
+  @override
+  String get settingsContextCapWebNote =>
+      'Not configurable on this platform — there is no ~/.fah/config.yaml.';
 }

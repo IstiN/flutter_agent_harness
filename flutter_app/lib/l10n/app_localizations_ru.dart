@@ -3592,4 +3592,78 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get hostSessionRestored =>
       'Сессия хоста восстановлена — попробуйте отправить сообщение ещё раз.';
+
+  @override
+  String get settingsContextWindowLabel => 'Окно контекста';
+
+  @override
+  String get settingsContextWindowOverrideLabel => 'Переопределение';
+
+  @override
+  String get settingsContextWindowOverrideHelper =>
+      'Пусто = наследовать цепочку: отчёт эндпоинта → каталог провайдера → значение по умолчанию.';
+
+  @override
+  String settingsContextWindowSaved(String file) {
+    return 'Сохранено в $file.';
+  }
+
+  @override
+  String settingsContextWindowSaveFailed(String error) {
+    return 'Не удалось сохранить окно контекста: $error';
+  }
+
+  @override
+  String get settingsContextWindowCleared =>
+      'Переопределение удалено — снова действует цепочка.';
+
+  @override
+  String settingsContextWindowMinValue(String min) {
+    return 'Минимум $min токенов (резерв компакции).';
+  }
+
+  @override
+  String get settingsContextWindowInvalid =>
+      'Введите положительное целое число.';
+
+  @override
+  String settingsContextWindowCapped(String cap) {
+    return 'глобальный предел $cap применяется последним';
+  }
+
+  @override
+  String get settingsWindowSourceOverride => 'переопределение';
+
+  @override
+  String get settingsWindowSourceEndpoint => 'отчёт эндпоинта';
+
+  @override
+  String get settingsWindowSourceRemoteCatalog => 'удалённый каталог';
+
+  @override
+  String get settingsWindowSourceRoleChain => 'цепочка ролей';
+
+  @override
+  String get settingsWindowSourceCatalog => 'каталог провайдера';
+
+  @override
+  String get settingsWindowSourceDefault => 'значение по умолчанию';
+
+  @override
+  String get settingsContextCapLabel => 'Предел окна контекста';
+
+  @override
+  String get settingsContextCapHelper =>
+      'Ограничивает эффективное окно ПОСЛЕ цепочки для модели: пороги компакции, счётчик контекста и защита от переполнения считают по нему.';
+
+  @override
+  String get settingsContextCapUnset =>
+      'Не задан — окно модели без ограничения.';
+
+  @override
+  String get settingsContextCapClear => 'Убрать предел';
+
+  @override
+  String get settingsContextCapWebNote =>
+      'Недоступно на этой платформе — нет ~/.fah/config.yaml.';
 }

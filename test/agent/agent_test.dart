@@ -133,6 +133,17 @@ Agent _agentWith(_FakeStreamFunction fake, {ToolExecutor? toolExecutor}) {
   );
 }
 
+/// A tiny-window model for the live-cap test (gh-2479): 100 tokens is
+/// under any non-trivial prompt's estimate.
+const _tinyWindowModel = Model(
+  id: 'tiny-window',
+  api: 'test-api',
+  provider: 'test-provider',
+  baseUrl: 'https://example.test',
+  contextWindow: 100,
+  maxTokens: 4096,
+);
+
 List<Type> _types(List<AgentEvent> events) {
   return events.map((event) => event.runtimeType).toList();
 }
@@ -1383,6 +1394,40 @@ void main() {
       });
     },
   );
+
+  group('live context-window cap (gh-2479)', () {
+    test('a cap assigned after construction reaches the NEXT run loop '
+        'config', () async {
+      final fake = _FakeStreamFunction([_textTurn('ok'), _textTurn('ok')]);
+      final agent = Agent(
+        model: _tinyWindowModel,
+        streamFunction: fake.call,
+        toolExecutor: _unusedExecutor,
+      );
+      // Turn 1: the big prompt is the NEWEST user turn — the soft-window
+      // regime sends it as is (no guard), and it lands as history.
+      await agent.prompt('o' * 400);
+      await agent.waitForIdle();
+      expect(fake.calls, 1);
+
+      // Turn 2: that history now overflows the 100-token window. The cap
+      // is still null → the guard refuses the run without a provider call.
+      final events = <AgentEvent>[];
+      agent.subscribe((event, _) => events.add(event));
+      await agent.prompt('hi');
+      await agent.waitForIdle();
+      expect(fake.calls, 1);
+      final assistant = agent.state.messages.whereType<AssistantMessage>().last;
+      expect(isContextWindowExhaustedError(assistant.errorMessage), isTrue);
+
+      // The live knob: raise the cap AFTER construction — the next run's
+      // loop config reads the new value and the request goes out.
+      agent.contextWindowCap = 100000;
+      await agent.prompt('hi again');
+      await agent.waitForIdle();
+      expect(fake.calls, 2);
+    });
+  });
 }
 
 /// Polls an async [condition] like the stuck suite's [waitForIt].
