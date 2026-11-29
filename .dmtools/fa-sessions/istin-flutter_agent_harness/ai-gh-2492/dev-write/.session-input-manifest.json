@@ -1,0 +1,187 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-28T23:16:06.523Z",
+  "ticketKey": "gh-2492",
+  "headSha": "e3de17b330258d859de449c366046f30be2ea146",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:ade3127764027de1",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:2b43a46eaeddb9b6",
+      "size": 21373
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:22b0e47b3d8e8dd1",
+      "size": 10554
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:fcacaed3cdbed209",
+      "size": 5971
+    },
+    "request.md": {
+      "hash": "fnv1a64:ebad737542783c43",
+      "size": 3303
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:6aadba714b478e78",
+      "size": 1189
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:0ef1a5cec9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:14e04afa861d2046",
+      "size": 3381
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:ebad737542783c43",
+      "size": 3303
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc69I4YJ",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/compaction/ledger_budget.dart:247",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: engine-written labels can exceed the 96/20 marker-predicate budget — the engine's own markers stop resolving as markers**\n\n`toolHistogramLabel` (`ledger_budget.dart:247`) caps the histogram at 3 *entries* but not at *characters*: with long tool names (MCP-style — this repo's own `mcp__flutter_agent_harness__codegraph_callers`-family names) the label is 174 chars, and both persisted shapes exceed the marker predicate:\n\n```\nlabel (174 chars): mcp__flutter_agent_harness__codegraph_callers ×1 · mcp__…__codegraph_impact_analysis ×1 · mcp__…__session_search_tool ×1 · 12:41–13:44\nconsolidatedHideMarker(...)  (191 chars) → isCompactionMarkerText = false\ncollapsedLedgerMarkerText(...) (212 chars) → isCompactionMarkerText = false\nledgerMarkerRef(...) → null\n```\n\nThe change's own invariant (`markers.dart:175-182`) says the grown budget \"covers every ENGINE shape\" — that holds only if labels stay ≤96 chars/≤20 words, and nothing enforces it. Consequences when a batch's top-3 tool names are long:\n\n- **The ledger budget silently under-counts**: `ledgerMarkerRef` returns null for the marker, so these C5 consolidated markers escape the 1000-token render cap entirely — the ≈18k runaway C4 exists to prevent can re-enter through the labels C5 adds.\n- **Renumbering boundaries are missed**: `isPinRenumberingBoundary` gates the operative-pin carrier placement (`operative_pins.dart:524`, gh-1409 E6) and the image-citation re-basing (`image_registry.dart:753`, issue #195 F2). A boundary the predicate rejects lets a pin block render inside the summarized range and stale `[Image N]` citations rebind to the wrong image.\n- Tool-pairing repair's cut boundary is missed too (`tool_pairing.dart:702`), so orphan notes mislabel the cut.\n\nNote the doc comment's other half stays true: *model-written* labels pass `sanitizeHideLabel` (48/6) and always fit. It is the new **engine** histograms that are uncapped.\n\n**Fix**: cap the label at build time in `toolHistogramLabel`/`hideBatchLabels` — drop histogram entries (then the span) until the head fits the predicate budget. Export the budget constants (`_markerLabelMaxChars`/`_markerLabelMaxWords`) as shared `hideLabelMax*`-style constants so the builder and the predicate cannot drift (the repo's one-source-of-truth discipline). Add a UT with three long MCP names pinning `isCompactionMarkerText(collapsedLedgerMarkerText(...))` and the persisted `consolidatedHideMarker(...)` is `true`."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc69I4Yx",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/compaction/ledger_budget.dart:101",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: `ledgerMarkerRef` misparses a per-record hidden marker whose preview quotes an `[expand a-b]` pointer**\n\nThe expand-pointer regex (`ledger_budget.dart:101`) is `firstMatch` anywhere in the marker text and is tried BEFORE the per-record branch — but a per-record marker carries a bounded content preview of the record's raw first line (`markerPreview`, 80 chars, not sanitized against pointers), and this codebase's own docs state that genuine content quotes pointers (`markers.dart:181-184`: \"docs and skill texts quote `[expand 3-140]`\"). Verified against the production code:\n\n```\nmarker text : [142:hidden·user·1.2k·\"see the fold quoted as [expand 3-140] above\"]\nledgerMarkerRef -> first=3 last=140 hiddenCount=138 mergeable=true\n```\n\nA marker that actually names hidden seq **142** is planned as covering **3–140**. When the budget pass merges it, `collapsedLedgerMarkerText` emits a door for the wrong span: expanding it hits records that were never hidden here (the honest \"visible, nothing to expand\" replies, or worse a checkpoint-covered range), while seq 142 — the record the marker stood for — loses its address in the request. The marker count (\"N records hidden\") is also computed from the bogus span.\n\nReaches production whenever a hidden user/assistant/orphaned-result first line contains a full `[expand N-M]` literal and the request is over the ledger budget (long compacted sessions — exactly this repo's working regime). Raising to 🚨 is warranted if you find the misparse reachable without the over-budget precondition.\n\n**Fix**: test the per-record `[\\d+:hidden·` prefix first and only fall through to the expand branch when the text has no per-record prefix (a consolidated/fold marker never starts with one); or end-anchor the expand match with a clean one-line, bracket-free head, mirroring `_isEngineExpandPointer`'s discipline. Add a UT with a preview-quoted pointer."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc69I4ZJ",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/compaction/ledger_budget.dart:166",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the collapse merges markers that are NOT adjacent in the rendered request — the documented \"no visible record between\" invariant is not enforced**\n\n`planLedgerBudget` picks \"the first two spans that sit next to each other\" by scanning the refs list only (`ledger_budget.dart:166`), and `_applyHiddenLedgerBudget` collects refs from ALL emissions. But between two mergeable markers a request can carry a checkpoint marker (excluded from refs by the `·ckpt·` check), a dropped-fold note, or simply a visible record. The docstring promises \"their original positions are consecutive among the SURVIVING markers — no visible record between\", and `docs/compaction.md` (C4 section) promises \"every id a collapsed pointer names is still hidden in the session file — the door resolves\". Neither holds. Verified with the production `collapseLedgerMarkers` (same `planLedgerBudget` core), budget 10:\n\n```\nin:  [5:hidden] · \"a visible user record sits here (never hidden)\" · [7:hidden] · [9:ckpt·…·covers:9,10] · [12:hidden]\nout: \"3 records hidden [expand 5-12]\" · \"a visible user record…\" · \"[9:ckpt·…]\"\n```\n\nThe merged door `[expand 5-12]` spans the visible record and the checkpoint-covered range. Expanding it re-materializes the checkpoint's whole covered range alongside the checkpoint text (the count line says 3 — the model is told it is opening 3 records and gets 21+), and the visible record answers \"visible, nothing to expand\". Both docs claims above are false for exactly the sessions C4 targets (multi-escalation + heavy hide loads).\n\n**Fix**: make adjacency real — in `_applyHiddenLedgerBudget`, split the refs into contiguous emission runs (`ref[i+1].index == ref[i].index + 1`) and plan each run separately (a run of one is never merged). Cheap, local, and restores both the docstring and the docs claim. Add a UT with a visible record / checkpoint between two over-budget marker runs."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc69I4Z_",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/task/task_executor.dart:2533",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: bare `print` on the pin-flush failure path — route it through a host sink (gh-1510 precedent)**\n\n`_flushChildSteeringPins` failure path prints raw to stdout (`task_executor.dart:2533`). The repo already documented where bare prints land: gh-1510 (`memory_controller.dart` printSink doc) — in TUI mode stdout IS the terminal, raw bytes interleave with the frame protocol and physically clobber cells. TaskExecutor runs under the same TUI/Flutter/web hosts and has no print-sink zone around its loops. It is also inconsistent with the directly neighboring catch, which is deliberately silent (\"A failed flush must not affect the child's result\").\n\nSuggest either dropping the print (matching the outer catch) or wiring a small degrade callback like `AutoCompactorHooks`/`onDegrade` so hosts (CLI diagnostics, app `AppLog`) own the observability."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc69I4al",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "lib/src/task/task_executor.dart:2517",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: pin-flush failure loses already-resolved ids — and the docstring's retry promise is false**\n\n`_flushChildSteeringPins` calls `takeForFlush()` BEFORE the appends. Inside `takeForFlush` the resolved lists are reset and `pinnedSteeringRecordIds` is already advanced to the new delivery. If the `appendSegmentPin` then throws (disk full, storage hiccup — exactly when the record WAS persisted but the pin did not land), the resolved record ids are consumed and gone: the steering record never pins, silently — the precise worker-A failure mode C2 exists to prevent. The next delivery's flush then also emits a bogus release for ids that were never pinned in the file.\n\nThe docstring (`task_executor.dart:2515-2517`) claims the opposite: \"a failed pin append leaves the pins pending (the next flush retries; the session is untouched)\" — that retry does not exist for this path.\n\nSuggest commit-on-success: copy the resolved lists, run the appends, and only reset the lists / advance `pinnedSteeringRecordIds` after both appends succeed; on failure leave everything pending so the next flush genuinely retries (and then the docstring becomes true). Bounded impact today (best-effort contract), but the code should either honor its stated contract or state the real one."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc69I4bQ",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "docs/compaction.md:722",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: docs say \"96 chars / 16 words\", the code says 20**\n\n`docs/compaction.md:722` (\"the engine-marker predicate's label budget grows to the engine's own shapes (96 chars / 16 words)\") vs `markers.dart:185` — `_markerLabelMaxWords = 20`. Align the doc (and note this doc line doubles as the spec future readers will check the predicate against)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:3bda58b8",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🚨 severity: BLOCKING —\n🚨 **BLOCKING: engine-written labels can exceed the 96/20 marker-predicate budget — the engine's own markers stop resolving as markers**\n\n`toolHistogramLabel` (`ledger_budget.dart:247`) caps the histogram at 3 *entries* but not at *characters*: with long tool names (MCP-style — this repo's own `mcp__flutter_agent_harness__codegraph_callers`-family names) the label is 174 chars, and both persisted shapes exceed the marker predicate:\n\n```\nlabel (174 chars): mcp__flutter_agent_harness__codegraph_callers ×1 · mcp__…__codegraph_impact_analysis ×1 · mcp__…__session_search_tool ×1 · 12:41–13:44\nconsolidatedHideMarker(...)  (191 chars) → isCompactionMarkerText = false\ncollapsedLedgerMarkerText(...) (212 chars) → isCompactionMarkerText = false\nledgerMarkerRef(...) → null\n```\n\nThe change's own invariant (`markers.dart:175-182`) says the grown budget \"covers every ENGINE shape\" — that holds only if labels stay ≤96 chars/≤20 words, and nothing enforces it. Consequences when a batch's top-3 tool names are long:\n\n- **The ledger budget silently under-counts**: `ledgerMarkerRef` returns null for the marker, so these C5 consolidated markers escape the 1000-token render cap entirely — the ≈18k runaway C4 exists to prevent can re-enter through the labels C5 adds.\n- **Renumbering boundaries are missed**: `isPinRenumberingBoundary` gates the operative-pin carrier placement (`operative_pins.dart:524`, gh-1409 E6) and the image-citation re-basing (`image_registry.dart:753`, issue #195 F2). A boundary the predicate rejects lets a pin block render inside the summarized range and stale `[Image N]` citations rebind to the wrong image.\n- Tool-pairing repair's cut boundary is missed too (`tool_pairing.dart:702`), so orphan notes mislabel the cut.\n\nNote the doc comment's other half stays true: *model-written* labels pass `sanitizeHideLabel` (48/6) and always fit. It is the new **engine** histograms that are uncapped.\n\n**Fix**: cap the label at build time in `toolHistogramLabel`/`hideBatchLabels` — drop histogram entries (then the span) until the head fits the predicate budget. Export the budget constants (`_markerLabelMaxChars`/`_markerLabelMaxWords`) as shared `hideLabelMax*`-style constants so the builder and the predicate cannot drift (the repo's one-source-of-truth discipline). Add a UT with three long MCP names pinning `isCompactionMarkerText(collapsedLedgerMarkerText(...))` and the persisted `consolidatedHideMarker(...)` is `true`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:2289b5f7",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: `ledgerMarkerRef` misparses a per-record hidden marker whose preview quotes an `[expand a-b]` pointer**\n\nThe expand-pointer regex (`ledger_budget.dart:101`) is `firstMatch` anywhere in the marker text and is tried BEFORE the per-record branch — but a per-record marker carries a bounded content preview of the record's raw first line (`markerPreview`, 80 chars, not sanitized against pointers), and this codebase's own docs state that genuine content quotes pointers (`markers.dart:181-184`: \"docs and skill texts quote `[expand 3-140]`\"). Verified against the production code:\n\n```\nmarker text : [142:hidden·user·1.2k·\"see the fold quoted as [expand 3-140] above\"]\nledgerMarkerRef -> first=3 last=140 hiddenCount=138 mergeable=true\n```\n\nA marker that actually names hidden seq **142** is planned as covering **3–140**. When the budget pass merges it, `collapsedLedgerMarkerText` emits a door for the wrong span: expanding it hits records that were never hidden here (the honest \"visible, nothing to expand\" replies, or worse a checkpoint-covered range), while seq 142 — the record the marker stood for — loses its address in the request. The marker count (\"N records hidden\") is also computed from the bogus span.\n\nReaches production whenever a hidden user/assistant/orphaned-result first line contains a full `[expand N-M]` literal and the request is over the ledger budget (long compacted sessions — exactly this repo's working regime). Raising to 🚨 is warranted if you find the misparse reachable without the over-budget precondition.\n\n**Fix**: test the per-record `[\\d+:hidden·` prefix first and only fall through to the expand branch when the text has no per-record prefix (a consolidated/fold marker never starts with one); or end-anchor the expand match with a clean one-line, bracket-free head, mirroring `_isEngineExpandPointer`'s discipline. Add a UT with a preview-quoted pointer."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:49db2808",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "⚠️ severity: IMPORTANT —\n⚠️ **IMPORTANT: the collapse merges markers that are NOT adjacent in the rendered request — the documented \"no visible record between\" invariant is not enforced**\n\n`planLedgerBudget` picks \"the first two spans that sit next to each other\" by scanning the refs list only (`ledger_budget.dart:166`), and `_applyHiddenLedgerBudget` collects refs from ALL emissions. But between two mergeable markers a request can carry a checkpoint marker (excluded from refs by the `·ckpt·` check), a dropped-fold note, or simply a visible record. The docstring promises \"their original positions are consecutive among the SURVIVING markers — no visible record between\", and `docs/compaction.md` (C4 section) promises \"every id a collapsed pointer names is still hidden in the session file — the door resolves\". Neither holds. Verified with the production `collapseLedgerMarkers` (same `planLedgerBudget` core), budget 10:\n\n```\nin:  [5:hidden] · \"a visible user record sits here (never hidden)\" · [7:hidden] · [9:ckpt·…·covers:9,10] · [12:hidden]\nout: \"3 records hidden [expand 5-12]\" · \"a visible user record…\" · \"[9:ckpt·…]\"\n```\n\nThe merged door `[expand 5-12]` spans the visible record and the checkpoint-covered range. Expanding it re-materializes the checkpoint's whole covered range alongside the checkpoint text (the count line says 3 — the model is told it is opening 3 records and gets 21+), and the visible record answers \"visible, nothing to expand\". Both docs claims above are false for exactly the sessions C4 targets (multi-escalation + heavy hide loads).\n\n**Fix**: make adjacency real — in `_applyHiddenLedgerBudget`, split the refs into contiguous emission runs (`ref[i+1].index == ref[i].index + 1`) and plan each run separately (a run of one is never merged). Cheap, local, and restores both the docstring and the docs claim. Add a UT with a visible record / checkpoint between two over-budget marker runs."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:9f848a82",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: bare `print` on the pin-flush failure path — route it through a host sink (gh-1510 precedent)**\n\n`_flushChildSteeringPins` failure path prints raw to stdout (`task_executor.dart:2533`). The repo already documented where bare prints land: gh-1510 (`memory_controller.dart` printSink doc) — in TUI mode stdout IS the terminal, raw bytes interleave with the frame protocol and physically clobber cells. TaskExecutor runs under the same TUI/Flutter/web hosts and has no print-sink zone around its loops. It is also inconsistent with the directly neighboring catch, which is deliberately silent (\"A failed flush must not affect the child's result\").\n\nSuggest either dropping the print (matching the outer catch) or wiring a small degrade callback like `AutoCompactorHooks`/`onDegrade` so hosts (CLI diagnostics, app `AppLog`) own the observability."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:5412d035",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: pin-flush failure loses already-resolved ids — and the docstring's retry promise is false**\n\n`_flushChildSteeringPins` calls `takeForFlush()` BEFORE the appends. Inside `takeForFlush` the resolved lists are reset and `pinnedSteeringRecordIds` is already advanced to the new delivery. If the `appendSegmentPin` then throws (disk full, storage hiccup — exactly when the record WAS persisted but the pin did not land), the resolved record ids are consumed and gone: the steering record never pins, silently — the precise worker-A failure mode C2 exists to prevent. The next delivery's flush then also emits a bogus release for ids that were never pinned in the file.\n\nThe docstring (`task_executor.dart:2515-2517`) claims the opposite: \"a failed pin append leaves the pins pending (the next flush retries; the session is untouched)\" — that retry does not exist for this path.\n\nSuggest commit-on-success: copy the resolved lists, run the appends, and only reset the lists / advance `pinnedSteeringRecordIds` after both appends succeed; on failure leave everything pending so the next flush genuinely retries (and then the docstring becomes true). Bounded impact today (best-effort contract), but the code should either honor its stated contract or state the real one."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:f3554205",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🪶 severity: NIT —\n🪶 **NIT: docs say \"96 chars / 16 words\", the code says 20**\n\n`docs/compaction.md:722` (\"the engine-marker predicate's label budget grows to the engine's own shapes (96 chars / 16 words)\") vs `markers.dart:185` — `_markerLabelMaxWords = 20`. Align the doc (and note this doc line doubles as the spec future readers will check the predicate against)."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:6f2c7c72",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — REQUEST_CHANGES\n\n**Summary**: C2 (pinned steering) and C7 (prompt include) are solid — well-tested at unit and IT level, REG-6 respected. The C4/C5 ledger work has one blocking gap: the new engine-generated histogram labels are uncapped, so with long (MCP-style) tool names the engine's own persisted markers fail `isCompactionMarkerText`, escape the ledger budget accounting, and break the pin/image renumbering boundary invariants — plus two confirmed C4 robustness bugs that produce wrong `[expand]` doors.\n\n**Next Steps**:\n1. 🚨 Cap `toolHistogramLabel` at the marker-predicate budget (96/20) at build time; share the budget constants; UT with three long MCP names (comment 1, repro included)\n2. ⚠️ Fix `ledgerMarkerRef` pointer misparse — per-record prefix check before the expand branch (comment 2, repro included)\n3. ⚠️ Enforce true emission-adjacency when planning merges — split refs into contiguous runs (comment 3, repro included)\n4. 💡 Replace the bare `print` with a host sink or silence (comment 4); 💡 make the pin-flush failure path match its documented retry contract (comment 5); 🪶 docs 16→20 words (comment 6)\n\n**Digest (not threads)**:\n- `test/compaction/one_window_test.dart:81` — the meter leg is asserted by construction (`meter = window`); it never exercises the meter's own seam, so \"four consumers agree\" is proven for three\n- `test/compaction/ledger_budget_test.dart:226` — the \"single marker over budget stays\" case passes for the wrong reason: the 500-char head fails `isCompactionMarkerText`, so refs is empty (it tests parse rejection, not merge exhaustion)\n- The `isCompactionMarkerText` false-positive surface grew 48/6 → 96/20 — the `hand_over_pass_test` negative sample had to grow to a 17-word head to stay negative; genuine one-line content ending in a quoted pointer within 96/20 now classifies as a compaction marker (pairing/pin boundaries). Accepted trade-off, but worth a watchful eye\n- C6: the one-off live glm-5.4 (z.ai) probe remains open (no credentials in this environment — honestly disclosed in the PR concerns); the REG test covers the mechanics offline\n- `changelog/entries/`: C6 has no entry file (test-only; docs cover it) — AC asks docs+CHANGELOG per component\n- Ticket AC \"one PR per component preferred\" — this PR bundles C2/C4/C5/C6/C7 with one commit per component; deviation disclosed in the description\n- Verified locally: the six component suites + `test/prompts/` pass (85 tests), `dart analyze lib/ test/` clean"
+    }
+  ]
+}
