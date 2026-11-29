@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-28T23:38:02.704Z",
+  "ticketKey": "pr-2498",
+  "headSha": "a3a4c482b96a29b7a9e4306c68657751787b098b",
+  "baseBranch": "main",
+  "reviewDecision": "NONE",
+  "labels": [],
+  "files": {
+    "ci_failures.md": {
+      "hash": "fnv1a64:322b878d3c3c2465",
+      "size": 288
+    },
+    "pr_diff.txt": {
+      "hash": "fnv1a64:181545adfa1acd8a",
+      "size": 12304
+    },
+    "pr_discussions.md": {
+      "hash": "fnv1a64:1ef77071751e2259",
+      "size": 10263
+    },
+    "pr_discussions_raw.json": {
+      "hash": "fnv1a64:6c1473a29556f91a",
+      "size": 4629
+    },
+    "pr_info.md": {
+      "hash": "fnv1a64:06bbd406ce175f59",
+      "size": 571
+    },
+    "request.md": {
+      "hash": "fnv1a64:edc562db9a4c0d1d",
+      "size": 232
+    },
+    "review_policy.md": {
+      "hash": "fnv1a64:756539705c91ddf9",
+      "size": 1729
+    },
+    "review_state.md": {
+      "hash": "fnv1a64:d50feac212b08c2c",
+      "size": 964
+    },
+    "rework_base_head.txt": {
+      "hash": "fnv1a64:5082c66cc9f427bd",
+      "size": 40
+    },
+    "ticket.json": {
+      "hash": "fnv1a64:53584f70539b2dcf",
+      "size": 285
+    },
+    "ticket.md": {
+      "hash": "fnv1a64:edc562db9a4c0d1d",
+      "size": 232
+    }
+  },
+  "comments": [
+    {
+      "id": "PRRT_kwDOTXdlLc69I2p7",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/lib/services/agent_service.dart:1470",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the \"remote catalog\" provenance the ticket names is unreachable from the app surface**\n\nThe SDK enum gained `CapabilityWindowLayer.remoteCatalog` (capability_resolver.dart) and the l10n ships `settingsWindowSourceRemoteCatalog`, but no production call site ever feeds `remoteCatalogContextWindow` into `resolveModelCapabilities` — grep over `lib/` + `flutter_app/lib` finds the parameter only in the resolver itself and its test. This getter therefore can never produce the \"remote catalog\" caption.\n\nConsequence for the ticket's motivating scenario (ain 1M, gh-2479 ticket \"Requested UI\" item 1 — example provenance \"remote catalog: 1,000,000\" — and the Acceptance bullet \"a model whose remote catalog reports 1M displays exactly that provenance\"): the picker stores the remote-catalog-filled 1M into `config.contextWindow` (via `RemoteCatalogEnrichment`), and since it differs from the ain spec's 200000 it falls to the `endpoint` branch below and displays **\"1,048,576 · endpoint report\"** — the number is exact, but the layer attribution may be wrong when the endpoint's `/v1/models` never reported the value and the remote catalog filled the gap.\n\nThe number, the override path and the cap-last semantics are all correct and tested — this is display provenance only. Please confirm whether the ain endpoint reports `contextWindow` in `/v1/models`: if it does, the \"endpoint report\" caption is right and only the dead `remoteCatalog` label remains (then consider dropping it or wiring the catalog layer through); if it does not, the catalog-filled case displays the wrong layer for the ticket's named acceptance scenario."
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc69I2rx",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/lib/services/context_window_config_io.dart:69",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: `layer: project` with a null `projectDir` silently targets the wrong file**\n\nWith `AppContextCapSource.project` and `projectDir == null`, this line interpolates to the literal path `null/.fah/config.yaml`, and the `ConfigService` env below falls back to `cwd: home` — so the \"project-layer\" set would silently land in the **user** file while the caller asked for the project layer (and the remove path would touch a `null/.fah/config.yaml` path). A wrong-scope write is exactly the failure mode this feature exists to avoid.\n\nNo current caller can hit it: `ContextWindowCapSection._writeLayer` only picks the project layer when `widget.projectDir != null`. But `writeAppContextWindowCap` is a public service API — a cheap guard keeps the contract honest:\n\n```dart\nif (layer == AppContextCapSource.project && projectDir == null) {\n  throw ArgumentError('layer project requires a projectDir');\n}\n```"
+    },
+    {
+      "id": "PRRT_kwDOTXdlLc69I2tY",
+      "kind": "review_thread",
+      "author": "unknown",
+      "createdAt": "",
+      "updatedAt": "",
+      "location": "flutter_app/lib/ui/screens/context_window_settings.dart:353",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: `_onSave` has no re-entrancy guard (the sibling section has one) and `_reload()` mutates without `setState`**\n\nTwo small consistency gaps in this section, both on the save path:\n\n1. The per-model section (`_ModelContextWindowSectionState._save`) guards concurrent saves with a `_busy` flag and disables its button; `_onSave` here has no such guard. A Save/Clear double-tap fires two concurrent read-modify-write edits of `config.yaml` (`ConfigService.set` / `_removeYamlKey`) — the writes can interleave and the UI can end up showing a value the file does not carry until the next `_reload()`.\n\n2. `_reload()` assigns `_resolution` and `_cap.text` without `setState` (and `_onSave` never calls `setState`), so after a successful save the `sourceCaption` and the Clear-button visibility only refresh if an ancestor rebuilds (the live-service path gets there via `applyContextWindowCap` → `_notify()`; bare-section usage does not).\n\nMirror the sibling: flip a `_busy` flag around the `try` block, and wrap the post-save `_reload()` in `setState`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:30621ae4",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: the \"remote catalog\" provenance the ticket names is unreachable from the app surface**\n\nThe SDK enum gained `CapabilityWindowLayer.remoteCatalog` (capability_resolver.dart) and the l10n ships `settingsWindowSourceRemoteCatalog`, but no production call site ever feeds `remoteCatalogContextWindow` into `resolveModelCapabilities` — grep over `lib/` + `flutter_app/lib` finds the parameter only in the resolver itself and its test. This getter therefore can never produce the \"remote catalog\" caption.\n\nConsequence for the ticket's motivating scenario (ain 1M, gh-2479 ticket \"Requested UI\" item 1 — example provenance \"remote catalog: 1,000,000\" — and the Acceptance bullet \"a model whose remote catalog reports 1M displays exactly that provenance\"): the picker stores the remote-catalog-filled 1M into `config.contextWindow` (via `RemoteCatalogEnrichment`), and since it differs from the ain spec's 200000 it falls to the `endpoint` branch below and displays **\"1,048,576 · endpoint report\"** — the number is exact, but the layer attribution may be wrong when the endpoint's `/v1/models` never reported the value and the remote catalog filled the gap.\n\nThe number, the override path and the cap-last semantics are all correct and tested — this is display provenance only. Please confirm whether the ain endpoint reports `contextWindow` in `/v1/models`: if it does, the \"endpoint report\" caption is right and only the dead `remoteCatalog` label remains (then consider dropping it or wiring the catalog layer through); if it does not, the catalog-filled case displays the wrong layer for the ticket's named acceptance scenario."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:8e86a9cd",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: `layer: project` with a null `projectDir` silently targets the wrong file**\n\nWith `AppContextCapSource.project` and `projectDir == null`, this line interpolates to the literal path `null/.fah/config.yaml`, and the `ConfigService` env below falls back to `cwd: home` — so the \"project-layer\" set would silently land in the **user** file while the caller asked for the project layer (and the remove path would touch a `null/.fah/config.yaml` path). A wrong-scope write is exactly the failure mode this feature exists to avoid.\n\nNo current caller can hit it: `ContextWindowCapSection._writeLayer` only picks the project layer when `widget.projectDir != null`. But `writeAppContextWindowCap` is a public service API — a cheap guard keeps the contract honest:\n\n```dart\nif (layer == AppContextCapSource.project && projectDir == null) {\n  throw ArgumentError('layer project requires a projectDir');\n}\n```"
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:e8768a4d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "💡 severity: SUGGESTION —\n💡 **SUGGESTION: `_onSave` has no re-entrancy guard (the sibling section has one) and `_reload()` mutates without `setState`**\n\nTwo small consistency gaps in this section, both on the save path:\n\n1. The per-model section (`_ModelContextWindowSectionState._save`) guards concurrent saves with a `_busy` flag and disables its button; `_onSave` here has no such guard. A Save/Clear double-tap fires two concurrent read-modify-write edits of `config.yaml` (`ConfigService.set` / `_removeYamlKey`) — the writes can interleave and the UI can end up showing a value the file does not carry until the next `_reload()`.\n\n2. `_reload()` assigns `_resolution` and `_cap.text` without `setState` (and `_onSave` never calls `setState`), so after a successful save the `sourceCaption` and the Clear-button visibility only refresh if an ancestor rebuilds (the live-service path gets there via `applyContextWindowCap` → `_notify()`; bare-section usage does not).\n\nMirror the sibling: flip a `_busy` flag around the `try` block, and wrap the post-save `_reload()` in `setState`."
+    },
+    {
+      "id": "pr_discussions.md:ai-teammate:2026-11-28:97239c6d",
+      "kind": "comment",
+      "author": "ai-teammate",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "## Automated Code Review — APPROVE (with suggestions)\n\n**Summary**: The gh-2479 settings surface is well built — the SDK provenance enum, the live re-cap seam (`Agent.contextWindowCap` read per run, compaction wiring re-resolved per access) and the validated surgical config writes reuse the exact CLI machinery; widget/golden/parity coverage matches the ticket ACs (verified `flutter test test/context_window_settings_test.dart` — 11 passed). No blocking or important findings; three suggestions below.\n\n**Key Issues** (all 💡 SUGGESTION — none block merge):\n1. `agent_service.dart:1470` — the \"remote catalog\" provenance label is unreachable: no production call site feeds `remoteCatalogContextWindow`, so the ticket's named aiin-1M scenario may display \"endpoint report\" for a catalog-filled value.\n2. `context_window_config_io.dart:69` — `layer: project` with a null `projectDir` silently writes the wrong scope (`'null/.fah/config.yaml'` / home cwd); add an `ArgumentError` guard.\n3. `context_window_settings.dart:353` — the cap section lacks the `_busy` re-entrancy guard its sibling section has, and `_reload()` mutates state without `setState`.\n\n**Digest**: test/integration/screenshots/*.png + flutter_app/fastlane metadata images — ~300 regenerated binary screenshots swept into a settings-UI PR (dev-run regen noise; harmless, CI green). 🪶\n\n**Next Steps**:\n1. Confirm the aiin endpoint's `/v1/models` window report; wire (or drop) the dead `remoteCatalog` provenance label.\n2. Guard `writeAppContextWindowCap` against a project-layer write without a `projectDir`.\n3. Add the `_busy` guard + `setState`-wrapped reload to `ContextWindowCapSection`."
+    },
+    {
+      "id": "pr_discussions.md:dmtools-factory-bot[bot]:2026-11-28:53df2795",
+      "kind": "comment",
+      "author": "dmtools-factory-bot[bot]",
+      "createdAt": "2026-11-28",
+      "updatedAt": "2026-11-28",
+      "location": "pr_discussions.md",
+      "resolved": false,
+      "body": "🛑 stale-cancel c4b75a5c8f667a549199cd943d51c7604093b408 — stale base at 2026-11-28T23:23:13.211Z\n\nCancelled 1 validation run(s) dispatched on a superseded head of this PR — the silent refresh moved the base and their results would be discarded anyway (gh-846). `cancelled` is not a verdict (gh-755): no fail-validation, no zombie re-dispatch, no red-head count is recorded for these heads — validation re-dispatches only on the current head."
+    }
+  ]
+}
